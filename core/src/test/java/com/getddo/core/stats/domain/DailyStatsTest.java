@@ -37,6 +37,9 @@ class DailyStatsTest {
 		assertThatThrownBy(() -> new Day(null, 0, 0, 0, granted(), 0, 0)).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> new Day(DATE, -1, 0, 0, granted(), 0, 0)).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> new Day(DATE, 0, 0, 0, granted(), 0, -1)).isInstanceOf(IllegalArgumentException.class);
+		// 응모자 수는 응모 건수를 넘을 수 없다(같으면 허용)
+		assertThatThrownBy(() -> new Day(DATE, 2, 1, 5, granted(), 0, 0)).isInstanceOf(IllegalArgumentException.class);
+		assertThat(new Day(DATE, 1, 1, 1, granted(), 0, 0).entrantCount()).isEqualTo(1);
 		Map<GrantSourceType, Long> negative = granted();
 		negative.put(GrantSourceType.MISSION, -1L);
 		assertThatThrownBy(() -> new Day(DATE, 0, 0, 0, negative, 0, 0)).isInstanceOf(IllegalArgumentException.class);

@@ -37,12 +37,15 @@ public record DailyStats(List<Day> days, long totalUserCount) {
 			Map<GrantSourceType, Long> grantedTickets, long usedTickets, long blockedCount) {
 
 		/**
-		 * @throws IllegalArgumentException 날짜가 없거나 집계값이 음수이거나 {@code grantedTickets}에 지급 근거 키가 빠진 경우
+		 * @throws IllegalArgumentException 날짜가 없거나 집계값이 음수이거나 응모자 수가 응모 건수보다 크거나 {@code grantedTickets}에 지급 근거 키가 빠진 경우
 		 */
 		public Day {
 			if (date == null || entrantCount < 0 || entryCount < 0 || activeUserCount < 0 || usedTickets < 0
 					|| blockedCount < 0) {
 				throw new IllegalArgumentException("날짜가 있어야 하고 집계값은 음수일 수 없다.");
+			}
+			if (entrantCount > entryCount) {
+				throw new IllegalArgumentException("응모자 수는 응모 건수보다 클 수 없다.");
 			}
 			Map<GrantSourceType, Long> copy = new EnumMap<>(GrantSourceType.class);
 			for (GrantSourceType type : GrantSourceType.values()) {
