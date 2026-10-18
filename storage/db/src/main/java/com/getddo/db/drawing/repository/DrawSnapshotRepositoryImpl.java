@@ -82,13 +82,13 @@ public class DrawSnapshotRepositoryImpl implements DrawSnapshotRepository {
 		return saveInput(run, snapshot);
 	}
 
-	/** 미고정 REPLACEMENT 실행에 최초 후보 ID를 연결하고 버전 2 입력을 고정한다. 최초 후보 상세 행을 새로 만들지 않는다. */
+	/** 미고정 REPLACEMENT 실행에 최초 후보 ID를 연결하고 최초 규칙에 대응하는 버전 2/4 입력을 고정한다. 최초 후보 상세 행을 새로 만들지 않는다. */
 	@Override public DrawSnapshot saveRegisteredReplacement(DrawSnapshot snapshot) {
 		DrawRunEntity run = runs.findForUpdate(snapshot.runId()).orElseThrow(() -> new BusinessException(INVALID_RUN));
 		if (run.getDrawType() != DrawType.REPLACEMENT || run.getStatus() != DrawRunStatus.PREPARING
 				|| run.getSnapshotFixedAt() != null || !run.getEventId().equals(snapshot.eventId())
 				|| snapshot.drawType() != DrawType.REPLACEMENT || snapshot.status() != DrawRunStatus.READY
-				|| snapshot.rules() == null || snapshot.rules().version() != 2 || snapshot.rules().originalRunId() == null) {
+				|| snapshot.rules() == null || !snapshot.rules().replacementFormat() || snapshot.rules().originalRunId() == null) {
 			throw new BusinessException(INVALID_RUN);
 		}
 		List<DrawCandidateEntity> existing = candidates.findAllById(snapshot.candidates().stream().map(DrawSnapshot.Candidate::id).toList());

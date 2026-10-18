@@ -22,31 +22,76 @@ public record DrawSnapshot(UUID runId, UUID eventId, DrawRunStatus status, Insta
 
 	/** 실행 당시 이벤트 유형·멤버십·등급별 가중치와 경품 조건을 보존한다. */
 	public record Rules(int version, boolean weightingEnabled, String eventType, String membershipRule,
-			int bronzeWeight, int silverWeight, int goldWeight, List<DrawSnapshotSource.Prize> prizes,
+			int bronzeWeight, int silverWeight, int goldWeight, Integer platinumWeight, List<DrawSnapshotSource.Prize> prizes,
 			UUID originalRunId, List<Slot> targetSlots, List<RetainedAward> retainedAwards) {
+		/** 저장 규칙의 장당 가중치다. 변경 시 입력 버전과 기존 스냅샷 검증 호환을 함께 검토한다. */
+		public static final int BRONZE_WEIGHT = 1;
+		/** 실버의 장당 가중치다. */
+		public static final int SILVER_WEIGHT = 3;
+		/** 골드의 장당 가중치다. */
+		public static final int GOLD_WEIGHT = 5;
+		/** 플래티넘을 지원하는 Rules 3/4의 장당 가중치다. */
+		public static final int PLATINUM_WEIGHT = 10;
+
 		/** 재추첨 확장 필드 없이 규칙을 생성해 기존 최초 입력 호출과 저장 형식의 호환성을 유지한다. */
 		public Rules(int version, boolean weightingEnabled, String eventType, String membershipRule,
 				int bronzeWeight, int silverWeight, int goldWeight, List<DrawSnapshotSource.Prize> prizes) {
-			this(version, weightingEnabled, eventType, membershipRule, bronzeWeight, silverWeight, goldWeight,
+			this(version, weightingEnabled, eventType, membershipRule, bronzeWeight, silverWeight, goldWeight, 0,
 					prizes, null, List.of(), List.of());
+		}
+
+		/** 플래티넘을 모르는 기존 최초·재추첨 생성자는 당시 가중치 0을 보존한다. */
+		public Rules(int version, boolean weightingEnabled, String eventType, String membershipRule,
+				int bronzeWeight, int silverWeight, int goldWeight, List<DrawSnapshotSource.Prize> prizes,
+				UUID originalRunId, List<Slot> targetSlots, List<RetainedAward> retainedAwards) {
+			this(version, weightingEnabled, eventType, membershipRule, bronzeWeight, silverWeight, goldWeight, 0,
+					prizes, originalRunId, targetSlots, retainedAwards);
+		}
+
+		/** 신규 최초 입력은 플래티넘 장당 가중치를 명시한다. */
+		public Rules(int version, boolean weightingEnabled, String eventType, String membershipRule,
+				int bronzeWeight, int silverWeight, int goldWeight, int platinumWeight, List<DrawSnapshotSource.Prize> prizes) {
+			this(version, weightingEnabled, eventType, membershipRule, bronzeWeight, silverWeight, goldWeight,
+					platinumWeight, prizes, null, List.of(), List.of());
 		}
 
 		/** 경품 조건 목록을 변경 불가능한 값으로 보존한다. */
 		public Rules {
+			// Jackson 3은 누락된 primitive 필드를 거절한다. 옛 버전에서만 없는 새 필드를 0으로 복원한다.
+			if (platinumWeight == null && (version == 1 || version == 2)) platinumWeight = 0;
+			if (platinumWeight == null) throw new IllegalArgumentException("플래티넘 가중치가 필요합니다.");
 			prizes = List.copyOf(prizes);
 			targetSlots = targetSlots == null ? List.of() : List.copyOf(targetSlots);
 			retainedAwards = retainedAwards == null ? List.of() : List.copyOf(retainedAwards);
-			if (version != 1 && version != 2) throw new IllegalArgumentException("지원하지 않는 추첨 규칙 버전입니다.");
-			if (version == 1 && (originalRunId != null || !targetSlots.isEmpty() || !retainedAwards.isEmpty())) {
+			if (version < 1 || version > 4) throw new IllegalArgumentException("지원하지 않는 추첨 규칙 버전입니다.");
+			if (platinumWeight != (version >= 3 ? PLATINUM_WEIGHT : 0)) {
+				throw new IllegalArgumentException("규칙 버전과 플래티넘 가중치가 일치하지 않습니다.");
+			}
+			if ((version == 1 || version == 3) && (originalRunId != null || !targetSlots.isEmpty() || !retainedAwards.isEmpty())) {
 				throw new IllegalArgumentException("최초 규칙에는 재추첨 연결 정보를 넣을 수 없습니다.");
 			}
-			if (version == 2 && (originalRunId == null || targetSlots.isEmpty())) {
+			if ((version == 2 || version == 4) && (originalRunId == null || targetSlots.isEmpty())) {
 				throw new IllegalArgumentException("재추첨 규칙에는 최초 실행과 대상 자리가 필요합니다.");
 			}
 		}
+
+		/** 최초 입력은 기존 1과 플래티넘 확장 3을 지원한다. */
+		public boolean initialFormat() {
+			return version == 1 || version == 3;
+		}
+
+		/** 재추첨 입력은 최초 규칙에 따라 기존 2 또는 플래티넘 확장 4를 유지한다. */
+		public boolean replacementFormat() {
+			return version == 2 || version == 4;
+		}
+
+		/** 기존 스냅샷에는 새 등급의 의미를 소급 부여하지 않는다. */
+		public boolean supportsPlatinum() {
+			return version == 3 || version == 4;
+		}
 	}
 
-	/** 버전 2 재추첨의 실제 경품 자리. 전체 경품 조건과 별도로 보존한다. */
+	/** 재추첨의 실제 경품 자리. 전체 경품 조건과 별도로 보존한다. */
 	public record Slot(UUID prizeId, int rank, int slotNumber) {
 	}
 
@@ -60,10 +105,18 @@ public record DrawSnapshot(UUID runId, UUID eventId, DrawRunStatus status, Insta
 	}
 
 	/** 확정 가중치의 근거인 등급별 실제 차감량과 정상 접수된 응모를 보존한다. */
-	public record EntryEvidence(int version, long bronzeCount, long silverCount, long goldCount,
+	public record EntryEvidence(int version, long bronzeCount, long silverCount, long goldCount, Long platinumCount,
 			List<DrawSnapshotSource.Entry> entries) {
+		/** 기존 3등급 근거 생성 호출은 플래티넘 0장으로 복원한다. */
+		public EntryEvidence(int version, long bronzeCount, long silverCount, long goldCount,
+				List<DrawSnapshotSource.Entry> entries) {
+			this(version, bronzeCount, silverCount, goldCount, 0L, entries);
+		}
+
 		/** 응모 근거 목록을 변경 불가능한 값으로 보존한다. */
 		public EntryEvidence {
+			if (platinumCount == null && version == 1) platinumCount = 0L;
+			Objects.requireNonNull(platinumCount, "platinumCount");
 			entries = List.copyOf(entries);
 		}
 	}

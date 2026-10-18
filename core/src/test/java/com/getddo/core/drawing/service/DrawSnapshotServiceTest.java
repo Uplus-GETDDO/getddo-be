@@ -15,6 +15,9 @@ import org.junit.jupiter.params.provider.EnumSource;
 
 import com.getddo.core.common.exception.BusinessException;
 import com.getddo.core.common.time.TimeProvider;
+import com.getddo.core.drawing.domain.DrawInspectionView;
+import com.getddo.core.drawing.domain.DrawType;
+import com.getddo.core.drawing.domain.DrawVerification;
 import com.getddo.core.drawing.domain.DrawRunStatus;
 import com.getddo.core.drawing.domain.DrawSnapshot;
 import com.getddo.core.drawing.domain.DrawSnapshotSource.Entry;
@@ -125,8 +128,36 @@ class DrawSnapshotServiceTest {
 		when(repository.findParticipants(eventId)).thenReturn(List.of(participant(0, entry(0))));
 		assertThat(service.prepareInitial(eventId).candidates().getFirst().weight()).isEqualTo(1);
 		when(repository.lockEvent(eventId)).thenReturn(Optional.of(event(EventType.TICKET, false, NOW.minusSeconds(300))));
-		when(repository.findParticipants(eventId)).thenReturn(List.of(participant(1, entry(1, TicketGrade.GOLD))));
+		when(repository.findParticipants(eventId)).thenReturn(List.of(participant(1, entry(1, TicketGrade.BRONZE))));
 		assertThat(service.prepareInitial(eventId).candidates().getFirst().weight()).isEqualTo(1);
+	}
+
+	/** 비가중치 입력 생성과 저장 검증이 모두 브론즈 한 장 정책을 따르는지 확인한다. */
+	@ParameterizedTest
+	@EnumSource(TicketGrade.class)
+	@DisplayName("비가중치 입력은 브론즈만 생성·검증하고 다른 등급은 저장 전에 거절한다")
+	void unweightedCreationMatchesStoredVerification(TicketGrade grade) {
+		// given
+		when(repository.lockEvent(eventId)).thenReturn(Optional.of(event(EventType.TICKET, false, NOW.minusSeconds(300))));
+		when(repository.findParticipants(eventId)).thenReturn(List.of(participant(1, entry(1, grade))));
+		// when / then
+		if (grade != TicketGrade.BRONZE) {
+			assertError(INVALID_EVIDENCE);
+			verify(repository, never()).saveInitial(any());
+			return;
+		}
+		DrawSnapshot snapshot = service.prepareInitial(eventId);
+		DrawSnapshot.Candidate generated = snapshot.candidates().getFirst();
+		assertThat(generated.ticketCount()).isEqualTo(1);
+		assertThat(generated.weight()).isEqualTo(1);
+		DrawSnapshot.Candidate stored = new DrawSnapshot.Candidate(UUID.randomUUID(), generated.participantId(),
+				generated.userId(), generated.ticketCount(), generated.weight(), generated.entryEvidence(), generated.eligibilityEvidence());
+		DrawInspectionView.Run run = new DrawInspectionView.Run(snapshot.runId(), eventId, 0, DrawType.INITIAL,
+				DrawRunStatus.CONFIRMED, null, snapshot.algorithmVersion(), snapshot.rules(), NOW, NOW, NOW, NOW);
+		assertThat(DrawStoredVerification.verify(run, List.of(new DrawInspectionView.Candidate(stored,
+				snapshot.runId(), eventId, eventId, userId)), List.of()))
+				.filteredOn(item -> item.getCode().equals("CANDIDATE_EVIDENCE"))
+				.extracting(DrawVerification.Item::isPassed).containsExactly(true);
 	}
 
 	/** 응모자가 없는 신규 실행만 NO_ENTRIES로 종료하는지 검증한다. */
@@ -215,11 +246,44 @@ class DrawSnapshotServiceTest {
 		assertError(INVALID_EVIDENCE);
 	}
 
+	/** 실제 사용 장수 한 장과 플래티넘 가중치 10을 구분해 신규 저장 형식에 보존한다. */
 	@Test
-	@DisplayName("플래티넘 가중치를 지원하기 전에는 플래티넘 사용분이 있는 응모를 증거 오류로 거절한다")
-	void rejectsPlatinumUseUntilWeightIsSupported() {
+	@DisplayName("플래티넘 한 장을 가중치 10과 신규 규칙·근거 버전으로 저장한다")
+	void storesPlatinumWeightAndVersionedEvidence() {
+		// given
 		when(repository.findParticipants(eventId)).thenReturn(List.of(participant(1, entry(1, TicketGrade.PLATINUM))));
-		assertError(INVALID_EVIDENCE);
+		// when
+		DrawSnapshot snapshot = service.prepareInitial(eventId);
+		// then
+		assertThat(snapshot.algorithmVersion()).isEqualTo("weighted-without-replacement-v1");
+		assertThat(snapshot.rules().version()).isEqualTo(3);
+		assertThat(snapshot.rules().platinumWeight()).isEqualTo(10);
+		assertThat(snapshot.candidates()).singleElement().satisfies(candidate -> {
+			assertThat(candidate.ticketCount()).isEqualTo(1);
+			assertThat(candidate.weight()).isEqualTo(10);
+			assertThat(candidate.entryEvidence().version()).isEqualTo(2);
+			assertThat(candidate.entryEvidence().platinumCount()).isEqualTo(1);
+		});
+	}
+
+	/** 추가 응모에 섞인 네 등급을 모두 합산하고 개수와 가중치를 따로 보존한다. */
+	@Test
+	@DisplayName("네 등급 혼합 추가 응모는 실제 4장과 가중치 19를 보존한다")
+	void sumsAllFourGradesAcrossEntries() {
+		// given
+		Entry first = entry(2, TicketGrade.PLATINUM, TicketGrade.GOLD);
+		Entry additional = entry(2, TicketGrade.SILVER, TicketGrade.BRONZE);
+		when(repository.findParticipants(eventId)).thenReturn(List.of(participant(4, first, additional)));
+		// when
+		DrawSnapshot.Candidate candidate = service.prepareInitial(eventId).candidates().getFirst();
+		// then
+		assertThat(candidate.ticketCount()).isEqualTo(4);
+		assertThat(candidate.weight()).isEqualTo(19);
+		assertThat(candidate.entryEvidence().bronzeCount()).isEqualTo(1);
+		assertThat(candidate.entryEvidence().silverCount()).isEqualTo(1);
+		assertThat(candidate.entryEvidence().goldCount()).isEqualTo(1);
+		assertThat(candidate.entryEvidence().platinumCount()).isEqualTo(1);
+		assertThat(candidate.entryEvidence().entries()).containsExactly(first, additional);
 	}
 
 	/** 추가 응모를 허용하지 않는 이벤트에서 여러 응모를 거절하는지 검증한다. */

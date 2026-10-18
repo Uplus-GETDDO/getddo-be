@@ -9,17 +9,34 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import com.getddo.core.common.exception.BusinessException;
 import com.getddo.core.common.time.TimeProvider;
-import com.getddo.core.drawing.domain.*;
-import com.getddo.core.drawing.repository.*;
+import com.getddo.core.drawing.domain.AwardCancellation;
+import com.getddo.core.drawing.domain.DrawResult;
+import com.getddo.core.drawing.domain.DrawRunStatus;
+import com.getddo.core.drawing.domain.DrawSelection;
+import com.getddo.core.drawing.domain.DrawSelectionResultType;
+import com.getddo.core.drawing.domain.DrawSnapshot;
+import com.getddo.core.drawing.domain.DrawSnapshotSource;
+import com.getddo.core.drawing.domain.DrawType;
+import com.getddo.core.drawing.repository.AwardCancellationRepository;
+import com.getddo.core.drawing.repository.DrawResultRepository;
+import com.getddo.core.drawing.repository.DrawSnapshotRepository;
+import com.getddo.core.drawing.repository.ReplacementDrawRepository;
 
 import static com.getddo.core.drawing.exception.DrawingErrorCode.ATTEMPT_LOST;
-import static org.assertj.core.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 class DrawReplacementInputPreparationTest {
 	private static final Instant NOW = Instant.parse("2026-10-12T03:00:00Z");
@@ -32,13 +49,16 @@ class DrawReplacementInputPreparationTest {
 	private final DrawReplacementInputPreparation preparation = new DrawReplacementInputPreparation(snapshots, results,
 			cancellations, replacements, new ReplacementDrawInputBuilder(), new TimeProvider(Clock.fixed(NOW, ZoneOffset.UTC)));
 
-	@Test @DisplayName("GD-87 버전 2 입력으로 실제 자리·유지 결과와 최초 후보 ID·가중치를 변환한다")
-	void storesVersionTwoWithOriginalCandidates() {
+	@ParameterizedTest
+	@ValueSource(ints = {1, 3})
+	@DisplayName("재추첨은 최초 규칙에 맞는 2·4 버전과 최초 후보·가중치를 보존한다")
+	void storesMatchingVersionWithOriginalCandidates(int version) {
 		// given
 		DrawSnapshot.Candidate canceled = candidate(9), retained = candidate(25), remaining = candidate(3);
 		DrawResult canceledResult = result(canceled, 2), retainedResult = result(retained, 1);
 		DrawSnapshot original = new DrawSnapshot(origin, event, DrawRunStatus.CONFIRMED, NOW, DrawSnapshotService.ALGORITHM_VERSION,
-				new DrawSnapshot.Rules(1, true, "TICKET", "vip", 1, 3, 5, List.of(new DrawSnapshotSource.Prize(prize, 1, 2))),
+				new DrawSnapshot.Rules(version, true, "TICKET", "vip", 1, 3, 5, version == 3 ? 10 : 0,
+						List.of(new DrawSnapshotSource.Prize(prize, 1, 2))),
 				List.of(canceled, retained, remaining));
 		when(snapshots.findRegistered(run)).thenReturn(Optional.of(new DrawSnapshot(run, event, DrawRunStatus.PREPARING,
 				null, null, null, List.of(), DrawType.REPLACEMENT)));
@@ -54,7 +74,9 @@ class DrawReplacementInputPreparationTest {
 		assertThat(prepared.drawType()).isEqualTo(DrawType.REPLACEMENT);
 		assertThat(prepared.status()).isEqualTo(DrawRunStatus.READY);
 		assertThat(prepared.candidates()).containsExactly(remaining);
-		assertThat(prepared.rules().version()).isEqualTo(2);
+		assertThat(prepared.rules().version()).isEqualTo(version == 3 ? 4 : 2);
+		assertThat(prepared.rules().platinumWeight()).isEqualTo(original.rules().platinumWeight());
+		assertThat(prepared.algorithmVersion()).isEqualTo(original.algorithmVersion());
 		assertThat(prepared.rules().originalRunId()).isEqualTo(origin);
 		assertThat(prepared.rules().targetSlots()).containsExactly(new DrawSnapshot.Slot(prize, 1, 2));
 		assertThat(prepared.rules().retainedAwards()).containsExactly(new DrawSnapshot.RetainedAward(

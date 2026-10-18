@@ -40,8 +40,8 @@ public final class DrawStoredVerification {
 		List<DrawVerification.Item> checks = new ArrayList<>();
 		boolean replacement = run.getDrawType() == DrawType.REPLACEMENT;
 		boolean supported = run.getRules() != null
-				&& ((run.getDrawType() == DrawType.INITIAL && run.getRules().version() == 1)
-				|| (replacement && run.getRules().version() == 2 && run.getReplacementRules() != null))
+				&& ((run.getDrawType() == DrawType.INITIAL && run.getRules().initialFormat())
+				|| (replacement && run.getRules().replacementFormat() && run.getReplacementRules() != null))
 				&& DrawSnapshotService.ALGORITHM_VERSION.equals(run.getAlgorithmVersion());
 		checks.add(item("SUPPORTED_INPUT", supported, "실행 종류·입력 버전·알고리즘 검증 범위"));
 		checks.add(item("FIXED_INPUT", run.getSnapshotFixedAt() != null && run.getConfirmedAt() != null
@@ -82,7 +82,8 @@ public final class DrawStoredVerification {
 	private static boolean evidence(DrawInspectionView.Run run, List<DrawInspectionView.Candidate> candidates,
 			Instant evidenceFixedAt, boolean allowEmpty) {
 		DrawSnapshot.Rules rules = run.getRules();
-		if (evidenceFixedAt == null || rules.bronzeWeight() != 1 || rules.silverWeight() != 3 || rules.goldWeight() != 5
+		if (evidenceFixedAt == null || rules.bronzeWeight() != DrawSnapshot.Rules.BRONZE_WEIGHT
+				|| rules.silverWeight() != DrawSnapshot.Rules.SILVER_WEIGHT || rules.goldWeight() != DrawSnapshot.Rules.GOLD_WEIGHT
 				|| !("TICKET".equals(rules.eventType()) || "NO_TICKET".equals(rules.eventType()))
 				|| ("NO_TICKET".equals(rules.eventType()) && rules.weightingEnabled())) return false;
 		Set<UUID> entries = new HashSet<>(), histories = new HashSet<>(), tickets = new HashSet<>();
@@ -91,10 +92,10 @@ public final class DrawStoredVerification {
 				DrawSnapshot.Candidate candidate = view.getSnapshot();
 				DrawSnapshot.EntryEvidence entry = candidate.entryEvidence();
 				DrawSnapshot.EligibilityEvidence eligibility = candidate.eligibilityEvidence();
-				if (entry == null || entry.version() != 1 || entry.entries().isEmpty()
+				if (entry == null || entry.version() != (rules.supportsPlatinum() ? 2 : 1) || entry.entries().isEmpty()
 						|| eligibility == null || eligibility.version() != 1 || eligibility.checkedAt() == null
 						|| !Objects.equals(candidate.userId(), eligibility.userId()) || candidate.ticketCount() < 0) return false;
-				long count = 0, bronze = 0, silver = 0, gold = 0;
+				long count = 0, bronze = 0, silver = 0, gold = 0, platinum = 0;
 				for (DrawSnapshotSource.Entry accepted : entry.entries()) {
 					if (accepted.id() == null || !entries.add(accepted.id()) || accepted.acceptedAt() == null
 							|| accepted.acceptedAt().isAfter(evidenceFixedAt) || accepted.deductedTicketCount() < 0
@@ -108,21 +109,23 @@ public final class DrawStoredVerification {
 							case BRONZE -> bronze = Math.incrementExact(bronze);
 							case SILVER -> silver = Math.incrementExact(silver);
 							case GOLD -> gold = Math.incrementExact(gold);
-							// 플래티넘 가중치(10)와 증거 구조를 지원하기 전까지는 검증을 통과시키지 않는다.
 							case PLATINUM -> {
-								return false;
+								if (!rules.supportsPlatinum()) return false;
+								platinum = Math.incrementExact(platinum);
 							}
 						}
 					}
 				}
 				if (count != candidate.ticketCount() || bronze != entry.bronzeCount()
-						|| silver != entry.silverCount() || gold != entry.goldCount()) return false;
+						|| silver != entry.silverCount() || gold != entry.goldCount() || platinum != entry.platinumCount()) return false;
 				if ("NO_TICKET".equals(rules.eventType()) && count != 0) return false;
 				if ("TICKET".equals(rules.eventType()) && (count == 0 || (!rules.weightingEnabled() && count != 1))) return false;
-				if (!rules.weightingEnabled() && (silver != 0 || gold != 0)) return false;
+				if (!rules.weightingEnabled() && (silver != 0 || gold != 0 || platinum != 0)) return false;
 				if (!rules.weightingEnabled() && entry.entries().size() != 1) return false;
-				long weight = rules.weightingEnabled() ? Math.addExact(bronze,
-						Math.addExact(Math.multiplyExact(silver, 3), Math.multiplyExact(gold, 5))) : 1;
+				long weight = rules.weightingEnabled() ? Math.addExact(Math.addExact(Math.multiplyExact(bronze, rules.bronzeWeight()),
+						Math.multiplyExact(silver, rules.silverWeight())),
+						Math.addExact(Math.multiplyExact(gold, rules.goldWeight()),
+								Math.multiplyExact(platinum, rules.platinumWeight()))) : 1;
 				if (candidate.weight() != weight || weight < 1) return false;
 			}
 		} catch (ArithmeticException overflow) {
@@ -143,7 +146,7 @@ public final class DrawStoredVerification {
 				|| original.getRunNumber() != 0 || original.getStatus() != DrawRunStatus.CONFIRMED
 				|| original.getConfirmedAt() == null || original.getConfirmedAt().isAfter(run.getSnapshotFixedAt())
 				|| !Objects.equals(run.getAlgorithmVersion(), original.getAlgorithmVersion())
-				|| original.getRules() == null || original.getRules().version() != 1 || !sameConditions(run.getRules(),
+				|| original.getRules() == null || !original.getRules().initialFormat() || !sameConditions(run.getRules(),
 				original.getRules())
 				|| !relations(original, references.getOriginalCandidates())
 				|| !evidence(original, references.getOriginalCandidates(), original.getSnapshotFixedAt(), false)) return false;
@@ -180,6 +183,7 @@ public final class DrawStoredVerification {
 				original.eventType())
 				&& Objects.equals(current.membershipRule(), original.membershipRule()) && current.bronzeWeight() == original.bronzeWeight()
 				&& current.silverWeight() == original.silverWeight() && current.goldWeight() == original.goldWeight()
+				&& Objects.equals(current.platinumWeight(), original.platinumWeight())
 				&& current.prizes().size() == original.prizes().size()
 				&& new HashSet<>(current.prizes()).equals(new HashSet<>(original.prizes()));
 	}

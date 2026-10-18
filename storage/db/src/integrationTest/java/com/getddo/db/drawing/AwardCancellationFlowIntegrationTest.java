@@ -145,7 +145,7 @@ class AwardCancellationFlowIntegrationTest {
 		assertThat(first.execution().getStatus()).isEqualTo(DrawRunStatus.CONFIRMED);
 		UUID run = first.cancellation().replacementRunId();
 		DrawSnapshot fixed = snapshots.findRegistered(run).orElseThrow();
-		assertThat(fixed.rules().version()).isEqualTo(2);
+		assertThat(fixed.rules().version()).isEqualTo(4);
 		assertThat(fixed.rules().originalRunId()).isEqualTo(fixture.original().runId());
 		assertThat(fixed.candidates()).containsExactlyInAnyOrderElementsOf(fixture.original().candidates().stream()
 				.filter(candidate -> !winners.contains(candidate.userId())).toList());
@@ -663,6 +663,65 @@ class AwardCancellationFlowIntegrationTest {
 				.extracting(DrawInspectionView.Cancellation::getId).containsExactly(second.cancellation().id());
 	}
 
+	/** 실제 최초 확정·취소·재추첨을 연결해 플래티넘 가중치와 근거가 유지되는지 검증한다. */
+	@Test
+	@DisplayName("플래티넘 최초 추첨과 재추첨은 가중치 10·원본 근거를 보존하고 저장 검증을 통과한다")
+	void platinumSurvivesActualReplacementAndVerification() {
+		// given
+		fixture = event(5, true, true);
+		DrawSnapshot original = fixture.original();
+		assertThat(original.rules().version()).isEqualTo(3);
+		assertThat(original.candidates()).allSatisfy(candidate -> {
+			assertThat(candidate.ticketCount()).isEqualTo(1);
+			assertThat(candidate.weight()).isEqualTo(10);
+			assertThat(candidate.entryEvidence().platinumCount()).isEqualTo(1);
+		});
+		assertThat(inspections.verify(users.findById(actor).orElseThrow(), original.runId()).isPassed()).isTrue();
+		// when
+		AwardCancellationReceipt receipt = service.cancel(actor, target(fixture).getId(), UUID.randomUUID(), "자리 보충");
+		DrawSnapshot replacement = snapshots.findRegistered(receipt.cancellation().replacementRunId()).orElseThrow();
+		// then
+		assertThat(receipt.execution().getStatus()).isEqualTo(DrawRunStatus.CONFIRMED);
+		assertThat(replacement.rules().version()).isEqualTo(4);
+		assertThat(replacement.rules().platinumWeight()).isEqualTo(10);
+		assertThat(replacement.algorithmVersion()).isEqualTo(original.algorithmVersion());
+		assertThat(replacement.candidates()).isNotEmpty().allSatisfy(candidate -> {
+			assertThat(candidate.entryEvidence().version()).isEqualTo(2);
+			assertThat(candidate.entryEvidence().platinumCount()).isEqualTo(1);
+			assertThat(original.candidates()).contains(candidate);
+		});
+		assertThat(inspections.verify(users.findById(actor).orElseThrow(), replacement.runId()).isPassed()).isTrue();
+	}
+
+	/** 옛 JSON 저장 형식을 재현해 현재 코드에서도 검증·재추첨할 수 있는지 확인한다. */
+	@Test
+	@DisplayName("과거 플래티넘 필드 없는 JSON도 가중치 변경 없이 검증·재추첨한다")
+	void legacyJsonRemainsVerifiableAndReplaceable() {
+		// given: 플래티넘 필드가 없던 당시의 저장 JSON을 재현한다.
+		UUID eventId = fixture.eventId();
+		jdbc.update("update draw_runs set rules_snapshot = JSON_SET(JSON_REMOVE(rules_snapshot, '$.platinumWeight'), '$.version', 1) where id = ?",
+				toBytes(fixture.original().runId()));
+		jdbc.update("update draw_candidates set entry_snapshot = JSON_SET(JSON_REMOVE(entry_snapshot, '$.platinumCount'), '$.version', 1) where draw_run_id = ?",
+				toBytes(fixture.original().runId()));
+		DrawSnapshot legacy = snapshots.findInitial(eventId).orElseThrow();
+		fixture = new Fixture(eventId, legacy, fixture.confirmed());
+		assertThat(legacy.rules().platinumWeight()).isZero();
+		assertThat(legacy.candidates()).allSatisfy(candidate -> assertThat(candidate.entryEvidence().platinumCount()).isZero());
+		assertThat(inspections.verify(users.findById(actor).orElseThrow(), legacy.runId()).isPassed()).isTrue();
+		// when
+		AwardCancellationReceipt receipt = service.cancel(actor, target(fixture).getId(), UUID.randomUUID(), "과거 입력 재추첨");
+		DrawSnapshot replacement = snapshots.findRegistered(receipt.cancellation().replacementRunId()).orElseThrow();
+		// then
+		assertThat(replacement.rules().version()).isEqualTo(2);
+		assertThat(replacement.rules().platinumWeight()).isZero();
+		assertThat(replacement.candidates()).allSatisfy(candidate -> {
+			assertThat(candidate.entryEvidence().version()).isEqualTo(1);
+			assertThat(legacy.candidates()).contains(candidate);
+		});
+		assertThat(confirmation.confirm(legacy.runId())).usingRecursiveComparison().isEqualTo(fixture.confirmed());
+		assertThat(inspections.verify(users.findById(actor).orElseThrow(), replacement.runId()).isPassed()).isTrue();
+	}
+
 	/** 이벤트의 실제 알림 작업 행 수로 공개 버전별 중복 등록 여부를 확인한다. */
 	private long jobCount(UUID eventId) { return jdbc.queryForObject("select count(*) from notification_jobs where event_id = ?", Long.class, toBytes(eventId)); }
 	/** 공개 ID 기반 발생 키로 실제 등록된 알림 작업의 식별자를 읽는다. */
@@ -676,7 +735,13 @@ class AwardCancellationFlowIntegrationTest {
 		try { return service.cancel(actor, win, key, "사유"); }
 		catch (BusinessException exception) { return exception.getErrorCode(); }
 	}
+	/** 기존 세 등급을 섞은 실제 최초 추첨 fixture를 만든다. */
 	private Fixture event(int entrants, boolean weighted) {
+		return event(entrants, weighted, false);
+	}
+
+	/** 플래티넘 전용 fixture는 모든 후보에 장당 가중치 10을 부여한다. */
+	private Fixture event(int entrants, boolean weighted, boolean platinum) {
 		UUID event = UUID.randomUUID(), firstPrize = UUID.randomUUID();
 		jdbc.update("""
 			insert into events (id, title, description, image_key, event_type, weighting_enabled, starts_at, ends_at,
@@ -693,7 +758,7 @@ class AwardCancellationFlowIntegrationTest {
 					toBytes(participant), toBytes(event), toBytes(user), count, utc(NOW.minusSeconds(301)));
 			jdbc.update("insert into event_entries (id, event_id, participant_id, user_id, requested_ticket_count, deducted_ticket_count, created_at) values (?, (select event_id from event_participants where id = ?), ?, ?, ?, ?, ?)",
 					toBytes(entry), toBytes(participant), toBytes(participant), toBytes(user), count, count, utc(NOW.minusSeconds(301)));
-			if (weighted) ticket(user, entry, List.of("GOLD", "SILVER", "BRONZE").get(index % 3));
+			if (weighted) ticket(user, entry, platinum ? "PLATINUM" : List.of("GOLD", "SILVER", "BRONZE").get(index % 3));
 		}
 		DrawSnapshot original = snapshotService.prepareInitial(event);
 		return new Fixture(event, original, confirmation.confirm(original.runId()));

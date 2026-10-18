@@ -17,14 +17,14 @@ public record DrawCandidateResponse(UUID id, UUID participantId, UUID userId, lo
 				candidate.ticketCount(), candidate.weight(), EntryEvidence.from(candidate.entryEvidence()),
 				EligibilityEvidence.from(candidate.eligibilityEvidence()));
 	}
-	public record EntryEvidence(int version, long bronzeCount, long silverCount, long goldCount, List<Entry> entries) {
+	public record EntryEvidence(int version, long bronzeCount, long silverCount, long goldCount, long platinumCount, List<Entry> entries) {
 		public EntryEvidence {
 			entries = List.copyOf(entries);
 		}
 		static EntryEvidence from(DrawSnapshot.EntryEvidence evidence) {
 			return evidence == null ? null : new EntryEvidence(evidence.version(), evidence.bronzeCount(),
 					evidence.silverCount(),
-					evidence.goldCount(), evidence.entries().stream().map(entry -> new Entry(entry.id(),
+					evidence.goldCount(), evidence.platinumCount(), evidence.entries().stream().map(entry -> new Entry(entry.id(),
 					entry.deductedTicketCount(),
 					entry.acceptedAt(), entry.uses().stream().map(use -> new Use(use.historyId(), use.ticketId(), use.ownerId(),
 					use.grade() == null ? null : use.grade().name())).toList())).toList());
