@@ -44,7 +44,7 @@
 | --- | --- | --- |
 | `entrantCount` | 그날 응모한 사용자 수(중복 제거). 응모권을 쓰지 않는 이벤트의 응모도 포함 | `event_entries.created_at` |
 | `entryCount` | 그날 접수된 응모 건수 | `event_entries.created_at` |
-| `activeUserCount` | 그날 응모·출석·미션 제출·게임 시작 중 하나 이상을 한 사용자 수(중복 제거) | `event_entries`, `attendances.attendance_date`, `mission_submissions`, `game_plays` |
+| `activeUserCount` | 그날 응모·출석·미션 제출·게임 시작 중 하나 이상을 한 **일반 사용자(`USER`)** 수(중복 제거). 관리자 계정의 활동은 제외 | `event_entries`, `attendances.attendance_date`, `mission_submissions`, `game_plays` |
 | `grantedTickets` | 그날 지급된 응모권 장수를 지급 근거(`ATTENDANCE`·`MISSION`·`GAME`)별로 나눈 값. 세 키를 항상 담는다. 등급은 구분하지 않는다 | `tickets.created_at`, 지급 근거 컬럼 |
 | `usedTickets` | 그날 응모에 사용된 응모권 장수. 반환·정정은 빼지 않는 총량이다 | `ticket_histories` `USE` |
 | `blockedCount` | 그날 발생한 어뷰징 탐지 기록 수 | `abuse_cases.occurred_at` |
@@ -71,7 +71,7 @@
 - **`grantedTickets`**: 출석은 한 번의 보상으로 여러 장이 지급되므로 청구 건수가 아니라 `tickets` 행(장수)을 센다. 등급은 합산한다.
 - **`entrantCount`·`entryCount`·`activeUserCount`의 응모**: 거절된 응모(GD-145)도 `event_entries`에 저장되므로 접수 완료(`ACCEPTED`)만 센다. 거절된 응모만 한 사용자는 참여한 것으로 보지 않는다.
 - **`totalUserCount`**: 날짜 범위와 무관한 현재 값이다. 가입일 기준 누적이 필요하면 별도 정의가 필요하다.
-- **모집단 차이**: `entrantCount`·`activeUserCount`는 그날 실제로 활동한 사용자를 계정 상태와 관계없이 센다. `totalUserCount`는 지금 활성인 일반 사용자만 센다. 활동 뒤에 비활성화된 사용자가 있으면 `activeUserCount / totalUserCount`가 실제보다 크게 나올 수 있다. 활동 집계도 활성 일반 사용자로 제한할지는 팀이 정한다.
+- **모집단**: `activeUserCount`는 참여율의 분자로 쓰이므로 분모(`totalUserCount`)와 맞게 일반 사용자(`USER`)만 센다. 관리자 계정의 활동은 제외한다. 미션 제출 등은 관리자 계정이 호출해도 막지 않기 때문이다(공용 스펙 미션 API). 계정 상태(`ACTIVE`·`INACTIVE`)는 거르지 않는다. 그날 실제로 참여한 사용자가 이후 비활성화돼도 과거 날짜의 숫자가 바뀌지 않게 하기 위해서이며, 비활성화된 사용자가 많으면 `activeUserCount / totalUserCount`가 실제보다 조금 크게 나올 수 있다. `entrantCount`는 관리자가 응모할 수 없으므로(`ENTRY-002`) 별도로 거르지 않는다.
 - 집계는 여섯 테이블을 `created_at` 등 시각 범위로 읽는다. 데이터가 많아지면 `EXPLAIN`으로 확인하고, 필요하면 시각 인덱스를 새 마이그레이션으로 추가한다. 성능은 측정하지 않았다.
 - 읽기 전용이라 감사 기록 대상이 아니다.
 

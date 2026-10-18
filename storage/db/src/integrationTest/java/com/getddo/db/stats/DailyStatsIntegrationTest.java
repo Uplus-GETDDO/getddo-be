@@ -169,6 +169,11 @@ class DailyStatsIntegrationTest extends MissionIntegrationTestSupport {
 		attendanceOn(c, DAY_2);
 		missionSubmissionAt(d, DAY_2_NOON);
 		gamePlayAt(a, DAY_2_NOON);
+		// 관리자 계정의 활동은 참여 사용자에 세지 않는다
+		UUID staff = seeds.user();
+		jdbc.update("update users set role = 'ADMIN' where id = ?", bytes(staff));
+		missionSubmissionAt(staff, DAY_2_NOON);
+		attendanceOn(staff, DAY_1);
 		// 지급: 2일 미션 2장·출석 1장·게임 1장, 3일 첫 초 미션 1장
 		UUID t1 = missionTicketAt(a, DAY_2_FIRST_SECOND);
 		UUID t2 = missionTicketAt(b, DAY_2_NOON);

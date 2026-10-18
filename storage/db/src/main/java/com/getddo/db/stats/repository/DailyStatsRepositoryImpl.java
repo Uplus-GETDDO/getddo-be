@@ -31,7 +31,7 @@ public class DailyStatsRepositoryImpl implements DailyStatsRepository {
 			where e.status = 'ACCEPTED' and e.created_at >= :from and e.created_at < :to
 			group by day
 			""";
-	/** 출석은 KST 기준 날짜를 그대로 쓰고, 나머지는 시각을 KST 날짜로 환산한다. UNION이 같은 날 같은 사용자를 한 번만 남긴다. */
+	/** 출석은 KST 기준 날짜를 그대로 쓰고, 나머지는 시각을 KST 날짜로 환산한다. UNION이 같은 날 같은 사용자를 한 번만 남긴다. 관리자 계정의 활동은 제외한다. */
 	private static final String ACTIVE_USER_SQL = """
 			select a.day as day, count(*) as cnt
 			from (
@@ -47,6 +47,7 @@ public class DailyStatsRepositoryImpl implements DailyStatsRepository {
 			  select g.user_id, cast(date(date_add(g.created_at, interval 9 hour)) as char)
 			  from game_plays g where g.created_at >= :from and g.created_at < :to
 			) a
+			join users u on u.id = a.user_id and u.role = 'USER'
 			group by a.day
 			""";
 	private static final String GRANTED_SQL = """

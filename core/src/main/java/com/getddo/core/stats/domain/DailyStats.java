@@ -28,7 +28,7 @@ public record DailyStats(List<Day> days, long totalUserCount) {
 	 *
 	 * @param entrantCount 그날 응모한 사용자 수(중복 제거). 응모권을 쓰지 않는 이벤트의 응모도 포함한다
 	 * @param entryCount 그날 접수된 응모 건수
-	 * @param activeUserCount 그날 응모·출석·미션 제출·게임 시작 중 하나 이상을 한 사용자 수(중복 제거)
+	 * @param activeUserCount 그날 응모·출석·미션 제출·게임 시작 중 하나 이상을 한 일반 사용자 수(중복 제거). 관리자 계정의 활동은 제외한다
 	 * @param grantedTickets 그날 지급된 응모권 장수를 지급 근거별로 나눈 값. 모든 근거 키를 담는다
 	 * @param usedTickets 그날 응모에 사용된 응모권 장수. 반환은 빼지 않은 총량이다
 	 * @param blockedCount 그날 발생한 어뷰징 탐지 기록 수

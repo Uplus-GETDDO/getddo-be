@@ -17,7 +17,7 @@ public interface DailyStatsRepository {
 	Map<LocalDate, EntryCounts> countEntries(Instant from, Instant to);
 
 	/**
-	 * 응모·출석·미션 제출·게임 시작 중 하나 이상을 한 사용자 수를 KST 날짜별로 센다(중복 제거). 출석은 출석 기준 날짜를 쓴다.
+	 * 응모·출석·미션 제출·게임 시작 중 하나 이상을 한 일반 사용자 수를 KST 날짜별로 센다(중복 제거, 관리자 계정의 활동은 제외). 출석은 출석 기준 날짜를 쓴다.
 	 *
 	 * @param fromDate 출석 기준 날짜 하한(포함)
 	 * @param toDate   출석 기준 날짜 상한(포함)
