@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.core.env.StandardEnvironment;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.getddo.core.ticket.domain.GrantSourceType;
@@ -50,7 +51,14 @@ class RandomTicketGradeDrawerTest {
 	@DisplayName("설정이 없으면 확정 확률 79.98/18/2/0.02로 동작한다")
 	void defaultsToConfirmedProbabilities() {
 		// given
-		try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext(RandomTicketGradeDrawer.class)) {
+		try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+			// JVM 시스템 속성과 환경 변수가 기본값을 덮어쓰지 않도록 격리한다
+			context.getEnvironment().getPropertySources()
+					.remove(StandardEnvironment.SYSTEM_PROPERTIES_PROPERTY_SOURCE_NAME);
+			context.getEnvironment().getPropertySources()
+					.remove(StandardEnvironment.SYSTEM_ENVIRONMENT_PROPERTY_SOURCE_NAME);
+			context.register(RandomTicketGradeDrawer.class);
+			context.refresh();
 			// when
 			RandomTicketGradeDrawer drawer = context.getBean(RandomTicketGradeDrawer.class);
 			// then
