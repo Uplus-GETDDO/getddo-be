@@ -32,7 +32,7 @@ public class ReplacementDrawInputBuilder {
 	public ReplacementDrawInput build(DrawSnapshot original, DrawResult canceledResult,
 			List<DrawResult> retainedResults, List<DrawResult> canceledResults) {
 		if (original.status() != DrawRunStatus.CONFIRMED || original.fixedAt() == null
-				|| original.rules() == null || original.rules().version() != 1) invalid();
+				|| original.rules() == null || !original.rules().initialFormat()) invalid();
 		Map<UUID, DrawSnapshot.Candidate> candidates = new HashMap<>();
 		Set<UUID> users = new HashSet<>();
 		for (DrawSnapshot.Candidate candidate : original.candidates()) {

@@ -32,6 +32,7 @@ import static com.getddo.core.drawing.exception.DrawingErrorCode.INVALID_RUN;
 /** 정상 접수된 응모의 실제 차감 수량을 확인하고 최초 추첨의 후보·가중치·조건을 고정해 저장한다. */
 @Service
 public class DrawSnapshotService {
+	/** 가중 비복원 선정 방식은 동일하다. 등급 확장은 Rules 3/4와 EntryEvidence 2로 구분한다. */
 	public static final String ALGORITHM_VERSION = "weighted-without-replacement-v1";
 	private final DrawSnapshotRepository repository;
 	private final TimeProvider time;
@@ -122,15 +123,15 @@ public class DrawSnapshotService {
 			candidates.add(validateParticipant(event, participant, now, entryIds, historyIds));
 		}
 		DrawRunStatus status = participants.isEmpty() ? DrawRunStatus.NO_ENTRIES : DrawRunStatus.READY;
-		DrawSnapshot.Rules rules = new DrawSnapshot.Rules(1, event.weightingEnabled(), event.type().name(),
-				event.membershipRule(), 1, 3, 5, event.prizes());
+		DrawSnapshot.Rules rules = new DrawSnapshot.Rules(3, event.weightingEnabled(), event.type().name(),
+				event.membershipRule(), 1, 3, 5, 10, event.prizes());
 		return new DrawSnapshot(runId, event.id(), status, now, ALGORITHM_VERSION, rules, candidates);
 	}
 
 	/** 중복 차감·응모 수량·접수 시각을 검증하고 실제 등급별 차감량으로 후보 가중치를 계산한다. */
 	private DrawSnapshot.Candidate validateParticipant(DrawSnapshotSource.Event event,
 			DrawSnapshotSource.Participant participant, Instant now, Set<UUID> entryIds, Set<UUID> historyIds) {
-		long total = 0, bronze = 0, silver = 0, gold = 0;
+		long total = 0, bronze = 0, silver = 0, gold = 0, platinum = 0;
 		if (participant.entries().isEmpty() || participant.usedTicketCount() < 0) invalid();
 		if ((event.type() == EventType.NO_TICKET || !event.weightingEnabled())
 				&& participant.entries().size() != 1) invalid();
@@ -147,8 +148,7 @@ public class DrawSnapshotService {
 						case BRONZE -> bronze = Math.incrementExact(bronze);
 						case SILVER -> silver = Math.incrementExact(silver);
 						case GOLD -> gold = Math.incrementExact(gold);
-						// 플래티넘 가중치(10)와 증거 구조를 지원하기 전까지는 가중치를 잘못 계산하지 않도록 증거 오류로 거절한다.
-						case PLATINUM -> invalid();
+						case PLATINUM -> platinum = Math.incrementExact(platinum);
 					}
 				}
 				total = Math.addExact(total, entry.deductedTicketCount());
@@ -157,10 +157,11 @@ public class DrawSnapshotService {
 			if (event.type() == EventType.NO_TICKET && total != 0) invalid();
 			if (event.type() == EventType.TICKET && (total == 0 || (!event.weightingEnabled() && total != 1))) invalid();
 			long weight = event.type() == EventType.TICKET && event.weightingEnabled()
-			? Math.addExact(bronze, Math.addExact(Math.multiplyExact(silver, 3), Math.multiplyExact(gold, 5))) : 1;
+			? Math.addExact(Math.addExact(bronze, Math.multiplyExact(silver, 3)),
+					Math.addExact(Math.multiplyExact(gold, 5), Math.multiplyExact(platinum, 10))) : 1;
 			if (weight <= 0) invalid();
 			return new DrawSnapshot.Candidate(null, participant.id(), participant.userId(), total, weight,
-					new DrawSnapshot.EntryEvidence(1, bronze, silver, gold, participant.entries()),
+					new DrawSnapshot.EntryEvidence(2, bronze, silver, gold, platinum, participant.entries()),
 					new DrawSnapshot.EligibilityEvidence(1, participant.userId(), participant.membership(),
 					participant.role(), false, now));
 		} catch (ArithmeticException overflow) {

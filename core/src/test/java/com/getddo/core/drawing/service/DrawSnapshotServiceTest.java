@@ -215,11 +215,44 @@ class DrawSnapshotServiceTest {
 		assertError(INVALID_EVIDENCE);
 	}
 
+	/** 실제 사용 장수 한 장과 플래티넘 가중치 10을 구분해 신규 저장 형식에 보존한다. */
 	@Test
-	@DisplayName("플래티넘 가중치를 지원하기 전에는 플래티넘 사용분이 있는 응모를 증거 오류로 거절한다")
-	void rejectsPlatinumUseUntilWeightIsSupported() {
+	@DisplayName("플래티넘 한 장을 가중치 10과 신규 규칙·근거 버전으로 저장한다")
+	void storesPlatinumWeightAndVersionedEvidence() {
+		// given
 		when(repository.findParticipants(eventId)).thenReturn(List.of(participant(1, entry(1, TicketGrade.PLATINUM))));
-		assertError(INVALID_EVIDENCE);
+		// when
+		DrawSnapshot snapshot = service.prepareInitial(eventId);
+		// then
+		assertThat(snapshot.algorithmVersion()).isEqualTo("weighted-without-replacement-v1");
+		assertThat(snapshot.rules().version()).isEqualTo(3);
+		assertThat(snapshot.rules().platinumWeight()).isEqualTo(10);
+		assertThat(snapshot.candidates()).singleElement().satisfies(candidate -> {
+			assertThat(candidate.ticketCount()).isEqualTo(1);
+			assertThat(candidate.weight()).isEqualTo(10);
+			assertThat(candidate.entryEvidence().version()).isEqualTo(2);
+			assertThat(candidate.entryEvidence().platinumCount()).isEqualTo(1);
+		});
+	}
+
+	/** 추가 응모에 섞인 네 등급을 모두 합산하고 개수와 가중치를 따로 보존한다. */
+	@Test
+	@DisplayName("네 등급 혼합 추가 응모는 실제 4장과 가중치 19를 보존한다")
+	void sumsAllFourGradesAcrossEntries() {
+		// given
+		Entry first = entry(2, TicketGrade.PLATINUM, TicketGrade.GOLD);
+		Entry additional = entry(2, TicketGrade.SILVER, TicketGrade.BRONZE);
+		when(repository.findParticipants(eventId)).thenReturn(List.of(participant(4, first, additional)));
+		// when
+		DrawSnapshot.Candidate candidate = service.prepareInitial(eventId).candidates().getFirst();
+		// then
+		assertThat(candidate.ticketCount()).isEqualTo(4);
+		assertThat(candidate.weight()).isEqualTo(19);
+		assertThat(candidate.entryEvidence().bronzeCount()).isEqualTo(1);
+		assertThat(candidate.entryEvidence().silverCount()).isEqualTo(1);
+		assertThat(candidate.entryEvidence().goldCount()).isEqualTo(1);
+		assertThat(candidate.entryEvidence().platinumCount()).isEqualTo(1);
+		assertThat(candidate.entryEvidence().entries()).containsExactly(first, additional);
 	}
 
 	/** 추가 응모를 허용하지 않는 이벤트에서 여러 응모를 거절하는지 검증한다. */

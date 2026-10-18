@@ -147,6 +147,35 @@ class EntrySnapshotIntegrationTest {
 		assertThat(count("select count(*) from event_participants where event_id = ?", bytes(event))).isEqualTo(1);
 	}
 
+	/** 실제 플래티넘 차감과 추가 응모를 연결해 네 등급 근거가 JSON 왕복 후에도 보존되는지 검증한다. */
+	@Test
+	@DisplayName("실제 플래티넘 혼합 응모는 사용 4장·가중치 19를 저장하고 재요청에도 보존한다")
+	void platinumEntryPersistsWeightedSnapshot() {
+		// given
+		give(user, "BRONZE", 1);
+		give(user, "SILVER", 1);
+		give(user, "GOLD", 1);
+		give(user, "PLATINUM", 1);
+		UUID first = UUID.randomUUID(), additional = UUID.randomUUID();
+		// when
+		entries.enter(command(user, first, Map.of(TicketGrade.PLATINUM, 1L, TicketGrade.GOLD, 1L)));
+		entries.enter(command(user, additional, Map.of(TicketGrade.SILVER, 1L, TicketGrade.BRONZE, 1L)));
+		DrawSnapshot snapshot = prepare();
+		// then
+		assertThat(snapshot.rules().version()).isEqualTo(3);
+		assertThat(snapshot.rules().platinumWeight()).isEqualTo(10);
+		assertThat(snapshot.candidates()).singleElement().satisfies(candidate -> {
+			assertThat(candidate.ticketCount()).isEqualTo(4);
+			assertThat(candidate.weight()).isEqualTo(19);
+			assertThat(candidate.entryEvidence().version()).isEqualTo(2);
+			assertThat(candidate.entryEvidence().platinumCount()).isEqualTo(1);
+			assertThat(candidate.entryEvidence().entries()).extracting(DrawSnapshotSource.Entry::id)
+					.containsExactlyInAnyOrder(first, additional);
+		});
+		jdbc.update("update event_participants set used_ticket_count = 0 where event_id = ?", bytes(event));
+		assertThat(snapshots.prepareInitial(event)).isEqualTo(snapshot);
+	}
+
 	@ParameterizedTest
 	@ValueSource(strings = {"NO_TICKET", "TICKET"})
 	@DisplayName("미사용·가중치 미적용 이벤트도 실제 서비스로 접수하고 동일 가중치 1을 확정한다")

@@ -37,9 +37,9 @@
 
 기존 `prepareInitial(eventId)` 호환 경로는 한 트랜잭션에서 실행 생성·최초 후보·실행별 연결·READY 전환을 처리하며 준비 실패 시 함께 롤백된다. GD-87 경로는 먼저 실행 등록을 커밋하고, 동일 실행의 후보·연결·입력 확정을 별도 트랜잭션에서 수행한다. 이 경로의 준비 실패는 입력 저장만 롤백하며 등록된 실행 ID는 유지한다.
 
-- 후보의 `entry_snapshot`은 버전 1, 등급별 장수 및 응모별 사용 이력·실제 장수·접수 기록 시각을 보존한다.
+- 후보의 `entry_snapshot`은 기존 버전 1과 신규 버전 2를 지원한다. 신규 버전 2는 플래티넘 실제 차감 개수(`platinumCount`)를 추가하며, 응모별 사용 이력·실제 장수·접수 기록 시각을 보존한다. 버전 1의 누락된 플래티넘 개수만 0으로 복원한다.
 - `eligibility_snapshot`은 버전 1, 사용자 ID·멤버십·역할·명단 확정 시각을 보존한다. 기존 JSON의 `excluded` 필드는 호환성을 위해 유지하며 새 후보에서는 항상 `false`다. 제외 판단 저장소를 조회한 결과를 의미하지 않는다. 과거 JSON은 다시 쓰지 않는다. 개인정보 이름·전화번호·이메일은 저장하지 않는다.
-- 최초 실행의 `rules_snapshot`은 버전 1이며 이벤트 유형·가중치 적용 여부·최소 멤버십·등급별 가중치와 경품 조건을 보존한다. GD-87의 REPLACEMENT 버전 2 확장은 아래 공통 실행 절을 따른다.
+- 최초 실행의 `rules_snapshot`은 기존 버전 1과 신규 버전 3을 지원한다. 신규 버전 3은 플래티넘 장당 가중치(`platinumWeight`)를 포함한다. 재추첨은 최초 규칙에 따라 기존 버전 2 또는 신규 버전 4로 연결 정보를 보존한다. 아래 GD-230 호환 표를 따른다.
 - 알고리즘 버전은 `weighted-without-replacement-v1`로 고정한다. GD-56의 기존 선정 로직에 전달할 확정 가중치는 양의 BIGINT 범위에서 검증한다.
 - READY/RUNNING/CONFIRMED 재요청은 원본 응모를 다시 읽지 않고 저장된 후보 연결·조건·가중치를 반환한다. 결과 선정·저장은 아래 GD-85 확정 서비스를 사용한다.
 - 기존 prepareInitial(eventId)은 생성과 입력 준비를 함께 처리하며 영속 FAILED/PREPARING을 거절한다. GD-87 경로는 registerInitial(eventId)의 등록 커밋 후 execute(runId)를 호출한다. 등록 실행의 입력 준비는 prepareRegistered(runId)를 사용하며 실패해도 실행 ID를 유지한다.
@@ -71,7 +71,7 @@
 
 ## 결과 원자적 확정 — GD-85
 
-`DrawConfirmationService`는 GD-85 최초 실행 확정 서비스를 기반으로 한다. 기존 `confirm(runId)`와 GD-87의 토큰을 받는 `confirm(runId, attemptId)` 모두 내부 서비스다. 재추첨 실행 생성·대상 자리·유지 결과 입력 계약은 GD-138에서 연결하며, GD-87 확장 경로는 버전 2 REPLACEMENT 입력의 실제 대상 자리·최초 후보·유지 결과를 검증해 확정한다. GD-138의 `DrawReplacementInputPreparation`과 실제 취소·등록 서비스·AD05/AD09를 연결했다. 해당 범위의 실제 MySQL·HTTP 검증은 [GD-138 저장 설계](award-cancellation-storage.md)를 참고한다.
+`DrawConfirmationService`는 GD-85 최초 실행 확정 서비스를 기반으로 한다. 기존 `confirm(runId)`와 GD-87의 토큰을 받는 `confirm(runId, attemptId)` 모두 내부 서비스다. 재추첨 실행 생성·대상 자리·유지 결과 입력 계약은 GD-138에서 연결하며, GD-87 확장 경로는 버전 2/4 REPLACEMENT 입력의 실제 대상 자리·최초 후보·유지 결과를 검증해 확정한다. GD-138의 `DrawReplacementInputPreparation`과 실제 취소·등록 서비스·AD05/AD09를 연결했다. 해당 범위의 실제 MySQL·HTTP 검증은 [GD-138 저장 설계](award-cancellation-storage.md)를 참고한다.
 
 - 실행 ID로 이벤트 ID를 확인한 뒤 기존 이벤트 `FOR UPDATE` → 실행 `PESSIMISTIC_WRITE` 순서로 잠근다. 동일 이벤트의 확정을 직렬화하여 실행 간 유효 배정 충돌도 검증한다. 응모·취소 흐름의 이벤트 선잠금 합의는 유지하며 이 구현에서 해당 흐름을 변경하지 않는다.
 - 서비스 트랜잭션은 `READ_COMMITTED`를 사용한다. 이벤트 ID 사전 조회가 MySQL의 오래된 일관 읽기 스냅샷을 고정하여, 잠금 대기 후 이전 요청이 저장한 결과를 놓치는 것을 방지한다. Spring Bean을 통해 하나의 업무 트랜잭션으로 호출한다.
@@ -113,7 +113,7 @@ GD-85 테스트는 단위 검증과 실제 MySQL의 JPA 왕복·FK/UNIQUE·롤�
 
 - `DrawRunEntity(eventId, runNumber, REPLACEMENT)`는 등록에 필요한 공용 생성자이며 등록·취소 원자성은 GD-138 서비스가 담당한다.
 - `DrawSnapshot`에 `drawType`을 포함한다. 기존 7인자 생성자는 INITIAL로 유지한다.
-- `Rules` 버전 1은 최초 입력과 기존 JSON 호환용이다. 버전 2는 원래 전체 경품·가중치 조건에 `originalRunId`, `targetSlots`, `retainedAwards`를 추가한다.
+- 기존 `Rules` 버전 1은 최초 입력, 버전 2는 재추첨 입력이다. GD-230의 신규 최초 입력 3과 재추첨 입력 4에는 플래티넘 가중치를 추가한다. 재추첨은 원래 전체 경품·가중치 조건에 `originalRunId`, `targetSlots`, `retainedAwards`를 보존한다.
 - `Slot(prizeId, rank, slotNumber)`는 실제 취소 자리 번호다. `RetainedAward(resultId, userId, prizeId, slotNumber)`는 유지 결과다. GD-138의 입력 구성 결과를 이 공용 표현으로 변환해 `saveRegisteredReplacement(snapshot)`에 전달한다.
 - 재추첨 저장은 최초 후보 행을 새로 만들지 않고 기존 후보 ID만 실행별로 연결한다. 후보가 0명이어도 READY 입력이며 대상 자리를 UNFILLED로 확정한다.
 - 공통 확정은 최초 조건 일치·역대 당첨 후보 제외·연결된 취소 자리·유지 결과 ID·사용자·자리와 현재 유효 배정을 검증한다. 선정기의 가상 자리 번호를 실제 대상 번호로 바꾸며 유지 당첨자·경품을 수정하지 않는다.
@@ -125,7 +125,7 @@ GD-138 취소·등록·입력 준비·AD05/AD09는 실제 서비스로 연결·�
 아래 `execution` 중첩 DTO, 실패·감사 조회 경로 및 NO_ENTRIES 종료 응답 설명은 원격 공용 spec 반영 전의 백엔드 제안/구현 설명이다. 인접 spec의 사용자 승인 기록은 미커밋 상태이며 원격 main(`00f0d743`)의 계약 동기화는 아직 완료되지 않았다. 확정된 공용 정책을 이 절에서 변경하지 않는다.
 
 - 재추첨 검증은 입력 고정 시각 이전의 실행별 최신 자리 결과와 취소 시각을 대조한다. 고정 후 발생한 취소를 과거 유지 배정에 소급 반영하지 않는다. 대상·유지 자리의 중복·누락과 최신 결과 소유권을 확인하며 이전 미충원 자리는 새 취소 대상에 강제로 넣지 않는다.
-- 저장된 버전 2 조건을 읽을 때 대상 자리·유지 배정을 포함한 전체 규칙을 복원한다. 최초 후보와 재추첨 후보의 반환 순서는 재조회와 동일하게 맞춘다.
+- 저장된 버전 2/4 재추첨 조건을 읽을 때 대상 자리·유지 배정을 포함한 전체 규칙을 복원한다. 최초 후보와 재추첨 후보의 반환 순서는 재조회와 동일하게 맞춘다.
 - 실행 상세의 `execution`은 `failureCount`, `latestFailure{id,runId,failureCode,message,failedAt,traceId}`, `retryAt`, `waitingForOperator`, `cancellations`를 제공한다. 실패 원문은 저장·응답하지 않으며 미분류 과거 코드는 안전한 일반 안내 문구로 표시한다.
 - `GET /api/v1/admin/draws/{drawId}/failures`와 `/execution-audits`는 활성 관리자 전용 전체 이력 조회다. page 기본 1, size 기본 20·허용 1~100이며 시각·ID 최신순으로 페이징한다. 감사는 기존 `audit_logs`의 `DRAW_RUN` 근거를 읽고 원본 감사 데이터를 변경하지 않는다. 상세 요약과 전체 실패 이력을 중복 API로 제공하지 않는다.
 - 최초 재개 중 NO_ENTRIES가 되면 HTTP 200이다. 이미 정상 종료한 실행은 재개하지 않는다. ATTEMPT_LOST는 INTERRUPTED로 분류하며 기존 최대 3회 자동 재시도와 운영자 대기 규칙을 유지한다.
@@ -155,3 +155,22 @@ GD-131은 정상 접수·차감·원장의 원자적 롤백과, 업무 거절 �
 - 내부 연결·복구 계획: [공개 알림 연결 계획](../06-runbook/draw-publication-delivery-plan.md). 실제 서비스 구현·API/MySQL 통합 검증과 전체 test/build는 GD-169의 후속 작업이다.
 
 </details>
+
+## GD-230 플래티넘 입력과 저장 호환
+
+공용 등급·가중치 원본은 [추첨 규칙](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/02-domain/drawing.md#가중치-및-중복-당첨)과 [ADR-025](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/03-decisions/025-platinum-ticket-grade.md)다. 이 절은 저장 형식과 구현 연결만 설명한다.
+
+| 입력 구분 | Rules 버전 | EntryEvidence 버전 | 플래티넘 |
+| --- | --- | --- | --- |
+| 기존 최초 | 1 | 1 | 없는 필드는 가중치·개수 0으로 복원. 실제 PLATINUM USE 근거는 거절 |
+| 기존 최초의 재추첨 | 2 | 1 | 최초에 저장된 조건·후보를 유지 |
+| 신규 최초 | 3 | 2 | 장당 가중치 10과 실제 차감 개수 보존 |
+| 신규 최초의 재추첨 | 4 | 2 | 최초의 플래티넘 가중치·개수·후보 근거를 그대로 유지 |
+
+- `algorithm_version`은 `weighted-without-replacement-v1`을 유지한다. 후보를 가중치에 비례해 한 명씩 선정하고 당첨자를 제거하는 방식은 바뀌지 않았다. 등급 추가는 선정 알고리즘 교체가 아니라 저장 규칙·응모 근거 형식의 확장이므로 JSON 버전으로 구분한다.
+- Jackson 3의 누락 primitive 거절 규칙을 전역 완화하지 않는다. 새 두 필드는 복원 경계에서 nullable 숫자로 받고, 기존 버전에서만 누락을 0으로 정규화한다. 신규 버전의 누락과 규칙 가중치 변조는 거절한다. 운영 중 과거 JSON이나 결과를 다시 쓰지 않는다.
+- 최초 입력은 실제 차감한 네 등급을 모두 세고 checked arithmetic으로 합산한다. 사용 장수와 가중치는 다른 값이다. 저장 검증은 원본 USE 근거의 등급별 개수와 저장된 개수·가중치를 대조한다.
+- 재추첨은 최초 규칙을 복사하며 1→2, 3→4로 연결한다. 저장소·관리자 조회 검증에서도 플래티넘 가중치 일치를 확인한다. 실제 차감·지급 확률은 이 작업에서 수정하지 않는다.
+- 관리자 조회 응답에도 `rulesSnapshot.platinumWeight`와 `entrySnapshot.platinumCount`를 추가한다. 기존 스냅샷은 0을 반환하며 기존 응답 필드를 제거하거나 이름을 바꾸지 않는다.
+- 기존 JSON 컬럼을 사용하며 GD-230은 테이블·컬럼·Flyway를 추가하지 않는다. 선행 GD-228(PR #126)의 enum·응모·마이그레이션 코드 위에서 검증하며, 병합 순서는 GD-228 → GD-230 → GD-229 지급 활성화다.
+- 코드 변경과 검증 결과는 날짜별 워크로그와 Jira GD-230에서 구분해 기록한다. 공용 정책 승인이나 운영 배포 완료를 뜻하지 않는다.

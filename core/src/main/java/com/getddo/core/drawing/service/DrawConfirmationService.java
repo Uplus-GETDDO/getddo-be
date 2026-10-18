@@ -136,10 +136,10 @@ public class DrawConfirmationService {
 		if (snapshot.fixedAt() == null || !DrawSnapshotService.ALGORITHM_VERSION.equals(snapshot.algorithmVersion())
 				|| snapshot.rules() == null || snapshot.rules().prizes().isEmpty()) invalid();
 		if (snapshot.drawType() == DrawType.INITIAL) {
-			if (snapshot.rules().version() != 1 || snapshot.candidates().isEmpty()
+			if (!snapshot.rules().initialFormat() || snapshot.candidates().isEmpty()
 					|| snapshot.rules().originalRunId() != null || !snapshot.rules().targetSlots().isEmpty()
 					|| !snapshot.rules().retainedAwards().isEmpty()) invalid();
-		} else if (snapshot.drawType() != DrawType.REPLACEMENT || snapshot.rules().version() != 2
+		} else if (snapshot.drawType() != DrawType.REPLACEMENT || !snapshot.rules().replacementFormat()
 				|| snapshot.rules().originalRunId() == null || snapshot.rules().targetSlots().isEmpty()) invalid();
 		// 자리 목록을 펼치기 전에 중복·음수·총 인원 오버플로를 검증한다.
 		try {

@@ -118,7 +118,7 @@ public class DrawResultRepositoryImpl implements DrawResultRepository {
 				|| !java.util.Objects.equals(rules.eventType(), replacement.eventType())
 				|| !java.util.Objects.equals(rules.membershipRule(), replacement.membershipRule())
 				|| rules.bronzeWeight() != replacement.bronzeWeight() || rules.silverWeight() != replacement.silverWeight()
-				|| rules.goldWeight() != replacement.goldWeight()) invalid();
+				|| rules.goldWeight() != replacement.goldWeight() || !java.util.Objects.equals(rules.platinumWeight(), replacement.platinumWeight())) invalid();
 		Integer winners = jdbc.queryForObject("""
 			select count(*) from draw_run_candidates link
 			where link.draw_run_id = ? and exists
