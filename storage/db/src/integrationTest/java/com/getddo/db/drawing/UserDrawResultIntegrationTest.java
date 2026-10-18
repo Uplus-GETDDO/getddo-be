@@ -46,6 +46,7 @@ class UserDrawResultIntegrationTest {
 	@Autowired private DrawSnapshotService snapshots;
 	@Autowired private DrawConfirmationService confirmations;
 	@Autowired private DrawPublicationService publications;
+	@Autowired private com.getddo.core.drawing.service.DrawResultConfirmationService adminPublications;
 	@Autowired private UserDrawResultService queries;
 	private UUID eventId;
 	private UUID userId;
@@ -208,6 +209,27 @@ class UserDrawResultIntegrationTest {
 				.containsExactlyElementsOf(before.getPrizes().getFirst().getWinners().stream().map(UserDrawResult.MaskedWinner::getMaskedPhoneNum).toList());
 		assertThat(queries.myResult(user(), eventId).getResult()).isEqualTo(MyDrawResultStatus.CANCELED);
 		assertThat(queries.myResult(user(), eventId).getPrize()).isNull();
+	}
+
+	/** 관리자의 최초 발표를 경계로 사용자 조회가 비공개에서 마스킹된 당첨 결과로 바뀌는지 검증한다. */
+	@Test
+	@org.junit.jupiter.api.DisplayName("실제 관리자 단일 발표 전에는 비공개이고 발표 후에만 본인 당첨 결과를 조회한다")
+	void adminSingleRequestRevealsPreviouslyHiddenResult() {
+		// given
+		enter();
+		DrawSnapshot snapshot = snapshots.prepareInitial(eventId);
+		confirmations.confirm(snapshot.runId());
+		UUID admin = UUID.randomUUID();
+		jdbc.update("insert into users (id, name, role, status, membership, created_at, updated_at) values (?, '발표 관리자', 'ADMIN', 'ACTIVE', 'VIP', ?, ?)",
+				toBytes(admin), utc(NOW), utc(NOW));
+		assertThat(queries.publicResults(user(), eventId).isPublished()).isFalse();
+		assertThat(queries.myResult(user(), eventId).getResult()).isEqualTo(MyDrawResultStatus.PENDING);
+		// when
+		adminPublications.confirmBeforeInitial(snapshot.runId(), admin);
+		// then
+		assertThat(queries.publicResults(user(), eventId).isPublished()).isTrue();
+		assertThat(queries.myResult(user(), eventId).getResult()).isEqualTo(MyDrawResultStatus.WON);
+		assertThat(queries.publicResults(user(), eventId).getPrizes().getFirst().getWinners().getFirst().getMaskedName()).isEqualTo("남**수");
 	}
 
 	private void enter() {

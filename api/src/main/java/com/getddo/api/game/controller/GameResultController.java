@@ -22,7 +22,7 @@ import com.getddo.core.game.domain.GameResultStatus;
 import com.getddo.core.game.service.GamePlayResultService;
 import com.getddo.core.user.domain.User;
 
-/** 색깔 게임 종료 기록(G04). 실제 동시 처리만 202이며 확정 결과는 200으로 반환한다. */
+/** 게임 종료 기록(G04). 실제 동시 처리만 202이며 확정 결과는 200으로 반환한다. */
 @RestController
 @RequestMapping("/api/v1/games/{gameId}/plays/{playId}/result")
 @RequiredArgsConstructor

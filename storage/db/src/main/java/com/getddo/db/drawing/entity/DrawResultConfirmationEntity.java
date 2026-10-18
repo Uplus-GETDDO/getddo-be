@@ -19,7 +19,7 @@ import org.hibernate.annotations.UuidGenerator;
 
 import com.getddo.core.drawing.domain.DrawResultConfirmation;
 
-/** 재추첨 실행마다 한 번 기록하는 관리자 확인. 업무 트랜잭션은 서비스가 담당한다. */
+/** 최초·재추첨 실행마다 한 번 기록하는 관리자 최종 확인. 업무 트랜잭션은 서비스가 담당한다. */
 @Getter
 @Entity
 @Immutable

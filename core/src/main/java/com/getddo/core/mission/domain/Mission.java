@@ -67,8 +67,7 @@ public final class Mission {
 		Objects.requireNonNull(description, "description");
 		Objects.requireNonNull(startsAt, "startsAt");
 		Objects.requireNonNull(endsAt, "endsAt");
-		MissionRules.definition(MissionRules.hasText(title));
-		MissionRules.definition(MissionRules.hasText(description));
+		MissionRules.registrable(title, description, startsAt, endsAt, imageKey);
 		return new Mission(null, rewardPolicyId, createdBy, title, description, missionType, startsAt, endsAt,
 				MissionStatus.ACTIVE, imageKey, null, null);
 	}

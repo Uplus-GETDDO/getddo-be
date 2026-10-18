@@ -31,7 +31,9 @@ public enum EntryErrorCode implements ErrorCode {
 	/** 가중치를 적용하지 않는 이벤트는 브론즈 응모권만 쓸 수 있는데 사용할 수 있는 브론즈가 없다. */
 	BRONZE_REQUIRED(409, "ENTRY-008", "이 이벤트는 브론즈 응모권으로만 응모할 수 있습니다."),
 	/** 이미 접수된 응모 ID로 다른 이벤트·사용자·응모권 구성의 요청이 왔다. */
-	IDEMPOTENCY_CONFLICT(409, "ENTRY-009", "같은 응모 요청 키로 다른 내용의 요청을 보낼 수 없습니다.");
+	IDEMPOTENCY_CONFLICT(409, "ENTRY-009", "같은 응모 요청 키로 다른 내용의 요청을 보낼 수 없습니다."),
+	/** 관리자 응모 조회(AO06·AO07)를 활성 관리자가 아닌 사용자가 호출했다. */
+	ADMIN_REQUIRED(403, "ENTRY-010", "관리자만 조회할 수 있습니다.");
 
 	private final int status;
 	private final String code;

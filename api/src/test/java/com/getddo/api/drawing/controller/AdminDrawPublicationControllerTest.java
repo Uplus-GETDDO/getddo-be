@@ -7,6 +7,7 @@ import com.getddo.core.common.pagination.PageQuery;
 import com.getddo.core.common.pagination.PageResult;
 import com.getddo.core.common.time.TimeProvider;
 import com.getddo.core.drawing.domain.DrawPublication;
+import com.getddo.core.drawing.domain.DrawPublicationConfirmation;
 import com.getddo.core.drawing.domain.DrawPublicationChange;
 import com.getddo.core.drawing.domain.DrawPublicationRun;
 import com.getddo.core.drawing.domain.DrawPublicationType;
@@ -41,10 +42,17 @@ import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
 import static com.getddo.core.drawing.exception.DrawPublicationErrorCode.NOT_CONFIRMABLE;
 import static org.hamcrest.Matchers.aMapWithSize;
 import static org.hamcrest.Matchers.nullValue;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** 실제 MVC 사용자 문맥·확인/권한 서비스를 사용한다. 공개 계산·저장소는 대역이며 DB 연동 검증은 아니다. */
 class AdminDrawPublicationControllerTest {
@@ -66,6 +74,8 @@ class AdminDrawPublicationControllerTest {
 		when(repository.findEventId(runId)).thenReturn(Optional.of(eventId));
 		when(publications.validateReplacement(eventId, runId)).thenReturn(run(null));
 		when(repository.saveConfirmation(runId, actorId, NOW)).thenReturn(confirmation);
+		when(publications.publishReviewedInitial(eventId, runId, actorId)).thenReturn(
+				new DrawPublicationConfirmation(eventId, confirmation, publication(1)));
 		LocalValidatorFactoryBean validator = new LocalValidatorFactoryBean();
 		validator.afterPropertiesSet();
 		mvc = MockMvcBuilders.standaloneSetup(new AdminDrawPublicationController(
@@ -75,24 +85,23 @@ class AdminDrawPublicationControllerTest {
 				.setCustomArgumentResolvers(new CurrentUserArgumentResolver(new UserService(users))).build();
 	}
 
-	/** 공개 전 확인 재요청은 원래 확인자·시각과 미공개 상태를 보존한다는 시나리오를 검증한다. */
+	/** 별도 확인 요청 없이 같은 발표 요청을 반복해도 실제 최초 공개 결과를 반환한다. */
 	@Test
-	@DisplayName("공개 전 확인 재요청은 원래 확인자·시각과 미공개 상태를 보존한다")
-	void preInitialConfirmationDoesNotClaimPublicationAndRetryKeepsOriginalActorAndTime() throws Exception {
+	@DisplayName("최초 발표 요청 한 번과 재시도는 실제 최초 공개 결과를 반환한다")
+	void firstPublicationAndRetryReturnPublishedResult() throws Exception {
 		// given
-		when(publications.publishConfirmed(eventId, runId)).thenReturn(Optional.empty());
+		DrawPublication first = publication(1);
+		when(publications.publishReviewedInitial(eventId, runId, actorId)).thenReturn(
+				new DrawPublicationConfirmation(eventId, confirmation, first));
 		// when / then
-		mvc.perform(selected(post("/api/v1/admin/draws/{id}/result-confirmation", runId)))
-				.andExpect(status().isOk()).andExpect(jsonPath("$.data.confirmationId").value(confirmation.getId().toString()))
-				.andExpect(jsonPath("$.data.isPublished").value(false)).andExpect(jsonPath("$.data.publicationId").value(nullValue()))
-				.andExpect(jsonPath("$.data.revision").value(nullValue())).andExpect(jsonPath("$.data.publishedAt").value(nullValue()));
-		DrawResultConfirmation original = new DrawResultConfirmation(confirmation.getId(), runId, UUID.randomUUID(), NOW.minusSeconds(20));
-		when(publications.validateReplacement(eventId, runId)).thenReturn(run(original));
-		// when / then
-		mvc.perform(selected(post("/api/v1/admin/draws/{id}/result-confirmation", runId)))
-				.andExpect(status().isOk()).andExpect(jsonPath("$.data.confirmedBy").value(original.getConfirmedBy().toString()))
-				.andExpect(jsonPath("$.data.confirmedAt").value("2026-10-12T02:59:40Z"));
-		verify(repository, times(1)).saveConfirmation(runId, actorId, NOW);
+		for (int attempt = 0; attempt < 2; attempt++) {
+			mvc.perform(selected(post("/api/v1/admin/draws/{id}/result-confirmation", runId)))
+					.andExpect(status().isOk()).andExpect(jsonPath("$.data.isPublished").value(true))
+					.andExpect(jsonPath("$.data.confirmationId").value(confirmation.getId().toString()))
+					.andExpect(jsonPath("$.data.publicationId").value(first.getId().toString()));
+		}
+		verify(publications, times(2)).publishReviewedInitial(eventId, runId, actorId);
+		verify(repository, never()).saveConfirmation(any(), any(), any());
 	}
 
 	/** 확인 완료로 최초 명단이 공개되면 실제 공개 버전을 반환한다는 시나리오를 검증한다. */
@@ -101,7 +110,8 @@ class AdminDrawPublicationControllerTest {
 	void preInitialConfirmationCanReturnActualFirstPublication() throws Exception {
 		// given
 		DrawPublication first = publication(1);
-		when(publications.publishConfirmed(eventId, runId)).thenReturn(Optional.of(first));
+		when(publications.publishReviewedInitial(eventId, runId, actorId)).thenReturn(
+				new DrawPublicationConfirmation(eventId, confirmation, first));
 		// when / then
 		mvc.perform(selected(post("/api/v1/admin/draws/{id}/result-confirmation", runId)))
 				.andExpect(status().isOk()).andExpect(jsonPath("$.data.isPublished").value(true))
@@ -118,6 +128,8 @@ class AdminDrawPublicationControllerTest {
 		mvc.perform(selected(post("/api/v1/admin/draws/{id}/publication", runId)))
 				.andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("PUBLICATION-005"));
 		when(repository.findLatest(eventId)).thenReturn(Optional.of(publication(1)));
+		when(publications.publishReviewedInitial(eventId, runId, actorId)).thenThrow(
+				new BusinessException(com.getddo.core.drawing.exception.DrawPublicationErrorCode.INVALID_PHASE));
 		// when / then
 		mvc.perform(selected(post("/api/v1/admin/draws/{id}/result-confirmation", runId)))
 				.andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("PUBLICATION-005"));
@@ -144,7 +156,7 @@ class AdminDrawPublicationControllerTest {
 		}
 		// when / then
 		mvc.perform(selected(post("/api/v1/admin/draws/{id}/result-confirmation", runId)))
-				.andExpect(status().isOk()).andExpect(jsonPath("$.data.revision").value(3));
+				.andExpect(status().isOk()).andExpect(jsonPath("$.data.revision").value(1));
 		verify(repository, never()).saveConfirmation(any(), any(), any());
 	}
 
@@ -273,6 +285,7 @@ class AdminDrawPublicationControllerTest {
 		mvc.perform(selected(post("/api/v1/admin/draws/{id}/" + endpoint, runId))).andExpect(status().isNotFound());
 		when(repository.findEventId(runId)).thenReturn(Optional.of(eventId));
 		when(publications.validateReplacement(eventId, runId)).thenThrow(new BusinessException(NOT_CONFIRMABLE));
+		when(publications.publishReviewedInitial(eventId, runId, actorId)).thenThrow(new BusinessException(NOT_CONFIRMABLE));
 		// when / then
 		mvc.perform(selected(post("/api/v1/admin/draws/{id}/" + endpoint, runId))).andExpect(status().isConflict());
 		verify(repository, never()).saveConfirmation(any(), any(), any());

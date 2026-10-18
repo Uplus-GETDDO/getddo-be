@@ -22,7 +22,7 @@
 
 확인된 근거는 팀원들이 알고 있던 규칙("DTO만 record")과 문서·코드를 일치시키기 위한 2026-09-30 팀 논의다. 그 밖의 결정 이유는 담당자 확인 후 보강한다.
 
-규칙 본문은 [`code-style.md`](../01-conventions/code-style.md) §3·§7, 패키지 배치는 [루트 README](../../README.md#기능-추가-시-패키지-배치)에 반영했다.
+규칙 본문은 [`code-style.md`](../01-conventions/code-style.md) §3·§7, 패키지 배치는 [루트 README](../../README.md#패키지-구조)에 반영했다.
 
 ## 검토한 대안
 

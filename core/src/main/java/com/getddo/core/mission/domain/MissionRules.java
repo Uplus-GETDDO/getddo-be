@@ -1,5 +1,6 @@
 package com.getddo.core.mission.domain;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
@@ -26,6 +27,18 @@ final class MissionRules {
 		if (!valid) {
 			throw new MissionException(MissionErrorCode.INVALID_MISSION_ANSWER);
 		}
+	}
+
+	/**
+	 * 새로 등록하는 미션이 지켜야 할 공통 규칙이다. 등록 정보({@link MissionRegistration})와 새 미션({@link Mission#register})이
+	 * 같은 규칙을 쓰도록 한곳에 둔다. 제목은 비어 있지 않고 200자 이하, 설명은 비어 있지 않고, 종료 시각은 시작 시각 뒤이며,
+	 * 이미지 경로는 500자 이하다.
+	 */
+	static void registrable(String title, String description, Instant startsAt, Instant endsAt, String imageKey) {
+		definition(hasText(title) && title.length() <= Mission.MAX_TITLE_LENGTH);
+		definition(hasText(description));
+		definition(endsAt.isAfter(startsAt));
+		definition(imageKey == null || imageKey.length() <= Mission.MAX_IMAGE_KEY_LENGTH);
 	}
 
 	static boolean hasText(String value) {

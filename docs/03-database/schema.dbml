@@ -776,8 +776,8 @@ Table draw_publications {
   revision int [not null, note: '이벤트별 공개 명단 버전 번호. 최초 1, 갱신마다 증가']
   publication_type draw_publications_publication_type_enum [not null, note: '공개 종류. INITIAL=최초 자동 공개, UPDATE=관리자 확인 후 명단 갱신']
   reason text [note: '공개 명단 변경 사유. UPDATE는 필수. 정상 최초 자동 공개는 NULL 가능']
-  confirmed_by binary(16) [note: '공개 전 재추첨 결과 확인 관리자 ID. UPDATE는 필수. 정상 최초 추첨만 NULL 가능. 실행별 확인은 draw_result_confirmations에서 보존']
-  confirmed_at datetime(6) [note: '관리자 공개 확인 시각 UTC. UPDATE는 필수. 정상 최초 추첨만 NULL 가능. 실제 공개 시각과 구분']
+  confirmed_by binary(16) [note: '공개 버전의 관리자 최종 확인·발표 처리자. GD-199 신규 최초 공개도 기록. 과거 INITIAL의 NULL은 보존. 실행별 원래 확인은 draw_result_confirmations에서 보존']
+  confirmed_at datetime(6) [note: '공개 버전의 관리자 최종 확인 시각 UTC. GD-199 최초 발표 요청에서 공개와 함께 기록. 과거 INITIAL의 NULL은 보존']
   published_at datetime(6) [not null, note: '해당 명단 버전을 실제 공개에 반영한 시각 UTC']
 
   indexes {
@@ -785,7 +785,7 @@ Table draw_publications {
     (event_id, revision) [unique, name: 'uq_draw_publications_1']
   }
 
-  Note: 'source_draw_id는 공개 계기. 실제 포함 결과는 draw_publication_results에 버전별로 누적·불변 보존. 최초 공개 전 재추첨도 실행별 관리자 확인 완료 후 공개하며 정상 최초 추첨은 자동 공개. 공개 버전 연속 증가·재시도·완전한 명단 구성은 이벤트 잠금과 같은 트랜잭션으로 보장.'
+  Note: 'source_draw_id는 공개 계기. 실제 포함 결과는 버전별 불변 보존. GD-199는 관리자 단일 발표 요청에서 최초·재추첨의 필요한 확인과 전체 명단을 함께 저장. 자동 추첨은 자동 공개가 아님. 공개 버전·재시도·명단 변경 검사는 이벤트 잠금과 같은 트랜잭션으로 보장.'
 
   checks {
     `(publication_type = 'INITIAL' AND revision = 1) OR (publication_type = 'UPDATE' AND revision >= 2)` [name: 'chk_publication_type_revision']
@@ -853,6 +853,7 @@ Table event_entries {
 
 Table banners {
   id binary(16) [pk, not null, note: '배너 ID']
+  event_id binary(16) [note: '연결 이벤트. 이전 URL 행은 관리자 연결 전 NULL']
   image_key varchar(500) [not null, note: '이미지 저장소 경로']
   display_order int [not null, note: '서비스 전체 노출 순서 1~5']
   created_at datetime(6) [not null, note: '생성 시각 UTC']
@@ -861,12 +862,20 @@ Table banners {
 
   indexes {
     display_order [unique, name: 'uq_banners_1']
+    event_id [name: 'idx_banners_event_id']
   }
 
-  Note: '순서 1~5와 순서 UNIQUE로 최대 5개 보장. URL만 존재하므로 이벤트 삭제에 따른 연결 배너 삭제 방식은 보완 필요.'
+  Note: 'V028 이벤트 연결. 기존 URL·행 보존. 미연결/삭제/취소 배너는 사용자에게 숨기고 관리자에게 유지. CHECK·UNIQUE로 최대 5개.'
 
   checks {
     `display_order BETWEEN 1 AND 5` [name: 'chk_banner_order']
+  }
+}
+
+Table banner_catalog_lock {
+  id tinyint [pk, not null, note: '고정 제어 행 1. 빈 목록에서도 카탈로그 쓰기 직렬화']
+  checks {
+    `id = 1` [name: 'chk_banner_catalog_lock']
   }
 }
 
@@ -1046,7 +1055,7 @@ Table ticket_histories {
 // 근거: getddo-spec/02-domain/drawing.md 결과 발표 및 pending-decisions.md API·저장 후속.
 Table draw_result_confirmations {
   id binary(16) [pk, not null, note: '재추첨 결과의 관리자 확인 이력 ID. 확정 후 수정·삭제 금지']
-  draw_run_id binary(16) [not null, note: '관리자가 확인한 REPLACEMENT 실행 ID. 최초 공개 전에도 기록']
+  draw_run_id binary(16) [not null, note: '관리자가 최종 확인한 INITIAL·REPLACEMENT 실행 ID. GD-199 최초 발표 요청에서 필요한 확인을 함께 기록']
   confirmed_by binary(16) [not null, note: '실제 확인 관리자 ID']
   confirmed_at datetime(6) [not null, note: '관리자 확인 시각 UTC. 실행 결과 확정 시각 및 실제 공개 시각과 구분']
 
@@ -1054,12 +1063,12 @@ Table draw_result_confirmations {
     draw_run_id [unique, name: 'uq_draw_result_confirmations_run']
     (id, draw_run_id) [unique, name: 'uq_draw_result_confirmations_id_run']
   }
-  Note: '확정된 재추첨 결과를 확인한 성공 이력만 저장. 같은 실행의 확인 재요청은 기존 이력 재사용. REPLACEMENT·CONFIRMED 상태, 관리자 권한, 결과 불변을 서비스에서 검증. 정상 최초 추첨에는 확인 행을 요구하지 않음. 취소 사유는 해당 실행에 연결된 award_cancellations에서 조회.'
+  Note: '확정된 최초·재추첨 결과의 최종 확인 성공 이력. 기존 확인은 수정·삭제하지 않고 재사용. CONFIRMED·관리자 권한·결과 불변을 서비스에서 검증. GD-199 최초 발표는 별도 확인 요청 없이 공개와 함께 저장. 취소 사유는 연결된 award_cancellations에서 조회.'
 }
 
 Table draw_publication_executions {
   publication_id binary(16) [not null, note: '실제 공개 버전 ID']
-  draw_run_id binary(16) [not null, note: '미충원을 포함해 명단에 반영된 REPLACEMENT 실행 ID']
+  draw_run_id binary(16) [not null, note: '미충원을 포함해 명단에 반영된 INITIAL·REPLACEMENT 실행 ID']
   event_id binary(16) [not null, note: '공개 버전과 실행의 이벤트 일치']
   confirmation_id binary(16) [not null, note: '실행별 불변 관리자 확인 근거']
   indexes {
@@ -1073,12 +1082,12 @@ Table draw_publication_results {
   draw_result_id binary(16) [not null, note: '이 버전에 실제 포함한 SELECTED 결과 ID. 이전 실행 유지 결과와 새 재추첨 결과 모두 포함']
   event_id binary(16) [not null, note: '공개 버전과 결과 실행의 이벤트 일치를 복합 FK로 보장']
   draw_run_id binary(16) [not null, note: '포함 결과의 원본 실행 ID. 공개 계기 실행과 다를 수 있음']
-  confirmation_id binary(16) [note: 'REPLACEMENT 결과의 관리자 확인 이력. INITIAL 결과는 NULL. 유지 재추첨 결과는 기존 확인 재사용']
+  confirmation_id binary(16) [note: '실행별 관리자 최종 확인 이력. GD-199 신규 최초 공개는 INITIAL도 연결. 과거 INITIAL의 NULL은 보존. 유지 결과는 기존 확인 재사용']
 
   indexes {
     (publication_id, draw_result_id) [pk, name: 'pk_draw_publication_results']
   }
-  Note: '공개 버전의 전체 명단을 같은 트랜잭션에서 고정하고 수정·삭제하지 않음. 서비스에서 SELECTED 여부, REPLACEMENT이면 확인 필수·INITIAL이면 NULL, 확인 시각 <= 공개 시각, 경품 이벤트 일치, 취소 결과 제외, 유지 결과 포함, 사용자·경품 자리 중복 금지를 검증. 결과와 공개 시각을 통해 실제 공개 이력을 조회하며 사유·처리자·변경 전후는 이전 공개 버전 및 취소·확인 기록과 연결하여 조회. 빈 명단도 공개 버전 행으로 보존.'
+  Note: '공개 버전의 전체 명단을 같은 트랜잭션에서 고정하고 수정·삭제하지 않음. GD-199 신규 최초 공개는 INITIAL·REPLACEMENT의 최종 확인을 연결하며 과거 INITIAL의 NULL은 소급 변경하지 않음. SELECTED, 확인 시각 <= 공개 시각, 이벤트 일치, 취소 제외·유지 결과 포함, 중복 사용자·자리를 검증. 빈 명단도 공개 버전으로 보존. 사유·처리자·변경 전후는 원본 이력으로 조회.'
 }
 
 Ref: event_prizes.event_id > events.id
@@ -1177,3 +1186,5 @@ Ref: draw_publication_results.(confirmation_id, draw_run_id) > draw_result_confi
 Ref: draw_publication_executions.(publication_id, event_id) > draw_publications.(id, event_id)
 Ref: draw_publication_executions.(draw_run_id, event_id) > draw_runs.(id, event_id)
 Ref: draw_publication_executions.(confirmation_id, draw_run_id) > draw_result_confirmations.(id, draw_run_id)
+
+Ref: banners.event_id > events.id

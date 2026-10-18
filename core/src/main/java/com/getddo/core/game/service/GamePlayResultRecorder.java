@@ -13,13 +13,15 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.getddo.core.common.exception.BusinessException;
 import com.getddo.core.common.time.TimeProvider;
-import com.getddo.core.game.domain.ColorWordValidationResult;
+import com.getddo.core.game.domain.ColorWordRules;
 import com.getddo.core.game.domain.GamePlay;
 import com.getddo.core.game.domain.GamePlayCredentials;
 import com.getddo.core.game.domain.GamePlayResult;
 import com.getddo.core.game.domain.GameResultSubmission;
 import com.getddo.core.game.domain.GameRewardClaim;
+import com.getddo.core.game.domain.TakkoRunRules;
 import com.getddo.core.game.exception.GameErrorCode;
+import com.getddo.core.game.exception.GameResultFormatException;
 import com.getddo.core.game.repository.GamePlayRepository;
 import com.getddo.core.game.repository.GameRewardClaimRepository;
 import com.getddo.core.game.repository.GameStatisticsRepository;
@@ -35,6 +37,7 @@ import com.getddo.core.ticket.service.TicketGrantService;
 public class GamePlayResultRecorder {
 	private final GamePlayRepository plays;
 	private final ColorWordValidator validator;
+	private final TakkoRunValidator takkoRunValidator;
 	private final GameStatisticsRepository statistics;
 	private final GameRewardClaimRepository claims;
 	private final TicketGrantService grants;
@@ -52,16 +55,45 @@ public class GamePlayResultRecorder {
 			}
 			return GamePlayResult.completed(play, previousReward(play));
 		}
-		ColorWordValidationResult judged = validator.validate(play, submission.getAnswers());
-		if (judged.isValid()) statistics.lockOrCreate(userId, play.getGameId());
+		Long score = validate(play, submission);
+		if (score != null) {
+			statistics.lockOrCreate(userId, play.getGameId());
+		}
 		Instant completedAt = time.now().truncatedTo(ChronoUnit.MICROS);
-		GamePlay completed = plays.complete(play.complete(judged.getScore(), submission.getResultHash(), completedAt));
+		GamePlay completed = plays.complete(play.complete(score, submission.getResultHash(), completedAt));
 		GrantResult reward = null;
 		if (completed.isValid()) {
 			statistics.addScore(userId, completed.getGameId(), completed.getScore());
-			if (completed.getScore() >= 50) reward = claimAndGrant(completed);
+			if (completed.getScore() >= minimumRewardScore(play)) {
+				reward = claimAndGrant(completed);
+			}
 		}
 		return GamePlayResult.completed(completed, reward);
+	}
+
+	/** 저장된 규칙으로 종류를 선택한다. 클라이언트의 입력 형태만으로 게임을 결정하지 않는다. */
+	private Long validate(GamePlay play, GameResultSubmission submission) {
+		if (ColorWordRules.RULE_VERSION.equals(play.getRuleVersion())) {
+			if (submission.getTakkoRun() != null) {
+				throw new GameResultFormatException();
+			}
+			return validator.validate(play, submission.getAnswers()).getScore();
+		}
+		if (TakkoRunRules.RULE_VERSION.equals(play.getRuleVersion())) {
+			if (submission.getTakkoRun() == null) {
+				throw new GameResultFormatException();
+			}
+			return takkoRunValidator.validate(play, submission.getTakkoRun());
+		}
+		throw new IllegalStateException("지원하는 게임의 시작 스냅샷이 필요합니다.");
+	}
+
+	private static long minimumRewardScore(GamePlay play) {
+		return switch (play.getRuleVersion()) {
+			case ColorWordRules.RULE_VERSION -> ColorWordRules.MINIMUM_REWARD_SCORE;
+			case TakkoRunRules.RULE_VERSION -> TakkoRunRules.MINIMUM_REWARD_SCORE;
+			default -> throw new IllegalStateException("지원하는 게임의 보상 규칙이 필요합니다.");
+		};
 	}
 
 	private GrantResult claimAndGrant(GamePlay completed) {
@@ -70,7 +102,12 @@ public class GamePlayResultRecorder {
 		if (claims.findByDate(completed.getUserId(), completed.getGameId(), date).isPresent()) return null;
 		GameRewardClaim claim = claims.insert(GameRewardClaim.of(completed,
 				claims.requirePolicy(completed.getGameId(), completed.getCompletedAt()), date));
-		return grants.grant(new GrantCommand(completed.getUserId(), source(claim), 1, "글자색깔 맞추기 일일 보상"));
+		String reason = switch (completed.getRuleVersion()) {
+			case ColorWordRules.RULE_VERSION -> "글자색깔 맞추기 일일 보상";
+			case TakkoRunRules.RULE_VERSION -> "타꼬런 일일 보상";
+			default -> throw new IllegalStateException("지원하는 게임의 보상 규칙이 필요합니다.");
+		};
+		return grants.grant(new GrantCommand(completed.getUserId(), source(claim), 1, reason));
 	}
 
 	private GrantResult previousReward(GamePlay play) {

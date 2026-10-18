@@ -27,11 +27,12 @@ import com.getddo.db.support.MySqlTestConfiguration;
 		"com.getddo.core.ticket", "com.getddo.db.ticket",
 		"com.getddo.core.attendance", "com.getddo.db.attendance",
 		"com.getddo.core.entry", "com.getddo.db.entry",
-		"com.getddo.core.mission", "com.getddo.db.mission"})
+		"com.getddo.core.mission", "com.getddo.db.mission",
+		"com.getddo.core.audit", "com.getddo.db.audit.repository", "com.getddo.db.audit.mapper"})
 @EntityScan(basePackages = {"com.getddo.db.ticket", "com.getddo.db.attendance", "com.getddo.db.entry",
-		"com.getddo.db.mission"})
+		"com.getddo.db.mission", "com.getddo.db.audit.entity"})
 @EnableJpaRepositories(basePackages = {"com.getddo.db.ticket", "com.getddo.db.attendance", "com.getddo.db.entry",
-		"com.getddo.db.mission"})
+		"com.getddo.db.mission", "com.getddo.db.audit.repository"})
 @Import({JpaAuditingConfig.class, MySqlTestConfiguration.class})
 public class TicketIntegrationTestApplication {
 

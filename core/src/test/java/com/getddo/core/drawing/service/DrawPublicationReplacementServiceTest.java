@@ -49,10 +49,21 @@ import org.springframework.transaction.annotation.AnnotationTransactionAttribute
 import org.springframework.transaction.interceptor.TransactionInterceptor;
 import org.springframework.transaction.support.AbstractPlatformTransactionManager;
 import org.springframework.transaction.support.DefaultTransactionStatus;
-import static com.getddo.core.drawing.exception.DrawPublicationErrorCode.*;
-import static org.assertj.core.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 
 /** 실제 서비스와 Spring 트랜잭션 프록시를 검증한다. 저장소·이벤트 잠금은 메모리 대역이며 MySQL 검증이 아니다. */
 class DrawPublicationReplacementServiceTest {
@@ -85,7 +96,7 @@ class DrawPublicationReplacementServiceTest {
 	void setUp() {
 		when(clock.instant()).thenReturn(NOW);
 		TimeProvider time = new TimeProvider(clock);
-		publications = proxy(new DrawPublicationService(repository, snapshots, results, time, notifications));
+		publications = proxy(new DrawPublicationService(repository, snapshots, results, time, notifications, mock(com.getddo.core.event.service.EventStatusChangeService.class)));
 		confirmations = proxy(new DrawResultConfirmationService(repository, publications, new DrawAdminAuthorization(users), time));
 		for (UUID user : List.of(userA, userB, userC, userD)) candidates.put(user, UUID.randomUUID());
 		List<DrawSnapshot.Candidate> inputs = candidates.entrySet().stream().map(entry -> new DrawSnapshot.Candidate(

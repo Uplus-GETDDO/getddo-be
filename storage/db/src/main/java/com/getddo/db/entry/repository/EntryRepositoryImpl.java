@@ -16,6 +16,7 @@ import org.springframework.stereotype.Repository;
 
 import com.getddo.core.common.pagination.PageQuery;
 import com.getddo.core.common.pagination.PageResult;
+import com.getddo.core.entry.domain.AdminEntryFilter;
 import com.getddo.core.entry.domain.Entry;
 import com.getddo.core.entry.domain.EntryHistoryQuery;
 import com.getddo.core.entry.domain.EntryStatus;
@@ -61,8 +62,19 @@ public class EntryRepositoryImpl implements EntryRepository {
 
 	@Override
 	public PageResult<EntrySummary> findByUser(UUID userId, EntryHistoryQuery query, PageQuery page) {
+		return search(userId, query.getEventId(), query.getStatus(), query.getFrom(), query.getTo(), page);
+	}
+
+	@Override
+	public PageResult<EntrySummary> findAll(AdminEntryFilter filter, PageQuery page) {
+		return search(filter.getUserId(), filter.getEventId(), filter.getStatus(), filter.getFrom(), filter.getTo(),
+				page);
+	}
+
+	private PageResult<EntrySummary> search(UUID userId, UUID eventId, EntryStatus status, Instant from, Instant to,
+			PageQuery page) {
 		Map<String, Object> parameters = new HashMap<>();
-		String where = where(userId, query, parameters);
+		String where = where(userId, eventId, status, from, to, parameters);
 		Query count = entityManager.createNativeQuery(HISTORY_COUNT + where);
 		parameters.forEach(count::setParameter);
 		long total = ((Number) count.getSingleResult()).longValue();
@@ -94,25 +106,29 @@ public class EntryRepositoryImpl implements EntryRepository {
 		return new PageResult<>(items, page.getPage(), page.getSize(), total);
 	}
 
-	/** 사용자와 조회 조건의 WHERE 절을 만들고 바인딩할 값을 채운다. */
-	private static String where(UUID userId, EntryHistoryQuery query, Map<String, Object> parameters) {
-		StringBuilder where = new StringBuilder(" where e.user_id = :userId");
-		parameters.put("userId", UuidBinary.toBytes(userId));
-		if (query.getEventId() != null) {
+	/** 조회 조건의 WHERE 절을 만들고 바인딩할 값을 채운다. 값이 없는 조건은 넣지 않는다. */
+	private static String where(UUID userId, UUID eventId, EntryStatus status, Instant from, Instant to,
+			Map<String, Object> parameters) {
+		StringBuilder where = new StringBuilder(" where 1 = 1");
+		if (userId != null) {
+			where.append(" and e.user_id = :userId");
+			parameters.put("userId", UuidBinary.toBytes(userId));
+		}
+		if (eventId != null) {
 			where.append(" and e.event_id = :eventId");
-			parameters.put("eventId", UuidBinary.toBytes(query.getEventId()));
+			parameters.put("eventId", UuidBinary.toBytes(eventId));
 		}
-		if (query.getStatus() != null) {
+		if (status != null) {
 			where.append(" and e.status = :status");
-			parameters.put("status", query.getStatus().name());
+			parameters.put("status", status.name());
 		}
-		if (query.getFrom() != null) {
+		if (from != null) {
 			where.append(" and e.created_at >= :from");
-			parameters.put("from", query.getFrom());
+			parameters.put("from", from);
 		}
-		if (query.getTo() != null) {
+		if (to != null) {
 			where.append(" and e.created_at < :to");
-			parameters.put("to", query.getTo());
+			parameters.put("to", to);
 		}
 		return where.toString();
 	}

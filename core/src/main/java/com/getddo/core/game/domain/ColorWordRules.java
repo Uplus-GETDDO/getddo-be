@@ -15,6 +15,7 @@ public final class ColorWordRules implements GameStartRules {
 	public static final String GAME_CODE = "COLOR_WORD";
 	public static final String RULE_VERSION = "color-word-v1";
 	public static final String GENERATOR_VERSION = "color-word-generator-v1";
+	public static final int MINIMUM_REWARD_SCORE = 50;
 	private static final JsonMapper JSON = JsonMapper.builder()
 			.enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
 			.enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)

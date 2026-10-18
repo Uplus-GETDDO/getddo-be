@@ -41,7 +41,7 @@ public class AdminDrawPublicationController {
 				actor.getId())));
 	}
 
-	/** 최초 공개 전 재추첨의 관리자 확인과 실제 공개 여부를 응답한다. */
+	/** 검토한 최신 최초·재추첨 실행으로 최종 명단을 한 번에 확인·발표한다. */
 	@PostMapping("/draws/{runId}/result-confirmation")
 	public ResponseEnvelope<DrawResultConfirmationResponse> confirm(@PathVariable UUID runId,
 			@CurrentUser(membershipRequired = false) User actor) {

@@ -25,9 +25,16 @@ import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import static org.assertj.core.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anySet;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 class DrawPublicationPagingTest {
 	private static final Instant NOW = Instant.parse("2026-10-12T03:00:00Z");
@@ -35,7 +42,7 @@ class DrawPublicationPagingTest {
 	private final DrawPublicationRepository repository = mock(DrawPublicationRepository.class);
 	private final UserRepository users = mock(UserRepository.class);
 	private final DrawPublicationService publications = new DrawPublicationService(repository,
-			mock(DrawSnapshotRepository.class), mock(DrawResultRepository.class), new TimeProvider(Clock.fixed(NOW, ZoneOffset.UTC)), mock(DrawPublicationNotificationService.class));
+			mock(DrawSnapshotRepository.class), mock(DrawResultRepository.class), new TimeProvider(Clock.fixed(NOW, ZoneOffset.UTC)), mock(DrawPublicationNotificationService.class), mock(com.getddo.core.event.service.EventStatusChangeService.class));
 
 	/** 페이지 밖의 직전 버전을 포함해 현재 페이지의 실제 변경 전후를 비교한다는 시나리오를 검증한다. */
 	@Test

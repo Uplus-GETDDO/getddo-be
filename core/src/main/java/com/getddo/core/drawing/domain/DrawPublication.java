@@ -91,7 +91,7 @@ public final class DrawPublication {
 		}
 	}
 
-	/** 이 공개 버전에 반영된 재추첨의 확인자·시각·취소 근거다. 당첨자를 채우지 못한 실행도 포함한다. */
+	/** 이 공개 버전에 반영된 최초·재추첨 실행의 확인자·시각·취소 근거다. 당첨자를 채우지 못한 실행도 포함한다. */
 	@Getter
 	@EqualsAndHashCode
 	public static final class Execution {

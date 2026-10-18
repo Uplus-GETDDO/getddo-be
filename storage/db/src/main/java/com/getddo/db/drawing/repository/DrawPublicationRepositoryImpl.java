@@ -258,6 +258,12 @@ public class DrawPublicationRepositoryImpl implements DrawPublicationRepository 
 		toBytes(eventId));
 	}
 
+	/** 실행 종류와 관계없이 기존 확인을 읽어 중복 저장과 과거 확인자 덮어쓰기를 막는다. */
+	@Override
+	public Optional<DrawResultConfirmation> findConfirmation(UUID runId) {
+		return confirmations.findByRunId(runId).map(DrawResultConfirmationEntity::toDomain);
+	}
+
 	/** 이벤트 선잠금 안에서만 호출한다. UNIQUE와 서비스의 재조회로 확인자를 덮어쓰지 않는다. */
 	@Override
 	public DrawResultConfirmation saveConfirmation(UUID runId, UUID actorId, Instant confirmedAt) {
@@ -271,14 +277,27 @@ public class DrawPublicationRepositoryImpl implements DrawPublicationRepository 
 	/** 공개 메타데이터와 포함 결과를 저장하고 재조회한 실제 공개 버전을 반환한다. */
 	@Override
 	public DrawPublication savePublication(UUID eventId, UUID sourceRunId, int revision, String reason,
-	DrawResultConfirmation confirmation, List<DrawPublication.Entry> included, Instant publishedAt) {
-		included = DrawPublication.validatedEntries(included);
+			DrawResultConfirmation confirmation, List<DrawPublication.Entry> included, Instant publishedAt) {
 		DrawPublicationEntity publication = new DrawPublicationEntity(eventId, sourceRunId, revision, reason,
-		confirmation == null ? null : confirmation.getConfirmedBy(),
-		confirmation == null ? null : confirmation.getConfirmedAt(), publishedAt);
+				confirmation == null ? null : confirmation.getConfirmedBy(),
+				confirmation == null ? null : confirmation.getConfirmedAt(), publishedAt);
+		return savePublicationRows(publication, included);
+	}
+
+	/** 과거 확인 행을 수정하지 않고 최초 공개 버전에 실제 발표자와 시각을 기록한다. */
+	@Override
+	public DrawPublication saveReviewedInitial(UUID eventId, UUID sourceRunId, String reason, UUID publisherId,
+			List<DrawPublication.Entry> included, Instant publishedAt) {
+		return savePublicationRows(new DrawPublicationEntity(eventId, sourceRunId, 1, reason,
+				publisherId, publishedAt, publishedAt), included);
+	}
+
+	/** 같은 업무 트랜잭션에서 공개 행·포함 결과를 저장하고 DB 시각으로 재조회한다. */
+	private DrawPublication savePublicationRows(DrawPublicationEntity publication, List<DrawPublication.Entry> included) {
+		included = DrawPublication.validatedEntries(included);
 		DrawPublicationEntity saved = publications.saveAndFlush(publication);
 		entries.saveAllAndFlush(included.stream()
-				.map(entry -> new DrawPublicationResultEntity(saved.getId(), eventId, entry)).toList());
+				.map(entry -> new DrawPublicationResultEntity(saved.getId(), saved.getEventId(), entry)).toList());
 		UUID id = saved.getId();
 		entityManager.detach(saved);
 		return toDomain(publications.findById(id).orElseThrow());

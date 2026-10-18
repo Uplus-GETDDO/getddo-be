@@ -40,7 +40,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doCallRealMethod;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doReturn;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -50,7 +50,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /** 실제 시작→종료→통계→청구→지급과 재시도・롤백・잠금 경합을 MySQL에서 확인한다. */
 @ApiIntegrationTest
-@TestPropertySource(properties = "getddo.rate-limit.enabled=true")
+@TestPropertySource(properties = {
+		"getddo.rate-limit.enabled=true",
+		// 게임 테스트의 시계 설정과 추첨 재시도 폴링이 경쟁하지 않게 한다.
+		"getddo.drawing.retry-worker.enabled=false"
+})
 class GameResultApiIntegrationTest {
 	private static final Instant NOW = Instant.parse("2026-10-15T14:59:59Z");
 	private final JsonMapper json = JsonMapper.builder().build();
@@ -65,8 +69,8 @@ class GameResultApiIntegrationTest {
 
 	@BeforeEach
 	void seed() {
-		when(clock.instant()).thenReturn(NOW);
-		when(clock.getZone()).thenReturn(ZoneOffset.UTC);
+		doReturn(NOW).when(clock).instant();
+		doReturn(ZoneOffset.UTC).when(clock).getZone();
 		user = UUID.randomUUID(); other = UUID.randomUUID(); game = UUID.randomUUID();
 		LocalDateTime at = utc(NOW.minusSeconds(3600));
 		for (UUID id : List.of(user, other)) jdbc.update("""
@@ -127,7 +131,7 @@ class GameResultApiIntegrationTest {
 		JsonNode first = start(); String body = body(first, 5);
 		JsonNode original = result(submit(user, first, body).andExpect(status().isOk()));
 		// when
-		when(clock.instant()).thenReturn(NOW.plusSeconds(2));
+		doReturn(NOW.plusSeconds(2)).when(clock).instant();
 		assertThat(result(submit(user, first, body).andExpect(status().isOk()))).isEqualTo(original);
 		JsonNode second = start();
 		submit(user, second, body(second, 5)).andExpect(status().isOk()).andExpect(jsonPath("$.data.reward.ticketCount").value(1));
@@ -244,7 +248,7 @@ class GameResultApiIntegrationTest {
 				.andExpect(jsonPath("$.data.nextResetAt").value("2026-10-15T15:00:00Z"));
 		statistics(other, game).andExpect(status().isOk()).andExpect(jsonPath("$.data.totalScore").value(0))
 				.andExpect(jsonPath("$.data.rewardClaimedToday").value(false));
-		when(clock.instant()).thenReturn(NOW.plusSeconds(2));
+		doReturn(NOW.plusSeconds(2)).when(clock).instant();
 		statistics(user, game).andExpect(status().isOk()).andExpect(jsonPath("$.data.totalScore").value(50))
 				.andExpect(jsonPath("$.data.rewardDate").value("2026-10-16"))
 				.andExpect(jsonPath("$.data.rewardClaimedToday").value(false));
@@ -276,9 +280,9 @@ class GameResultApiIntegrationTest {
 				.andExpect(status().isTooManyRequests());
 		submit(other, play, submitted).andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("GAME-005"));
 		statistics(user, game).andExpect(status().isOk()).andExpect(jsonPath("$.data.validPlayCount").value(1));
-		when(clock.instant()).thenReturn(NOW.plusSeconds(59));
+		doReturn(NOW.plusSeconds(59)).when(clock).instant();
 		submit(user, play, submitted).andExpect(status().isTooManyRequests()).andExpect(header().string("Retry-After", "1"));
-		when(clock.instant()).thenReturn(NOW.plusSeconds(60));
+		doReturn(NOW.plusSeconds(60)).when(clock).instant();
 		assertThat(result(submit(user, play, submitted).andExpect(status().isOk()))).isEqualTo(original);
 		assertThat(count("tickets")).isEqualTo(1);
 		assertThat(count("game_reward_claims")).isEqualTo(1);

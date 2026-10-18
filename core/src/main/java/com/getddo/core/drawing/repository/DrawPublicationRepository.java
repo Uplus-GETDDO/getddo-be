@@ -41,13 +41,18 @@ public interface DrawPublicationRepository {
 	boolean hasCancellationOrReplacement(UUID eventId);
 	/** 정상 최초 공개 버전과 실제 선정 결과의 포함 기록을 함께 저장한다. */
 	DrawPublication saveInitial(UUID eventId, UUID runId, List<UUID> selectedResultIds, Instant publishedAt);
+	/** 최초 공개의 실제 발표자를 기존 실행별 확인자와 구분해 메타데이터에 저장한다. */
+	DrawPublication saveReviewedInitial(UUID eventId, UUID sourceRunId, String reason, UUID publisherId,
+			List<DrawPublication.Entry> entries, Instant publishedAt);
 	/** 기존 추첨 실행이 속한 이벤트 식별자를 조회한다. */
 	Optional<UUID> findEventId(UUID runId);
 	/** 이벤트 잠금 이후 공개에 필요한 기존 실행과 결과만 조회한다. 상태·입력·취소를 변경하지 않는다. */
 	List<DrawPublicationRun> findReplacementRuns(UUID eventId);
 	/** 이벤트의 기존 결과에 연결된 취소 사유와 재추첨 실행 참조를 조회한다. */
 	List<DrawPublication.Cancellation> findCancellations(UUID eventId);
-	/** 기존 재추첨 결과의 관리자 확인자와 확인 시각을 저장한다. */
+	/** 최초·재추첨 실행에 이미 저장된 관리자 확인 기록을 조회한다. */
+	Optional<DrawResultConfirmation> findConfirmation(UUID runId);
+	/** 최초·재추첨 결과의 관리자 확인자와 확인 시각을 저장한다. */
 	DrawResultConfirmation saveConfirmation(UUID runId, UUID actorId, Instant confirmedAt);
 	/** 공개 메타데이터와 포함 결과를 저장하고 재조회한 실제 공개 버전을 반환한다. */
 	DrawPublication savePublication(UUID eventId, UUID sourceRunId, int revision, String reason,

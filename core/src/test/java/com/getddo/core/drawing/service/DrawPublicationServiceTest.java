@@ -8,6 +8,8 @@ import com.getddo.core.drawing.domain.DrawPublicationChange;
 import com.getddo.core.drawing.domain.DrawPublicationRun;
 import com.getddo.core.drawing.domain.DrawPublicationType;
 import com.getddo.core.drawing.domain.DrawResult;
+import com.getddo.core.drawing.domain.DrawResultConfirmation;
+import com.getddo.core.drawing.domain.DrawPublicationConfirmation;
 import com.getddo.core.drawing.domain.DrawRunStatus;
 import com.getddo.core.drawing.domain.DrawSelection;
 import com.getddo.core.drawing.domain.DrawSelectionResultType;
@@ -32,9 +34,19 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.InOrder;
-import static org.assertj.core.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 /** 저장소 대역을 이용한 공개 업무 규칙 검증. 실제 재추첨 연동 검증은 아니다. */
 class DrawPublicationServiceTest {
@@ -45,8 +57,9 @@ class DrawPublicationServiceTest {
 	private final DrawSnapshotRepository snapshots = mock(DrawSnapshotRepository.class);
 	private final DrawResultRepository results = mock(DrawResultRepository.class);
 	private final DrawPublicationNotificationService notifications = mock(DrawPublicationNotificationService.class);
+	private final com.getddo.core.event.service.EventStatusChangeService eventStatuses = mock(com.getddo.core.event.service.EventStatusChangeService.class);
 	private final DrawPublicationService service = new DrawPublicationService(publications, snapshots, results,
-			new TimeProvider(Clock.fixed(NOW, ZoneOffset.UTC)), notifications);
+			new TimeProvider(Clock.fixed(NOW, ZoneOffset.UTC)), notifications, eventStatuses);
 	private DrawSnapshot snapshot;
 	private DrawResult selected;
 	private DrawResult unfilled;
@@ -155,7 +168,7 @@ class DrawPublicationServiceTest {
 		// when / then
 		assertThat(service.publishInitial(eventId)).contains(stored);
 		assertThat(service.publishInitial(eventId)).contains(stored);
-		verifyNoInteractions(results, notifications);
+		verifyNoInteractions(results, notifications, eventStatuses);
 		verify(publications, never()).saveInitial(any(), any(), anyList(), any());
 	}
 
@@ -223,6 +236,100 @@ class DrawPublicationServiceTest {
 		when(publications.findPublishedSlots(ids)).thenReturn(Map.of(initial.getId(), List.of(before), update.getId(), List.of()));
 		assertThat(service.changes(eventId).getLast().getChanges()).containsExactly(new DrawPublicationChange.SlotChange(
 				prizeId, 1, resultId, userId, null, null));
+	}
+
+	/** 최초 발표에 실제 발표자와 최초 실행 확인 근거가 함께 저장되는지 검증한다. */
+	@Test
+	@DisplayName("최초 정상 결과도 한 요청으로 확인·공개하고 실제 발표자·실행 근거를 저장한다")
+	void publishesReviewedInitialWithActorAndEvidence() {
+		// given
+		UUID actor = UUID.randomUUID();
+		DrawResultConfirmation checked = stubReviewedPublication(actor);
+		// when
+		DrawPublicationConfirmation response = service.publishReviewedInitial(eventId, runId, actor);
+		// then
+		assertThat(response.getConfirmation()).isEqualTo(checked);
+		assertThat(response.getPublication().getConfirmedBy()).isEqualTo(actor);
+		assertThat(response.getPublication().getEntries()).containsExactly(new DrawPublication.Entry(resultId, runId, checked.getId()));
+		verify(publications).saveExecutionEvidence(response.getPublication().getId(), eventId,
+				List.of(new DrawPublication.Execution(runId, checked.getId(), actor, NOW, List.of())));
+		verify(eventStatuses).changeStatus(eventId, EventStatus.CLOSED, EventStatus.PUBLISHED);
+		verify(notifications).register(response.getPublication());
+	}
+
+	/** 새 재추첨으로 검토 명단이 바뀌면 확인 기록을 만들기 전에 거절하는지 검증한다. */
+	@Test
+	@DisplayName("검토 후 새 재추첨이 생기면 옛 runId 발표를 저장 전에 거절한다")
+	void rejectsStaleReviewedRunBeforeSavingConfirmation() {
+		// given
+		when(publications.findReplacementRuns(eventId)).thenReturn(List.of(new DrawPublicationRun(
+				UUID.randomUUID(), eventId, 1, DrawRunStatus.CONFIRMED, NOW, List.of(), null)));
+		// when / then
+		assertThatThrownBy(() -> service.publishReviewedInitial(eventId, runId, UUID.randomUUID())).isInstanceOf(BusinessException.class);
+		verify(publications, never()).saveConfirmation(any(), any(), any());
+		verifyNoInteractions(eventStatuses, notifications);
+	}
+
+	/** 재추첨이 완료되지 않은 명단을 일부 공개하거나 확인 기록으로 남기지 않는지 검증한다. */
+	@Test
+	@DisplayName("최신 재추첨이 실패·진행 중이면 일부 명단을 먼저 발표하지 않는다")
+	void rejectsUnfinishedReplacementBeforeSavingConfirmation() {
+		// given
+		UUID latest = UUID.randomUUID();
+		when(publications.findReplacementRuns(eventId)).thenReturn(List.of(new DrawPublicationRun(
+				latest, eventId, 1, DrawRunStatus.FAILED, null, List.of(), null)));
+		// when / then
+		assertThatThrownBy(() -> service.publishReviewedInitial(eventId, latest, UUID.randomUUID())).isInstanceOf(BusinessException.class);
+		verify(publications, never()).saveConfirmation(any(), any(), any());
+		verifyNoInteractions(eventStatuses, notifications);
+	}
+
+	/** 같은 최초 발표를 재시도해도 원래 확인자와 공개 결과를 보존하는지 검증한다. */
+	@Test
+	@DisplayName("동일 발표 재시도는 최초 성공 버전과 확인자를 반환하고 저장·알림을 중복하지 않는다")
+	void replaysReviewedPublicationWithoutChangingPublisher() {
+		// given
+		DrawPublication first = publication();
+		DrawResultConfirmation checked = new DrawResultConfirmation(UUID.randomUUID(), runId, UUID.randomUUID(), NOW);
+		when(publications.findPrevious(eventId, 2)).thenReturn(Optional.of(first));
+		when(publications.findConfirmation(runId)).thenReturn(Optional.of(checked));
+		// when
+		DrawPublicationConfirmation response = service.publishReviewedInitial(eventId, runId, UUID.randomUUID());
+		// then
+		assertThat(response.getPublication()).isEqualTo(first);
+		assertThat(response.getConfirmation()).isEqualTo(checked);
+		verifyNoInteractions(results, eventStatuses, notifications);
+		verify(publications, never()).saveConfirmation(any(), any(), any());
+	}
+
+	/** 과거 실행 확인자와 현재 명단 발표자가 달라도 각각의 기록을 보존하는지 검증한다. */
+	@Test
+	@DisplayName("과거 확인자는 보존하고 공개 버전의 처리자에는 실제 발표자를 기록한다")
+	void preservesOldCheckButRecordsActualPublisher() {
+		// given
+		UUID publisher = UUID.randomUUID();
+		stubReviewedPublication(publisher);
+		DrawResultConfirmation old = new DrawResultConfirmation(UUID.randomUUID(), runId, UUID.randomUUID(), NOW);
+		when(publications.findConfirmation(runId)).thenReturn(Optional.of(old));
+		// when
+		DrawPublicationConfirmation response = service.publishReviewedInitial(eventId, runId, publisher);
+		// then
+		assertThat(response.getConfirmation()).isEqualTo(old);
+		assertThat(response.getPublication().getConfirmedBy()).isEqualTo(publisher);
+		verify(publications, never()).saveConfirmation(any(), any(), any());
+	}
+
+	/** 저장 대역은 실제 발표 입력의 처리자·명단을 그대로 반환한다. */
+	private DrawResultConfirmation stubReviewedPublication(UUID actor) {
+		DrawResultConfirmation checked = new DrawResultConfirmation(UUID.randomUUID(), runId, actor, NOW);
+		when(publications.saveConfirmation(runId, actor, NOW)).thenReturn(checked);
+		when(publications.saveReviewedInitial(eq(eventId), eq(runId), any(), eq(actor), anyList(), eq(NOW)))
+				.thenAnswer(invocation -> {
+					UUID publisher = invocation.getArgument(3);
+					return new DrawPublication(UUID.randomUUID(), eventId, runId, 1, DrawPublicationType.INITIAL,
+						null, publisher, NOW, NOW, invocation.getArgument(4));
+				});
+		return checked;
 	}
 
 	/** 지정 마감 시각과 상태를 가진 시험용 이벤트를 구성한다. */

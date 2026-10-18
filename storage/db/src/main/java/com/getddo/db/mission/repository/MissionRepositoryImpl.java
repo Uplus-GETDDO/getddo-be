@@ -92,7 +92,7 @@ public class MissionRepositoryImpl implements MissionRepository {
 		boolean beyondIntOffset = PageOffsets.exceedsIntRange(page);
 		PageRequest pageable = PageOffsets.toPageRequest(page, NEWEST_FIRST);
 		Page<MissionEntity> found = missionJpaRepository.search(search.getMissionType(), search.getStatus(),
-				likePattern(search.getKeyword()), pageable);
+				likePattern(search.getKeyword()), search.getStartsFrom(), search.getStartsBefore(), pageable);
 		List<Mission> items = beyondIntOffset ? List.of() : found.getContent().stream().map(mapper::toDomain).toList();
 		return new PageResult<>(items, page.getPage(), page.getSize(), found.getTotalElements());
 	}

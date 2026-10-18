@@ -52,7 +52,7 @@ class MySqlMigrationTest {
 
 	/** 빈 DB에 이벤트·알림 인덱스를 포함한 스키마를 적용하고 재실행의 멱등성을 검증한다. */
 	@Test
-	@DisplayName("빈 MySQL에 전체 마이그레이션이 적용되어 45개 테이블·인덱스·추첨 상태·복구 차수를 갖추고 재실행해도 다시 적용되지 않는다")
+	@DisplayName("빈 MySQL에 전체 마이그레이션이 적용되어 46개 테이블·인덱스·추첨 상태·복구 차수를 갖추고 재실행해도 다시 적용되지 않는다")
 	void migratesSchemaAndDoesNotReapplyIt() throws SQLException {
 		// given
 		// when
@@ -74,6 +74,7 @@ class MySqlMigrationTest {
 				.containsExactly("status", "deleted_at", "starts_at", "id");
 		assertThat(indexColumns("events", "idx_events_lifecycle_end", 1))
 				.containsExactly("status", "deleted_at", "ends_at", "id");
+		assertThat(indexColumns("banners", "idx_banners_event_id", 1)).containsExactly("event_id");
 		assertIndexExists("notification_jobs", "ix_notification_job_pending");
 		assertIndexExists("notification_jobs", "ix_notification_job_lease");
 		assertIndexExists("notifications", "ix_notification_delivery_retry");
@@ -98,7 +99,7 @@ class MySqlMigrationTest {
 					where table_schema = database() and table_name <> 'flyway_schema_history'
 					""")) {
 			assertThat(rows.next()).isTrue();
-			assertThat(rows.getInt(1)).isEqualTo(45);
+			assertThat(rows.getInt(1)).isEqualTo(46);
 		}
 		try (Connection connection = connect();
 			ResultSet rows = connection.createStatement().executeQuery("""

@@ -478,14 +478,18 @@ class AwardCancellationFlowIntegrationTest {
 		AwardCancellationReceipt second = service.cancel(otherAdmin, targets.getLast().getId(), UUID.randomUUID(), "두 번째 사유");
 		assertThat(inspections.verify(users.findById(actor).orElseThrow(), first.cancellation().replacementRunId()).isPassed()).isTrue();
 		assertThat(inspections.verify(users.findById(actor).orElseThrow(), second.cancellation().replacementRunId()).isPassed()).isTrue();
-		resultConfirmations.confirmBeforeInitial(first.cancellation().replacementRunId(), actor);
+		assertThatThrownBy(() -> resultConfirmations.confirmBeforeInitial(first.cancellation().replacementRunId(), actor))
+				.isInstanceOf(BusinessException.class);
+		// 구버전에서 이미 저장한 확인 근거는 새 단일 발표에서도 원래 확인자를 보존한다.
+		jdbc.update("insert into draw_result_confirmations (id, draw_run_id, confirmed_by, confirmed_at) values (?, ?, ?, ?)",
+				toBytes(UUID.randomUUID()), toBytes(first.cancellation().replacementRunId()), toBytes(actor), utc(NOW.plusSeconds(1)));
 		DrawPublication version = resultConfirmations.confirmBeforeInitial(second.cancellation().replacementRunId(), otherAdmin).getPublication();
 		// then
 		assertThat(first.execution().getConfirmation().getResults().getFirst().getSelection().getResultType()).isEqualTo(DrawSelectionResultType.UNFILLED);
 		assertThat(second.execution().getConfirmation().getResults().getFirst().getSelection().getResultType()).isEqualTo(DrawSelectionResultType.UNFILLED);
 		assertThat(version.getEntries()).hasSize(1);
 		List<DrawPublication.Execution> evidence = publications.changes(small.eventId()).getFirst().getExecutions();
-		assertThat(evidence).hasSize(2);
+		assertThat(evidence).hasSize(3);
 		DrawInspectionView.Detail unfilledDetail = inspections.detail(users.findById(actor).orElseThrow(), first.cancellation().replacementRunId());
 		assertThat(unfilledDetail.getResults()).singleElement().satisfies(result -> {
 			assertThat(result.getResultType()).isEqualTo(DrawSelectionResultType.UNFILLED);
@@ -504,7 +508,7 @@ class AwardCancellationFlowIntegrationTest {
 					assertThat(award.getUserId()).isNull();
 					assertThat(award.getCanceledAt()).isNull();
 				});
-		assertThat(evidence.stream().map(DrawPublication.Execution::getConfirmedBy)).containsExactly(actor, otherAdmin);
+		assertThat(evidence.stream().map(DrawPublication.Execution::getConfirmedBy)).containsExactly(otherAdmin, actor, otherAdmin);
 		assertThat(evidence.stream().flatMap(value -> value.getCancellations().stream()).map(DrawPublication.Cancellation::getReason))
 				.containsExactly("첫 번째 사유", "두 번째 사유");
 	}

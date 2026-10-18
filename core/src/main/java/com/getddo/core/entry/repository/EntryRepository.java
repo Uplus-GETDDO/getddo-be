@@ -5,6 +5,7 @@ import java.util.UUID;
 
 import com.getddo.core.common.pagination.PageQuery;
 import com.getddo.core.common.pagination.PageResult;
+import com.getddo.core.entry.domain.AdminEntryFilter;
 import com.getddo.core.entry.domain.Entry;
 import com.getddo.core.entry.domain.EntryHistoryQuery;
 import com.getddo.core.entry.domain.EntrySummary;
@@ -25,4 +26,7 @@ public interface EntryRepository {
 	 * 이벤트 제목을 함께 돌려준다. 요청 페이지가 범위를 넘으면 빈 목록과 전체 건수를 돌려준다.
 	 */
 	PageResult<EntrySummary> findByUser(UUID userId, EntryHistoryQuery query, PageQuery page);
+
+	/** 모든 사용자의 응모 이력을 조건에 맞게 {@link #findByUser}와 같은 순서로 조회한다. 관리자 조회(AO06)용이다. */
+	PageResult<EntrySummary> findAll(AdminEntryFilter filter, PageQuery page);
 }

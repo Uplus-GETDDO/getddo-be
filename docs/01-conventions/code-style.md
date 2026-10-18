@@ -10,7 +10,7 @@
 - `api`는 애플리케이션 실행, HTTP 요청·응답, Controller와 API DTO를 맡는다. Controller는 요청 해석·검증과 응답 변환을 하고 업무 규칙은 Service에 위임한다.
 - `core`는 도메인 객체, 업무 규칙, Service와 Repository 인터페이스를 맡는다. HTTP DTO, JPA Entity, `api`·`storage:db` 구현에 의존하지 않는다.
 - `storage:db`는 JPA Entity, Repository 구현, Entity와 도메인 객체의 변환을 맡는다. 의존 방향은 [루트 README](../../README.md#모듈-의존-관계)를 따른다.
-- 새 기능은 [패키지 배치 기준](../../README.md#기능-추가-시-패키지-배치)을 따르고, 이미 같은 역할을 하는 공통 객체가 있으면 재사용한다. 기능 간 계약 변경은 [담당 경계](backend-feature-assignments.md)를 먼저 확인한다.
+- 새 기능은 [패키지 배치 기준](../../README.md#패키지-구조)을 따르고, 이미 같은 역할을 하는 공통 객체가 있으면 재사용한다. 기능 간 계약 변경은 [담당 경계](backend-feature-assignments.md)를 먼저 확인한다.
 
 ## 2. 생성자 주입과 객체 생성
 

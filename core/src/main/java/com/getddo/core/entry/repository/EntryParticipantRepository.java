@@ -3,6 +3,8 @@ package com.getddo.core.entry.repository;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.getddo.core.common.pagination.PageQuery;
+import com.getddo.core.common.pagination.PageResult;
 import com.getddo.core.entry.domain.EntryParticipant;
 import com.getddo.core.entry.domain.EntryParticipationTotals;
 
@@ -32,4 +34,7 @@ public interface EntryParticipantRepository {
 
 	/** 잠가 읽은 응모자의 누적 차감 수량을 늘린다. */
 	void addUsedTicketCount(UUID participantId, long amount);
+
+	/** 이벤트의 응모자를 최초 응모 시각 내림차순(같으면 ID 내림차순)으로 조회한다. 관리자 조회(AO07)용이며 잠그지 않는다. */
+	PageResult<EntryParticipant> findByEvent(UUID eventId, PageQuery page);
 }

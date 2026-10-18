@@ -1,5 +1,6 @@
 package com.getddo.db.mission.repository;
 
+import java.time.Instant;
 import java.util.UUID;
 
 import org.springframework.data.domain.Page;
@@ -20,7 +21,10 @@ public interface MissionJpaRepository extends JpaRepository<MissionEntity, UUID>
 			where (:missionType is null or m.missionType = :missionType)
 			  and (:status is null or m.status = :status)
 			  and (:titlePattern is null or lower(m.title) like :titlePattern escape '\\')
+			  and (:startsFrom is null or m.startsAt >= :startsFrom)
+			  and (:startsBefore is null or m.startsAt < :startsBefore)
 			""")
 	Page<MissionEntity> search(@Param("missionType") MissionType missionType, @Param("status") MissionStatus status,
-			@Param("titlePattern") String titlePattern, Pageable pageable);
+			@Param("titlePattern") String titlePattern, @Param("startsFrom") Instant startsFrom,
+			@Param("startsBefore") Instant startsBefore, Pageable pageable);
 }

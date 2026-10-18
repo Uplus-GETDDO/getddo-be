@@ -17,7 +17,9 @@ public enum MissionErrorCode implements ErrorCode {
 	/** 제출을 받는 시각이 미션의 운영 기간 밖이거나 운영 중이 아닌 경우. */
 	MISSION_NOT_OPEN(409, "MISSION-004", "제출할 수 있는 기간이 아닙니다."),
 	/** 같은 제출 ID로 다른 사용자·미션·답변이 온 경우. */
-	IDEMPOTENCY_CONFLICT(409, "MISSION-005", "같은 요청 키로 다른 내용의 제출이 접수되어 있습니다.");
+	IDEMPOTENCY_CONFLICT(409, "MISSION-005", "같은 요청 키로 다른 내용의 제출이 접수되어 있습니다."),
+	/** 관리자 미션 API를 활성 관리자가 아닌 사용자가 호출했다. */
+	ADMIN_REQUIRED(403, "MISSION-006", "관리자만 미션을 관리할 수 있습니다.");
 
 	private final int status;
 	private final String code;
