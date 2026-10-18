@@ -163,12 +163,32 @@ class EntryControllerTest {
 	}
 
 	@Test
+	@DisplayName("플래티넘 장수를 받아 서비스에 넘기고, 영수증의 등급별 맵에 플래티넘 키를 담는다")
+	void acceptsPlatinumTickets() throws Exception {
+		// given
+		when(entryService.enter(any())).thenReturn(new EntryReceipt(ENTRY_ID, EVENT_ID, "가을 이벤트",
+				Map.of(TicketGrade.PLATINUM, 1L, TicketGrade.BRONZE, 1L), ACCEPTED_AT, true));
+		// when
+		mvc.perform(enter("{\"tickets\":{\"PLATINUM\":1,\"BRONZE\":1}}"))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.data.requestedTicketCount").value(2))
+				.andExpect(jsonPath("$.data.requestedTicketsByGrade.PLATINUM").value(1))
+				.andExpect(jsonPath("$.data.requestedTicketsByGrade.GOLD").value(0))
+				.andExpect(jsonPath("$.data.deductedTicketsByGrade.PLATINUM").value(1));
+		// then
+		ArgumentCaptor<EntryCommand> command = ArgumentCaptor.forClass(EntryCommand.class);
+		verify(entryService).enter(command.capture());
+		assertThat(command.getValue().getTickets()).containsEntry(TicketGrade.PLATINUM, 1L)
+				.containsEntry(TicketGrade.BRONZE, 1L);
+	}
+
+	@Test
 	@DisplayName("알 수 없는 등급이나 음수·null 장수, 본문 없음은 400이고 서비스를 호출하지 않는다")
 	void rejectsInvalidBody() throws Exception {
 		// given
 		// when
 		// then
-		mvc.perform(enter("{\"tickets\":{\"PLATINUM\":1}}")).andExpect(status().isBadRequest());
+		mvc.perform(enter("{\"tickets\":{\"DIAMOND\":1}}")).andExpect(status().isBadRequest());
 		mvc.perform(enter("{\"tickets\":{\"GOLD\":-1}}")).andExpect(status().isBadRequest());
 		mvc.perform(enter("{\"tickets\":{\"GOLD\":null}}")).andExpect(status().isBadRequest());
 		mvc.perform(enter("{\"tickets\":{\"GOLD\":\"many\"}}")).andExpect(status().isBadRequest());

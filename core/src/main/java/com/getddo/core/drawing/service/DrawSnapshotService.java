@@ -147,6 +147,8 @@ public class DrawSnapshotService {
 						case BRONZE -> bronze = Math.incrementExact(bronze);
 						case SILVER -> silver = Math.incrementExact(silver);
 						case GOLD -> gold = Math.incrementExact(gold);
+						// 플래티넘 가중치(10)와 증거 구조를 지원하기 전까지는 가중치를 잘못 계산하지 않도록 증거 오류로 거절한다.
+						case PLATINUM -> invalid();
 					}
 				}
 				total = Math.addExact(total, entry.deductedTicketCount());

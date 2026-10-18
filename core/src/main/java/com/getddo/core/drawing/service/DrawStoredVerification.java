@@ -108,6 +108,10 @@ public final class DrawStoredVerification {
 							case BRONZE -> bronze = Math.incrementExact(bronze);
 							case SILVER -> silver = Math.incrementExact(silver);
 							case GOLD -> gold = Math.incrementExact(gold);
+							// 플래티넘 가중치(10)와 증거 구조를 지원하기 전까지는 검증을 통과시키지 않는다.
+							case PLATINUM -> {
+								return false;
+							}
 						}
 					}
 				}

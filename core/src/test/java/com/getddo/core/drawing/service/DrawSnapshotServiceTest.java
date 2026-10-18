@@ -215,6 +215,13 @@ class DrawSnapshotServiceTest {
 		assertError(INVALID_EVIDENCE);
 	}
 
+	@Test
+	@DisplayName("플래티넘 가중치를 지원하기 전에는 플래티넘 사용분이 있는 응모를 증거 오류로 거절한다")
+	void rejectsPlatinumUseUntilWeightIsSupported() {
+		when(repository.findParticipants(eventId)).thenReturn(List.of(participant(1, entry(1, TicketGrade.PLATINUM))));
+		assertError(INVALID_EVIDENCE);
+	}
+
 	/** 추가 응모를 허용하지 않는 이벤트에서 여러 응모를 거절하는지 검증한다. */
 	@Test
 	@DisplayName("단일 응모 이벤트에 추가 응모가 있으면 준비를 거절하고 저장하지 않는다")

@@ -73,6 +73,9 @@ public class EventEntryEntity implements Persistable<UUID> {
 	@Column(name = "requested_gold_count", nullable = false, updatable = false)
 	private int requestedGoldCount;
 
+	@Column(name = "requested_platinum_count", nullable = false, updatable = false)
+	private int requestedPlatinumCount;
+
 	@Column(name = "created_at", nullable = false, updatable = false)
 	private Instant createdAt;
 
@@ -81,7 +84,8 @@ public class EventEntryEntity implements Persistable<UUID> {
 
 	public EventEntryEntity(UUID id, UUID eventId, UUID participantId, UUID userId, EntryStatus status,
 			String rejectionCode, String rejectionReason, int requestedTicketCount, int deductedTicketCount,
-			int requestedBronzeCount, int requestedSilverCount, int requestedGoldCount, Instant createdAt) {
+			int requestedBronzeCount, int requestedSilverCount, int requestedGoldCount, int requestedPlatinumCount,
+			Instant createdAt) {
 		this.id = id;
 		this.eventId = eventId;
 		this.participantId = participantId;
@@ -94,6 +98,7 @@ public class EventEntryEntity implements Persistable<UUID> {
 		this.requestedBronzeCount = requestedBronzeCount;
 		this.requestedSilverCount = requestedSilverCount;
 		this.requestedGoldCount = requestedGoldCount;
+		this.requestedPlatinumCount = requestedPlatinumCount;
 		this.createdAt = createdAt;
 	}
 
