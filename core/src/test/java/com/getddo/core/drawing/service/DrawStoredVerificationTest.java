@@ -14,7 +14,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.CsvSource;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class DrawStoredVerificationTest {
@@ -43,19 +43,21 @@ class DrawStoredVerificationTest {
 	}
 
 	@ParameterizedTest
-	@EnumSource(TicketGrade.class)
-	@DisplayName("가중치 미적용 응모권 이벤트는 저장된 브론즈 한 장 근거만 통과한다")
-	void unweightedTicketEvidenceRequiresBronze(TicketGrade grade) {
+	@CsvSource({"1, BRONZE", "1, SILVER", "1, GOLD", "1, PLATINUM",
+			"3, BRONZE", "3, SILVER", "3, GOLD", "3, PLATINUM"})
+	@DisplayName("신규·기존 비가중치 응모권 이벤트는 저장된 브론즈 한 장 근거만 통과한다")
+	void unweightedTicketEvidenceRequiresBronze(int rulesVersion, TicketGrade grade) {
 		// given
 		DrawInspectionView.Run weighted = run(DrawType.INITIAL);
 		DrawInspectionView.Run unweighted = new DrawInspectionView.Run(runId, eventId, 0, DrawType.INITIAL, DrawRunStatus.CONFIRMED, null,
-				weighted.getAlgorithmVersion(), new DrawSnapshot.Rules(1, false, "TICKET", "ALL", 1, 3, 5,
+				weighted.getAlgorithmVersion(), new DrawSnapshot.Rules(rulesVersion, false, "TICKET", "ALL", 1, 3, 5, rulesVersion == 3 ? 10 : 0,
 				weighted.getRules().prizes()), fixedAt, fixedAt, fixedAt, fixedAt);
 		DrawSnapshotSource.Use use = new DrawSnapshotSource.Use(UUID.randomUUID(), UUID.randomUUID(), userId, grade);
 		DrawSnapshotSource.Entry entry = new DrawSnapshotSource.Entry(UUID.randomUUID(), 1, fixedAt.minusSeconds(300), List.of(use));
 		DrawSnapshot.Candidate snapshot = new DrawSnapshot.Candidate(candidateId, participantId, userId, 1, 1,
-				new DrawSnapshot.EntryEvidence(1, grade == TicketGrade.BRONZE ? 1 : 0, grade == TicketGrade.SILVER ? 1 : 0,
-				grade == TicketGrade.GOLD ? 1 : 0, List.of(entry)),
+				new DrawSnapshot.EntryEvidence(rulesVersion == 3 ? 2 : 1, grade == TicketGrade.BRONZE ? 1 : 0,
+				grade == TicketGrade.SILVER ? 1 : 0, grade == TicketGrade.GOLD ? 1 : 0,
+				grade == TicketGrade.PLATINUM ? 1L : 0L, List.of(entry)),
 				new DrawSnapshot.EligibilityEvidence(1, userId, "VIP", "USER", false, fixedAt));
 		// when
 		List<DrawVerification.Item> checks = DrawStoredVerification.verify(unweighted,

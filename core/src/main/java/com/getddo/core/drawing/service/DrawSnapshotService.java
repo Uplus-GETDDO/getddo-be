@@ -155,6 +155,8 @@ public class DrawSnapshotService {
 				total = Math.addExact(total, entry.deductedTicketCount());
 			}
 			if (total != participant.usedTicketCount()) invalid();
+			// 비가중치 응모는 공용 응모 정책과 저장 검증에 따라 브론즈만 허용한다.
+			if (!event.weightingEnabled() && (silver != 0 || gold != 0 || platinum != 0)) invalid();
 			if (event.type() == EventType.NO_TICKET && total != 0) invalid();
 			if (event.type() == EventType.TICKET && (total == 0 || (!event.weightingEnabled() && total != 1))) invalid();
 			long weight = event.type() == EventType.TICKET && event.weightingEnabled()

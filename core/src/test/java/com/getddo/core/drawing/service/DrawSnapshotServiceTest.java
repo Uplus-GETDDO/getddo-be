@@ -15,6 +15,9 @@ import org.junit.jupiter.params.provider.EnumSource;
 
 import com.getddo.core.common.exception.BusinessException;
 import com.getddo.core.common.time.TimeProvider;
+import com.getddo.core.drawing.domain.DrawInspectionView;
+import com.getddo.core.drawing.domain.DrawType;
+import com.getddo.core.drawing.domain.DrawVerification;
 import com.getddo.core.drawing.domain.DrawRunStatus;
 import com.getddo.core.drawing.domain.DrawSnapshot;
 import com.getddo.core.drawing.domain.DrawSnapshotSource.Entry;
@@ -125,8 +128,36 @@ class DrawSnapshotServiceTest {
 		when(repository.findParticipants(eventId)).thenReturn(List.of(participant(0, entry(0))));
 		assertThat(service.prepareInitial(eventId).candidates().getFirst().weight()).isEqualTo(1);
 		when(repository.lockEvent(eventId)).thenReturn(Optional.of(event(EventType.TICKET, false, NOW.minusSeconds(300))));
-		when(repository.findParticipants(eventId)).thenReturn(List.of(participant(1, entry(1, TicketGrade.GOLD))));
+		when(repository.findParticipants(eventId)).thenReturn(List.of(participant(1, entry(1, TicketGrade.BRONZE))));
 		assertThat(service.prepareInitial(eventId).candidates().getFirst().weight()).isEqualTo(1);
+	}
+
+	/** 비가중치 입력 생성과 저장 검증이 모두 브론즈 한 장 정책을 따르는지 확인한다. */
+	@ParameterizedTest
+	@EnumSource(TicketGrade.class)
+	@DisplayName("비가중치 입력은 브론즈만 생성·검증하고 다른 등급은 저장 전에 거절한다")
+	void unweightedCreationMatchesStoredVerification(TicketGrade grade) {
+		// given
+		when(repository.lockEvent(eventId)).thenReturn(Optional.of(event(EventType.TICKET, false, NOW.minusSeconds(300))));
+		when(repository.findParticipants(eventId)).thenReturn(List.of(participant(1, entry(1, grade))));
+		// when / then
+		if (grade != TicketGrade.BRONZE) {
+			assertError(INVALID_EVIDENCE);
+			verify(repository, never()).saveInitial(any());
+			return;
+		}
+		DrawSnapshot snapshot = service.prepareInitial(eventId);
+		DrawSnapshot.Candidate generated = snapshot.candidates().getFirst();
+		assertThat(generated.ticketCount()).isEqualTo(1);
+		assertThat(generated.weight()).isEqualTo(1);
+		DrawSnapshot.Candidate stored = new DrawSnapshot.Candidate(UUID.randomUUID(), generated.participantId(),
+				generated.userId(), generated.ticketCount(), generated.weight(), generated.entryEvidence(), generated.eligibilityEvidence());
+		DrawInspectionView.Run run = new DrawInspectionView.Run(snapshot.runId(), eventId, 0, DrawType.INITIAL,
+				DrawRunStatus.CONFIRMED, null, snapshot.algorithmVersion(), snapshot.rules(), NOW, NOW, NOW, NOW);
+		assertThat(DrawStoredVerification.verify(run, List.of(new DrawInspectionView.Candidate(stored,
+				snapshot.runId(), eventId, eventId, userId)), List.of()))
+				.filteredOn(item -> item.getCode().equals("CANDIDATE_EVIDENCE"))
+				.extracting(DrawVerification.Item::isPassed).containsExactly(true);
 	}
 
 	/** 응모자가 없는 신규 실행만 NO_ENTRIES로 종료하는지 검증한다. */
