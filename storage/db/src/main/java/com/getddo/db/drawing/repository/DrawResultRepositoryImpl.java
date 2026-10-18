@@ -67,7 +67,7 @@ public class DrawResultRepositoryImpl implements DrawResultRepository {
 			return Optional.empty();
 		}
 		DrawRunEntity run = lockedRun.get();
-		// 재추첨 입력은 버전 2 규칙과 최초 후보 연결을 공통 확정 서비스에서 검증한다.
+		// 재추첨 입력은 버전 2/4 규칙과 최초 후보 연결을 공통 확정 서비스에서 검증한다.
 		if ((run.getDrawType() == DrawType.INITIAL && run.getRunNumber() != 0)
 				|| (run.getDrawType() == DrawType.REPLACEMENT && run.getRunNumber() < 1)) invalid();
 		return Optional.of(snapshots.toDomain(run, links.findCandidates(runId)));

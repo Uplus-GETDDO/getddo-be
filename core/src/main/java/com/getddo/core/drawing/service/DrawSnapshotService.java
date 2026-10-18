@@ -112,6 +112,8 @@ public class DrawSnapshotService {
 	private DrawSnapshot buildInput(DrawSnapshotSource.Event event, UUID runId, Instant now) {
 		if (!DrawExecutionEligibility.isExecutable(event, DrawType.INITIAL, now)) throw new BusinessException(NOT_EXECUTABLE);
 		validatePrizes(event);
+		DrawSnapshot.Rules rules = new DrawSnapshot.Rules(3, event.weightingEnabled(), event.type().name(),
+				event.membershipRule(), 1, 3, 5, 10, event.prizes());
 		List<DrawSnapshotSource.Participant> participants = repository.findParticipants(event.id());
 		List<DrawSnapshot.Candidate> candidates = new ArrayList<>();
 		Set<UUID> participantIds = new HashSet<>();
@@ -120,16 +122,14 @@ public class DrawSnapshotService {
 		Set<UUID> historyIds = new HashSet<>();
 		for (DrawSnapshotSource.Participant participant : participants) {
 			if (!participantIds.add(participant.id()) || !users.add(participant.userId())) invalid();
-			candidates.add(validateParticipant(event, participant, now, entryIds, historyIds));
+			candidates.add(validateParticipant(event, rules, participant, now, entryIds, historyIds));
 		}
 		DrawRunStatus status = participants.isEmpty() ? DrawRunStatus.NO_ENTRIES : DrawRunStatus.READY;
-		DrawSnapshot.Rules rules = new DrawSnapshot.Rules(3, event.weightingEnabled(), event.type().name(),
-				event.membershipRule(), 1, 3, 5, 10, event.prizes());
 		return new DrawSnapshot(runId, event.id(), status, now, ALGORITHM_VERSION, rules, candidates);
 	}
 
 	/** 중복 차감·응모 수량·접수 시각을 검증하고 실제 등급별 차감량으로 후보 가중치를 계산한다. */
-	private DrawSnapshot.Candidate validateParticipant(DrawSnapshotSource.Event event,
+	private DrawSnapshot.Candidate validateParticipant(DrawSnapshotSource.Event event, DrawSnapshot.Rules rules,
 			DrawSnapshotSource.Participant participant, Instant now, Set<UUID> entryIds, Set<UUID> historyIds) {
 		long total = 0, bronze = 0, silver = 0, gold = 0, platinum = 0;
 		if (participant.entries().isEmpty() || participant.usedTicketCount() < 0) invalid();
@@ -157,8 +157,10 @@ public class DrawSnapshotService {
 			if (event.type() == EventType.NO_TICKET && total != 0) invalid();
 			if (event.type() == EventType.TICKET && (total == 0 || (!event.weightingEnabled() && total != 1))) invalid();
 			long weight = event.type() == EventType.TICKET && event.weightingEnabled()
-			? Math.addExact(Math.addExact(bronze, Math.multiplyExact(silver, 3)),
-					Math.addExact(Math.multiplyExact(gold, 5), Math.multiplyExact(platinum, 10))) : 1;
+			? Math.addExact(Math.addExact(Math.multiplyExact(bronze, rules.bronzeWeight()),
+					Math.multiplyExact(silver, rules.silverWeight())),
+					Math.addExact(Math.multiplyExact(gold, rules.goldWeight()),
+							Math.multiplyExact(platinum, rules.platinumWeight()))) : 1;
 			if (weight <= 0) invalid();
 			return new DrawSnapshot.Candidate(null, participant.id(), participant.userId(), total, weight,
 					new DrawSnapshot.EntryEvidence(2, bronze, silver, gold, platinum, participant.entries()),

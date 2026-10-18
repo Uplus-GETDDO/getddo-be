@@ -163,7 +163,7 @@ public class DrawConfirmationService {
 		}
 		Set<UUID> participants = new HashSet<>();
 		for (DrawSnapshot.Candidate candidate : snapshot.candidates()) {
-			// 버전 1에 저장된 후보 형식을 검증한다. 현재 어뷰징 판단을 조회하거나 후보를 재선별하지 않는다.
+			// 저장된 스냅샷의 후보 형식을 검증한다. 현재 어뷰징 판단을 조회하거나 후보를 재선별하지 않는다.
 			if (candidate.id() == null || candidate.userId() == null || candidate.participantId() == null
 					|| !participants.add(candidate.participantId()) || retainedUsers.contains(candidate.userId()) || candidate.ticketCount() < 0
 					|| candidate.eligibilityEvidence() == null || candidate.eligibilityEvidence().excluded()
@@ -227,7 +227,7 @@ public class DrawConfirmationService {
 		return List.copyOf(mapped);
 	}
 
-	/** 최초는 전 자리, 재추첨은 버전 2에 저장된 빈 자리만 사용한다. */
+	/** 최초는 전 자리, 재추첨은 버전 2/4에 저장된 빈 자리만 사용한다. */
 	static List<DrawSnapshot.Slot> targetSlots(DrawSnapshot snapshot) {
 		List<DrawSnapshot.Slot> slots = new ArrayList<>();
 		Map<UUID, DrawSnapshotSource.Prize> prizes = new HashMap<>();
