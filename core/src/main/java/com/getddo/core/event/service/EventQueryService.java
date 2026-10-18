@@ -2,6 +2,9 @@ package com.getddo.core.event.service;
 
 import java.time.DateTimeException;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import org.springframework.stereotype.Service;
@@ -13,6 +16,7 @@ import com.getddo.core.common.time.TimeProvider;
 import com.getddo.core.event.domain.AdminEventQuery;
 import com.getddo.core.event.domain.EventQueryFilter;
 import com.getddo.core.event.domain.EventView;
+import com.getddo.core.event.domain.EventSort;
 import com.getddo.core.event.exception.EventErrorCode;
 import com.getddo.core.event.exception.EventException;
 import com.getddo.core.event.repository.EventQueryRepository;
@@ -33,7 +37,13 @@ public class EventQueryService {
 	@Transactional(readOnly = true)
 	public PageResult<EventView> findUserEvents(User user, int page, int size, EventQueryFilter filter) {
 		validateActor(user, false);
-		return events.findAll(validateQuery(page, size, filter), new PageQuery(page, size), true);
+		PageResult<EventView> result = events.findAll(validateQuery(page, size, filter), new PageQuery(page, size), true);
+		if (user.getRole() != UserRole.USER || result.getItems().isEmpty()) {
+			return result.map(event -> event.withMyEntered(false));
+		}
+		List<UUID> eventIds = result.getItems().stream().map(event -> event.getDetails().getId()).toList();
+		Set<UUID> enteredIds = events.findEnteredEventIds(user.getId(), eventIds);
+		return result.map(event -> event.withMyEntered(enteredIds.contains(event.getDetails().getId())));
 	}
 
 	/** 활성 사용자의 상세 조회. 저장소가 반환한 공개 상태를 사용자 응답에 사용한다. */
@@ -81,26 +91,37 @@ public class EventQueryService {
 			throw new EventException(EventErrorCode.INVALID_QUERY);
 		}
 		try {
-			Instant from = query.getFromDate() == null ? null
-					: timeProvider.toUtc(query.getFromDate().atStartOfDay());
-			Instant to = query.getToDate() == null ? null
-					: timeProvider.toUtc(query.getToDate().plusDays(1).atStartOfDay());
-			return new EventQueryFilter(query.getStatus(), query.getEventType(), null, query.getKeyword(), from, to);
+			return new EventQueryFilter(query.getStatus(), query.getEventType(), null, query.getKeyword(),
+					startOfDay(query.getFromDate()), endOfDay(query.getToDate()), query.getWeightingEnabled(),
+					startOfDay(query.getCreatedFromDate()), endOfDay(query.getCreatedToDate()),
+					EventSort.fromQuery(query.getSort()));
 		} catch (DateTimeException exception) {
 			// HTTP 외의 호출에서도 날짜 계산 범위 초과를 업무 오류로 처리한다.
 			throw new EventException(EventErrorCode.INVALID_QUERY, exception);
 		}
 	}
 
+	private Instant startOfDay(LocalDate date) {
+		return date == null ? null : timeProvider.toUtc(date.atStartOfDay());
+	}
+
+	private Instant endOfDay(LocalDate date) {
+		return date == null ? null : timeProvider.toUtc(date.plusDays(1).atStartOfDay());
+	}
+
 	/** 페이지와 UTC 검색 경계를 검사해 잘못된 조건이 DB 쿼리로 전달되지 않도록 한다. */
 	private EventQueryFilter validateQuery(int page, int size, EventQueryFilter filter) {
 		if (page < 1 || size < 1 || size > 100 || filter == null
-				|| (filter.getFrom() != null && !EventTimeRange.contains(filter.getFrom()))
-				|| (filter.getTo() != null && !EventTimeRange.contains(filter.getTo()))
-				|| (filter.getFrom() != null && filter.getTo() != null
-						&& !filter.getFrom().isBefore(filter.getTo()))) {
+				|| !validRange(filter.getFrom(), filter.getTo())
+				|| !validRange(filter.getCreatedFrom(), filter.getCreatedTo())) {
 			throw new EventException(EventErrorCode.INVALID_QUERY);
 		}
 		return filter;
+	}
+
+	private boolean validRange(Instant from, Instant to) {
+		return (from == null || EventTimeRange.contains(from))
+				&& (to == null || EventTimeRange.contains(to))
+				&& (from == null || to == null || from.isBefore(to));
 	}
 }

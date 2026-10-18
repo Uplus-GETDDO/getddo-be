@@ -1,6 +1,8 @@
 package com.getddo.core.event.repository;
 
 import java.util.Optional;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import com.getddo.core.common.pagination.PageQuery;
@@ -12,4 +14,7 @@ import com.getddo.core.event.domain.EventView;
 public interface EventQueryRepository {
 	PageResult<EventView> findAll(EventQueryFilter filter, PageQuery page, boolean publicView);
 	Optional<EventView> findById(UUID eventId);
+
+	/** 한 페이지의 이벤트에서 사용자의 정상 참여 기록을 일괄 조회한다. 응모권 차감 수량과 무관하다. */
+	Set<UUID> findEnteredEventIds(UUID userId, List<UUID> eventIds);
 }

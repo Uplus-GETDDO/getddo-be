@@ -7,9 +7,11 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -18,6 +20,7 @@ import org.springframework.stereotype.Repository;
 import com.getddo.core.common.pagination.PageQuery;
 import com.getddo.core.common.pagination.PageResult;
 import com.getddo.core.event.domain.EventQueryFilter;
+import com.getddo.core.event.domain.EventSort;
 import com.getddo.core.event.domain.EventStatus;
 import com.getddo.core.event.domain.EventType;
 import com.getddo.core.event.domain.EventView;
@@ -61,7 +64,7 @@ public class EventQueryRepositoryImpl implements EventQueryRepository {
 		parameters.put("limit", page.getSize());
 		parameters.put("offset", page.offset());
 		List<EventView> rows = jdbc.query(SELECT + where
-				+ " order by e.created_at desc, e.id desc limit :limit offset :offset",
+				+ " order by " + orderBy(filter.getSort()) + " limit :limit offset :offset",
 				parameters, (row, rowNumber) -> toView(row));
 		return new PageResult<>(publicView ? rows : attachPrizes(rows),
 				page.getPage(), page.getSize(), total);
@@ -75,6 +78,35 @@ public class EventQueryRepositoryImpl implements EventQueryRepository {
 		return attachPrizes(rows).stream().findFirst();
 	}
 
+	/** 정상 접수된 참여자를 페이지 단위로 읽는다. 거절 이력이나 차감 장수로 판정하지 않는다. */
+	@Override
+	public Set<UUID> findEnteredEventIds(UUID userId, List<UUID> eventIds) {
+		if (eventIds.isEmpty()) {
+			return Set.of();
+		}
+		List<UUID> entered = jdbc.query("""
+				select p.event_id from event_participants p
+				where p.user_id = :userId and p.event_id in (:eventIds)
+				""", Map.of("userId", UuidBinary.toBytes(userId), "eventIds",
+						eventIds.stream().map(UuidBinary::toBytes).toList()),
+				(row, rowNumber) -> UuidBinary.fromBytes(row.getBytes("event_id")));
+		return new HashSet<>(entered);
+	}
+
+	/** 허용된 컬럼·방향만 사용하고, 같은 값이면 ID로 정렬해 페이지 순서를 안정적으로 유지한다. */
+	private static String orderBy(EventSort sort) {
+		return switch (sort) {
+			case CREATED_AT_DESC -> "e.created_at desc, e.id desc";
+			case CREATED_AT_ASC -> "e.created_at asc, e.id asc";
+			case STARTS_AT_DESC -> "e.starts_at desc, e.id desc";
+			case STARTS_AT_ASC -> "e.starts_at asc, e.id asc";
+			case ENDS_AT_DESC -> "e.ends_at desc, e.id desc";
+			case ENDS_AT_ASC -> "e.ends_at asc, e.id asc";
+			case TITLE_DESC -> "e.title desc, e.id desc";
+			case TITLE_ASC -> "e.title asc, e.id asc";
+		};
+	}
+
 	private static String where(EventQueryFilter filter, boolean publicView, Map<String, Object> parameters) {
 		StringBuilder where = new StringBuilder(" where e.deleted_at is null");
 		if (filter.getStatus() != null) {
@@ -84,6 +116,10 @@ public class EventQueryRepositoryImpl implements EventQueryRepository {
 		if (filter.getEventType() != null) {
 			where.append(" and e.event_type = :eventType");
 			parameters.put("eventType", filter.getEventType().name());
+		}
+		if (filter.getWeightingEnabled() != null) {
+			where.append(" and e.weighting_enabled = :weightingEnabled");
+			parameters.put("weightingEnabled", filter.getWeightingEnabled());
 		}
 		if (filter.getMembershipRule() != null) {
 			where.append(" and e.membership_rule = :membershipRule");
@@ -102,6 +138,14 @@ public class EventQueryRepositoryImpl implements EventQueryRepository {
 		if (filter.getTo() != null) {
 			where.append(" and e.starts_at < :to");
 			parameters.put("to", LocalDateTime.ofInstant(filter.getTo(), ZoneOffset.UTC));
+		}
+		if (filter.getCreatedFrom() != null) {
+			where.append(" and e.created_at >= :createdFrom");
+			parameters.put("createdFrom", LocalDateTime.ofInstant(filter.getCreatedFrom(), ZoneOffset.UTC));
+		}
+		if (filter.getCreatedTo() != null) {
+			where.append(" and e.created_at < :createdTo");
+			parameters.put("createdTo", LocalDateTime.ofInstant(filter.getCreatedTo(), ZoneOffset.UTC));
 		}
 		return where.toString();
 	}
