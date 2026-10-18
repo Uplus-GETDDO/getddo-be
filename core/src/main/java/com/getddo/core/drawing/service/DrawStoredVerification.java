@@ -82,7 +82,8 @@ public final class DrawStoredVerification {
 	private static boolean evidence(DrawInspectionView.Run run, List<DrawInspectionView.Candidate> candidates,
 			Instant evidenceFixedAt, boolean allowEmpty) {
 		DrawSnapshot.Rules rules = run.getRules();
-		if (evidenceFixedAt == null || rules.bronzeWeight() != 1 || rules.silverWeight() != 3 || rules.goldWeight() != 5
+		if (evidenceFixedAt == null || rules.bronzeWeight() != DrawSnapshot.Rules.BRONZE_WEIGHT
+				|| rules.silverWeight() != DrawSnapshot.Rules.SILVER_WEIGHT || rules.goldWeight() != DrawSnapshot.Rules.GOLD_WEIGHT
 				|| !("TICKET".equals(rules.eventType()) || "NO_TICKET".equals(rules.eventType()))
 				|| ("NO_TICKET".equals(rules.eventType()) && rules.weightingEnabled())) return false;
 		Set<UUID> entries = new HashSet<>(), histories = new HashSet<>(), tickets = new HashSet<>();
@@ -121,7 +122,8 @@ public final class DrawStoredVerification {
 				if ("TICKET".equals(rules.eventType()) && (count == 0 || (!rules.weightingEnabled() && count != 1))) return false;
 				if (!rules.weightingEnabled() && (silver != 0 || gold != 0 || platinum != 0)) return false;
 				if (!rules.weightingEnabled() && entry.entries().size() != 1) return false;
-				long weight = rules.weightingEnabled() ? Math.addExact(Math.addExact(bronze, Math.multiplyExact(silver, rules.silverWeight())),
+				long weight = rules.weightingEnabled() ? Math.addExact(Math.addExact(Math.multiplyExact(bronze, rules.bronzeWeight()),
+						Math.multiplyExact(silver, rules.silverWeight())),
 						Math.addExact(Math.multiplyExact(gold, rules.goldWeight()),
 								Math.multiplyExact(platinum, rules.platinumWeight()))) : 1;
 				if (candidate.weight() != weight || weight < 1) return false;

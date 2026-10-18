@@ -24,6 +24,15 @@ public record DrawSnapshot(UUID runId, UUID eventId, DrawRunStatus status, Insta
 	public record Rules(int version, boolean weightingEnabled, String eventType, String membershipRule,
 			int bronzeWeight, int silverWeight, int goldWeight, Integer platinumWeight, List<DrawSnapshotSource.Prize> prizes,
 			UUID originalRunId, List<Slot> targetSlots, List<RetainedAward> retainedAwards) {
+		/** 저장 규칙의 장당 가중치다. 변경 시 입력 버전과 기존 스냅샷 검증 호환을 함께 검토한다. */
+		public static final int BRONZE_WEIGHT = 1;
+		/** 실버의 장당 가중치다. */
+		public static final int SILVER_WEIGHT = 3;
+		/** 골드의 장당 가중치다. */
+		public static final int GOLD_WEIGHT = 5;
+		/** 플래티넘을 지원하는 Rules 3/4의 장당 가중치다. */
+		public static final int PLATINUM_WEIGHT = 10;
+
 		/** 재추첨 확장 필드 없이 규칙을 생성해 기존 최초 입력 호출과 저장 형식의 호환성을 유지한다. */
 		public Rules(int version, boolean weightingEnabled, String eventType, String membershipRule,
 				int bronzeWeight, int silverWeight, int goldWeight, List<DrawSnapshotSource.Prize> prizes) {
@@ -55,7 +64,7 @@ public record DrawSnapshot(UUID runId, UUID eventId, DrawRunStatus status, Insta
 			targetSlots = targetSlots == null ? List.of() : List.copyOf(targetSlots);
 			retainedAwards = retainedAwards == null ? List.of() : List.copyOf(retainedAwards);
 			if (version < 1 || version > 4) throw new IllegalArgumentException("지원하지 않는 추첨 규칙 버전입니다.");
-			if (platinumWeight != (version >= 3 ? 10 : 0)) {
+			if (platinumWeight != (version >= 3 ? PLATINUM_WEIGHT : 0)) {
 				throw new IllegalArgumentException("규칙 버전과 플래티넘 가중치가 일치하지 않습니다.");
 			}
 			if ((version == 1 || version == 3) && (originalRunId != null || !targetSlots.isEmpty() || !retainedAwards.isEmpty())) {

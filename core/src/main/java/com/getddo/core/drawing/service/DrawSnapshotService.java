@@ -113,7 +113,8 @@ public class DrawSnapshotService {
 		if (!DrawExecutionEligibility.isExecutable(event, DrawType.INITIAL, now)) throw new BusinessException(NOT_EXECUTABLE);
 		validatePrizes(event);
 		DrawSnapshot.Rules rules = new DrawSnapshot.Rules(3, event.weightingEnabled(), event.type().name(),
-				event.membershipRule(), 1, 3, 5, 10, event.prizes());
+				event.membershipRule(), DrawSnapshot.Rules.BRONZE_WEIGHT, DrawSnapshot.Rules.SILVER_WEIGHT,
+				DrawSnapshot.Rules.GOLD_WEIGHT, DrawSnapshot.Rules.PLATINUM_WEIGHT, event.prizes());
 		List<DrawSnapshotSource.Participant> participants = repository.findParticipants(event.id());
 		List<DrawSnapshot.Candidate> candidates = new ArrayList<>();
 		Set<UUID> participantIds = new HashSet<>();
