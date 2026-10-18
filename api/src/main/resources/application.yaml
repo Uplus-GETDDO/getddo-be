@@ -1,6 +1,11 @@
 spring:
   application:
     name: GETDDO-BE
+  servlet:
+    multipart:
+      # MB는 십진 단위다. 요청 전체 상한은 파일 외의 multipart 헤더 공간을 포함한다.
+      max-file-size: 5000000B
+      max-request-size: 5100000B
   data:
     redis:
       # 요청 빈도 제한의 횟수 저장소(getddo.rate-limit.store=redis)가 쓰는 연결 설정이다. 환경변수로 주입한다.
@@ -27,6 +32,10 @@ getddo:
 
     # CloudFront 이미지 기본 주소. 끝에 /images/가 포함된다.
     base-url: ${GETDDO_IMAGES_BASE_URL:}
+
+    # AWS에서는 endpoint를 비워 기본 S3 주소·자격 증명 체인을 사용한다.
+    region: ${AWS_REGION:}
+    endpoint: ${GETDDO_IMAGES_ENDPOINT:}
 
   cors:
     # 실제 프론트 origin을 쉼표로 구분해 주입한다. 미설정 시 다른 origin은 허용하지 않는다.

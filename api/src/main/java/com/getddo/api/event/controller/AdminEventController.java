@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.getddo.api.common.context.CurrentUser;
 import com.getddo.api.common.exception.CommonErrorCode;
 import com.getddo.api.common.response.ResponseEnvelope;
+import com.getddo.api.event.config.EventImageUrls;
 import com.getddo.api.event.dto.request.AdminEventQueryRequest;
 import com.getddo.api.event.dto.request.EventWriteRequest;
 import com.getddo.api.event.dto.request.EventCancellationRequest;
@@ -48,16 +49,18 @@ public class AdminEventController {
 	private final EventCancellationService cancellationService;
 	private final EventQueryService queryService;
 	private final TimeProvider timeProvider;
+	private final EventImageUrls imageUrls;
 
 	public AdminEventController(EventRegistrationService registrationService, EventModificationService modificationService,
 			EventDeletionService deletionService, EventCancellationService cancellationService, EventQueryService queryService,
-			TimeProvider timeProvider) {
+			TimeProvider timeProvider, EventImageUrls imageUrls) {
 		this.registrationService = registrationService;
 		this.modificationService = modificationService;
 		this.deletionService = deletionService;
 		this.cancellationService = cancellationService;
 		this.queryService = queryService;
 		this.timeProvider = timeProvider;
+		this.imageUrls = imageUrls;
 	}
 
 	/** 이벤트와 경품을 함께 등록하고 저장된 정보와 자동 추첨 기준 시각을 반환한다. */
@@ -66,7 +69,7 @@ public class AdminEventController {
 			@CurrentUser User user,
 			@Valid @RequestBody EventWriteRequest request) {
 		AdminEventResponse response = AdminEventResponse.from(
-				registrationService.register(request.toRegistration(user.getId())), timeProvider.now());
+				registrationService.register(request.toRegistration(user.getId())), timeProvider.now(), imageUrls::resolve);
 		return ResponseEntity.status(HttpStatus.CREATED).body(ResponseEnvelope.success(response));
 	}
 
@@ -75,7 +78,7 @@ public class AdminEventController {
 	public ResponseEnvelope<AdminEventResponse> modify(@CurrentUser User user, @PathVariable UUID eventId,
 			@Valid @RequestBody EventWriteRequest request) {
 		return ResponseEnvelope.success(AdminEventResponse.from(
-				modificationService.modify(eventId, request.toModification(user.getId())), timeProvider.now()));
+				modificationService.modify(eventId, request.toModification(user.getId())), timeProvider.now(), imageUrls::resolve));
 	}
 
 	/** AE05: 삭제 조건·논리 삭제는 서비스에 위임하고 데이터 없는 성공 JSON을 반환한다. */
@@ -108,7 +111,7 @@ public class AdminEventController {
 		PageResult<EventView> result = queryService.findAdminEvents(user, page, size,
 				request.toDomain());
 		Instant now = timeProvider.now();
-		return ResponseEnvelope.success(result.map(event -> AdminEventResponse.from(event, now)));
+		return ResponseEnvelope.success(result.map(event -> AdminEventResponse.from(event, now, imageUrls::resolve)));
 	}
 
 	/** AE02 관리자 상세는 실제 운영 상태와 이미지 키를 제공한다. */
@@ -118,6 +121,6 @@ public class AdminEventController {
 			@PathVariable UUID eventId) {
 		return ResponseEnvelope.success(AdminEventResponse.from(
 				queryService.findAdminEvent(user, eventId),
-				timeProvider.now()));
+				timeProvider.now(), imageUrls::resolve));
 	}
 }

@@ -21,6 +21,7 @@ import com.getddo.api.common.context.CurrentUserArgumentResolver;
 import com.getddo.api.common.exception.GlobalExceptionHandler;
 import com.getddo.api.event.controller.AdminEventController;
 import com.getddo.api.event.controller.EventController;
+import com.getddo.api.event.config.EventImageUrls;
 import com.getddo.core.common.pagination.PageResult;
 import com.getddo.core.common.time.TimeProvider;
 import com.getddo.core.event.domain.EventStatus;
@@ -79,9 +80,9 @@ class EventResponseContractTest {
 				UserStatus.ACTIVE, null, null, null, null, null, NOW, NOW);
 		when(users.findById(ACTOR_ID)).thenReturn(actor);
 		TimeProvider time = new TimeProvider(Clock.fixed(NOW, ZoneOffset.UTC));
-		mvc = MockMvcBuilders.standaloneSetup(new EventController(queries, time),
+		mvc = MockMvcBuilders.standaloneSetup(new EventController(queries, time, new EventImageUrls("")),
 				new AdminEventController(registrations, mock(EventModificationService.class), deletions,
-						mock(EventCancellationService.class), queries, time))
+						mock(EventCancellationService.class), queries, time, new EventImageUrls("")))
 				.setCustomArgumentResolvers(new CurrentUserArgumentResolver(users))
 				.setControllerAdvice(new GlobalExceptionHandler()).build();
 	}

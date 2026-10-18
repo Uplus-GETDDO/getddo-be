@@ -2,6 +2,7 @@ package com.getddo.api.event.dto.response;
 
 import java.time.Instant;
 import java.util.UUID;
+import java.util.function.Function;
 
 import com.getddo.core.event.domain.EventStatus;
 import com.getddo.core.event.domain.EventType;
@@ -14,8 +15,12 @@ public record EventSummaryResponse(UUID id, String title, String imageUrl, Event
 		boolean weightingEnabled, MembershipRule membershipRule, Instant startsAt, Instant endsAt,
 		EventStatus status, Instant serverTime, boolean myEntered) {
 	public static EventSummaryResponse from(EventView event, Instant serverTime) {
+		return from(event, serverTime, ignored -> null);
+	}
+
+	public static EventSummaryResponse from(EventView event, Instant serverTime, Function<String, String> imageUrls) {
 		RegisteredEvent details = event.getDetails();
-		return new EventSummaryResponse(details.getId(), details.getTitle(), null, details.getEventType(),
+		return new EventSummaryResponse(details.getId(), details.getTitle(), imageUrls.apply(details.getImageKey()), details.getEventType(),
 				details.isWeightingEnabled(), details.getMembershipRule(), details.getStartsAt(), details.getEndsAt(),
 				event.getPublicStatus(), serverTime, event.isMyEntered());
 	}

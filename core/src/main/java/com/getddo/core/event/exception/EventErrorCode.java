@@ -25,7 +25,9 @@ public enum EventErrorCode implements ErrorCode {
 	STATUS_CHANGE_CONFLICT(409, "EVENT-014", "현재 이벤트 상태에서 요청한 상태 변경을 수행할 수 없습니다."),
 	INVALID_STATUS_CHANGE(400, "EVENT-015", "이벤트 상태 변경 요청이 올바르지 않습니다."),
 	INVALID_CANCELLATION_REASON(400, "EVENT-016", "이벤트 취소 사유가 올바르지 않습니다."),
-	ALREADY_CANCELED(409, "EVENT-017", "이미 취소된 이벤트입니다.");
+	ALREADY_CANCELED(409, "EVENT-017", "이미 취소된 이벤트입니다."),
+	INVALID_IMAGE(400, "EVENT-018", "5MB 이하의 JPG·PNG 이미지 파일이 필요합니다."),
+	IMAGE_STORAGE_UNAVAILABLE(503, "EVENT-019", "이미지를 업로드할 수 없습니다. 잠시 후 다시 시도해 주세요.");
 
 	private final int status;
 	private final String code;

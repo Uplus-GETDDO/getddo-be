@@ -81,16 +81,19 @@ flowchart LR
 flowchart LR
     API["api"] --> Core["core"]
     API --> DB["storage:db"]
+    API --> S3["storage:s3"]
     DB --> Core
+    S3 --> Core
 ```
 
-`api`만 실행 가능한 Spring Boot JAR을 만들고, `core`와 `storage:db`는 라이브러리로 함께 실행합니다. `core`는 HTTP DTO와 JPA Entity에 의존하지 않고 Repository 인터페이스로 저장 기능을 사용합니다.
+`api`만 실행 가능한 Spring Boot JAR을 만들고, `core`·`storage:db`·`storage:s3`는 라이브러리로 함께 실행합니다. `core`는 HTTP DTO와 JPA Entity에 의존하지 않고 Repository 인터페이스로 저장 기능을 사용합니다.
 
 | 모듈 | 역할·사용 이유 |
 | --- | --- |
 | api | HTTP 요청·입력 검증·사용자 문맥·응답 변환을 업무 규칙과 분리 |
 | core | 도메인 모델·업무 규칙·Service·트랜잭션과 Repository 계약을 관리 |
 | storage:db | JPA·JDBC 저장 구현, Entity·Mapper와 Flyway 마이그레이션을 관리 |
+| storage:s3 | 이벤트·경품 이미지의 S3 저장과 AWS SDK 설정을 업무 규칙에서 분리 |
 
 ### 패키지 구조
 
@@ -128,6 +131,9 @@ getddo-be/
 │       │       └── exception/                   # 도메인 오류 코드(ErrorCode 구현)
 │       └── test/                                # 도메인 규칙·Service 테스트
 ├── storage/                                     # 영속성 모듈의 경로 구분
+│   ├── s3/                                      # 이벤트·경품 이미지 S3 저장 어댑터
+│   │   ├── build.gradle                         # AWS SDK 의존성
+│   │   └── src/main/java/com/getddo/s3/event/    # S3 클라이언트 설정·저장 구현
 │   └── db/                                      # MySQL 영속성 구현
 │       ├── build.gradle                         # JPA·Flyway·MySQL 드라이버 의존성
 │       └── src/
