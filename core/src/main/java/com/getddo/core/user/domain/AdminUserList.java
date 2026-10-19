@@ -1,5 +1,7 @@
 package com.getddo.core.user.domain;
 
+import java.util.Objects;
+
 import lombok.Getter;
 
 import com.getddo.core.common.pagination.PageResult;
@@ -13,6 +15,10 @@ public final class AdminUserList {
 
 	/** 검색 결과 페이지와 별도로 집계한 활성 일반 사용자 수를 보관한다. */
 	public AdminUserList(PageResult<User> page, long totalUserCount) {
+		Objects.requireNonNull(page, "page");
+		if (totalUserCount < 0) {
+			throw new IllegalArgumentException("totalUserCount must be zero or greater");
+		}
 		this.page = page;
 		this.totalUserCount = totalUserCount;
 	}
