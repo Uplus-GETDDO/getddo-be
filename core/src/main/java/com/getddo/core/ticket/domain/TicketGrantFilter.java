@@ -34,11 +34,13 @@ public final class TicketGrantFilter {
 		this.to = to;
 	}
 
+	/** 조회 조건을 만든다. 값은 검증하지 않으며 기간은 {@link #hasValidPeriod()}로 확인한다. */
 	public static TicketGrantFilter of(UUID userId, String keyword, UUID missionId, GrantSourceType sourceType,
 			TicketGrade grade, Instant from, Instant to) {
 		return new TicketGrantFilter(userId, keyword, missionId, sourceType, grade, from, to);
 	}
 
+	/** 조건이 없는 조회 조건. 전체를 조회한다. */
 	public static TicketGrantFilter none() {
 		return NONE;
 	}

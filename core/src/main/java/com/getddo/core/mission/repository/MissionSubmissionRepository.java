@@ -9,6 +9,7 @@ import com.getddo.core.common.pagination.PageQuery;
 import com.getddo.core.common.pagination.PageResult;
 import com.getddo.core.mission.domain.MissionSubmission;
 
+/** 미션 제출과 답변 저장소. 오답 재도전을 허용하므로 사용자·미션당 제출이 여러 건일 수 있다. */
 public interface MissionSubmissionRepository {
 
 	/**

@@ -13,6 +13,7 @@ import com.getddo.core.entry.domain.EntrySummary;
 /** 응모 요청의 결과(접수 완료와 거절 이력) 저장소. 결과는 추가만 하며 수정·삭제하지 않는다. */
 public interface EntryRepository {
 
+	/** 응모 ID로 응모 결과를 조회한다. 없으면 비어 있다. */
 	Optional<Entry> findById(UUID id);
 
 	/**
