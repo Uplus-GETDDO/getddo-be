@@ -1,8 +1,8 @@
-# 매일 오전 8시 dev → main 자동 릴리스
+# 매일 오전 7시 dev → main 자동 릴리스
 
 - 상태: 검토 대기 · Codex 작성 · 담당자 확인 전
-- 관련: GD-115
-- 실행: 한국 시간 매일 오전 8시(UTC 23:00). GitHub 예약 실행은 지연되거나 누락될 수 있어 정각 실행을 보장하지 않는다.
+- 관련: GD-115, GD-240
+- 실행: 한국 시간 매일 오전 7시(UTC 22:00). GitHub 예약 실행은 지연되거나 누락될 수 있어 정각 실행을 보장하지 않는다. 실제 배포 완료 시각에는 후속 Build·Container CD 시간도 포함된다.
 
 ## 동작
 
@@ -20,6 +20,8 @@ PR CI·봇 리뷰 완료를 기다리는 흐름은 아니다. 사용자가 승�
 ## 사용자 승인 범위와 병합 방식
 
 2026-10-16 사용자가 “매일 오전 8시에 dev ci 성공하면 main에 바로 합쳐지고 바로 배포”하는 방식을 요청하고, main PR의 자동 릴리스 예외를 안내받은 뒤 구현을 지시했다. 이 운영 지시는 **dev → main 정기 릴리스**에만 적용한다. 일반 기능 PR → dev는 공용 workflow.md의 리뷰·Squash and Merge 흐름을 유지한다.
+
+2026-10-19 사용자는 정각 배포 완료가 필수는 아님을 확인하고, GitHub 예약 실행 지연을 고려해 예약 시각을 오전 7시로 한 시간 앞당기도록 요청했다(GD-240). dev CI 확인·병합·후속 배포 조건은 유지한다. 기본 브랜치 dev에 변경이 병합된 뒤부터 새 예약이 적용된다.
 
 장기 브랜치 dev → main은 merge commit으로 조상을 보존한다. 여기까지 squash하면 이미 배포한 dev 커밋도 다음 비교에서 미반영으로 남아 변경 없는 재배포를 만들 수 있다. main PR의 리뷰 예외는 사용자 요청으로 적용한 저장소 운영 예외이며 공용 문서 전체의 정책을 변경하지 않는다.
 
@@ -79,7 +81,7 @@ GitHub 규칙의 App 예외는 PR의 head=dev 조건까지 제한하지 못한�
 2. App 설치·환경 변수·Secret·보호 규칙 분리를 준비한다.
 3. `DAILY_RELEASE_ENABLED=false`를 유지한다.
 4. Actions → Daily Release → Run workflow → **dev**, `dry_run=true`로 실행한다. 수동 dry-run은 자동 실행이 꺼져 있어도 허용한다. PR 생성·병합 없이 조회만 한다. 수동 실행은 기본값이 dry-run이다.
-5. App 토큰 발급과 dry-run 성공을 확인한 뒤 `DAILY_RELEASE_ENABLED=true`로 바꾼다. 준비된 dev 변경이 있을 때 수동 실행의 dry_run을 false로 바꾸거나 다음 오전 8시 실행을 확인한다. dev 변경이 없으면 정상적으로 건너뛴다.
+5. App 토큰 발급과 dry-run 성공을 확인한 뒤 `DAILY_RELEASE_ENABLED=true`로 바꾼다. 준비된 dev 변경이 있을 때 수동 실행의 dry_run을 false로 바꾸거나 다음 오전 7시 실행을 확인한다. dev 변경이 없으면 정상적으로 건너뛴다.
 6. `RELEASE_MERGED`에 기록된 main 커밋의 Build·Container CD와 서버 실행 이미지·HTTPS 응답, 버전 태그·GitHub Release가 같은 커밋을 가리키는지 확인한다. 예약 워크플로 성공 자체가 서버 배포 성공을 의미하지 않는다.
 
 `RELEASE_SKIPPED`는 변경 없음·CI 미완료·충돌·브랜치 변경 등에 따른 건너뛰기다. `RELEASE_FAILED`는 API·인증·보호 규칙 등의 점검이 필요한 실패이며 작업을 실패로 표시한다. GitHub Actions 알림 설정에서 이 저장소의 실패 실행을 구독한다. Slack·메일 전송이나 CloudWatch 알람은 이 작업에 추가하지 않는다.
