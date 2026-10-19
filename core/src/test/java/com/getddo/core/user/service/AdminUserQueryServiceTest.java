@@ -10,6 +10,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 import com.getddo.core.common.pagination.PageResult;
+import com.getddo.core.user.domain.AdminUserList;
 import com.getddo.core.user.domain.AdminUserQuery;
 import com.getddo.core.user.domain.User;
 import com.getddo.core.user.domain.UserRole;
@@ -69,10 +70,13 @@ class AdminUserQueryServiceTest {
 		AdminUserQuery query = query(1, 20, null);
 		PageResult<User> result = new PageResult<>(List.of(actor), 1, 20, 1);
 		when(queries.findAll(query)).thenReturn(result);
+		when(queries.countActiveRegularUsers()).thenReturn(120L);
 		UUID missing = UUID.randomUUID();
 		when(users.findById(missing)).thenReturn(Optional.empty());
 		// when / then
-		assertThat(service.findAll(actor, query)).isSameAs(result);
+		AdminUserList actual = service.findAll(actor, query);
+		assertThat(actual.getPage()).isSameAs(result);
+		assertThat(actual.getTotalUserCount()).isEqualTo(120L);
 		assertThatExceptionOfType(UserException.class).isThrownBy(() -> service.findById(actor, missing))
 				.satisfies(error -> assertThat(error.getErrorCode()).isEqualTo(UserErrorCode.ADMIN_TARGET_NOT_FOUND));
 	}

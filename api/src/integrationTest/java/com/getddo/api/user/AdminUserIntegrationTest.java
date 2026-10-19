@@ -108,12 +108,25 @@ class AdminUserIntegrationTest {
 		long total = activeRegularUsersBeforeSeed + 4;
 
 		// when / then
+		mvc.perform(admin(PATH).param("size", "1"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.totalUserCount").value(total));
+		mvc.perform(admin(PATH).param("keyword", "GD206").param("role", "ADMIN").param("status", "INACTIVE"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.totalElements").value(1))
+				.andExpect(jsonPath("$.data.totalUserCount").value(total));
+		mvc.perform(admin(PATH).param("userId", UUID.randomUUID().toString()).param("page", "2").param("size", "1"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.items", hasSize(0)))
+				.andExpect(jsonPath("$.data.totalElements").value(0))
+				.andExpect(jsonPath("$.data.totalUserCount").value(total));
 		mvc.perform(admin(PATH).param("role", "USER").param("status", "ACTIVE").param("size", "1"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.items", hasSize(1)))
 				.andExpect(jsonPath("$.data.items[0].role").value("USER"))
 				.andExpect(jsonPath("$.data.items[0].status").value("ACTIVE"))
-				.andExpect(jsonPath("$.data.totalElements").value(total));
+				.andExpect(jsonPath("$.data.totalElements").value(total))
+				.andExpect(jsonPath("$.data.totalUserCount").value(total));
 		mvc.perform(admin("/api/v1/admin/stats/daily").param("from", "2031-03-10").param("to", "2031-03-10"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.totalUserCount").value(total));
@@ -127,7 +140,8 @@ class AdminUserIntegrationTest {
 		// then
 		mvc.perform(admin(PATH).param("role", "USER").param("status", "ACTIVE").param("size", "1"))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data.totalElements").value(total - 1));
+				.andExpect(jsonPath("$.data.totalElements").value(total - 1))
+				.andExpect(jsonPath("$.data.totalUserCount").value(total - 1));
 		mvc.perform(admin("/api/v1/admin/stats/daily").param("from", "2031-03-10").param("to", "2031-03-10"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.totalUserCount").value(total - 1));

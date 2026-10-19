@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.getddo.core.common.pagination.PageResult;
+import com.getddo.core.user.domain.AdminUserList;
 import com.getddo.core.user.domain.AdminUserQuery;
 import com.getddo.core.user.domain.User;
 import com.getddo.core.user.domain.UserRole;
@@ -23,11 +24,12 @@ public class AdminUserQueryService {
 	private final AdminUserQueryRepository queries;
 	private final UserRepository users;
 
-	/** 전체 건수와 현재 페이지를 하나의 조회 트랜잭션에서 읽는다. */
+	/** 검색 결과 페이지와 DB 전체의 활성 일반 사용자 수를 하나의 조회 트랜잭션에서 읽는다. */
 	@Transactional(readOnly = true)
-	public PageResult<User> findAll(User actor, AdminUserQuery query) {
+	public AdminUserList findAll(User actor, AdminUserQuery query) {
 		requireAdmin(actor);
-		return queries.findAll(query);
+		PageResult<User> page = queries.findAll(query);
+		return new AdminUserList(page, queries.countActiveRegularUsers());
 	}
 
 	/** 조회 대상은 역할·활성 여부로 제외하지 않으며 부재만 404로 처리한다. */
