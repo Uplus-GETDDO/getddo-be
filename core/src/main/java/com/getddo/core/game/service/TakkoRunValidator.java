@@ -19,9 +19,7 @@ public class TakkoRunValidator {
 	public Long validate(GamePlay play, TakkoRunSubmission submission) {
 		Objects.requireNonNull(play, "play");
 		Objects.requireNonNull(submission, "submission");
-		if (!play.hasVerificationContext() || !TakkoRunRules.RULE_VERSION.equals(play.getRuleVersion())
-				|| !TakkoRunRules.GENERATOR_VERSION.equals(play.getGeneratorVersion())
-				|| play.getGenerationSeed() < 1 || play.getGenerationSeed() > 0xffff_ffffL) {
+		if (!play.hasVerificationContext(TakkoRunRules.RULE_VERSION, TakkoRunRules.GENERATOR_VERSION)) {
 			throw new IllegalStateException("지원하는 타꼬런의 시작 스냅샷이 필요합니다.");
 		}
 		TakkoRunRules rules = TakkoRunRules.fromStoredSnapshot(play.getRulesSnapshot());

@@ -8,6 +8,8 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import com.getddo.core.game.domain.GamePlay;
 import com.getddo.core.game.domain.TakkoOrderGenerator;
@@ -17,6 +19,7 @@ import com.getddo.core.game.domain.TakkoOrderRules;
 import com.getddo.core.game.domain.TakkoOrderSubmission;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class TakkoOrderValidatorTest {
 
@@ -41,7 +44,8 @@ class TakkoOrderValidatorTest {
 	void rejectsInvalidOrders() {
 		// given
 		List<TakkoOrderSubmission> invalid = List.of(input(), input("cheese"), input("scallion"),
-				input("cheese scallion"), input("cheese", "cheese", "cheese", "cheese"),
+				input("cheese scallion"), input("scallion scallion shrimp scallion"),
+				input("cheese", "cheese", "cheese", "cheese"),
 				new TakkoOrderSubmission(List.of(new TakkoOrderRoundInput(2, List.of(TakkoOrderMenu.CHEESE)))),
 				new TakkoOrderSubmission(List.of(new TakkoOrderRoundInput(1, List.of()))));
 		// when / then
@@ -75,6 +79,35 @@ class TakkoOrderValidatorTest {
 		for (int sequence = 1; sequence <= 3; sequence++) rounds.add(wrong(sequence, generator.next(3)));
 		// when / then
 		assertThat(validator.validate(play, new TakkoOrderSubmission(rounds))).isZero();
+	}
+
+	@Test
+	@DisplayName("주문 저장 규칙 손상과 미지원 생성 버전은 INVALID가 아닌 서버 설정 오류다")
+	void rejectsCorruptVerificationContext() {
+		// given
+		List<GamePlay> invalid = List.of(restored("{}", play.getGeneratorVersion(), 1L),
+				restored(play.getRulesSnapshot(), "unsupported-generator", 1L));
+		// when / then
+		for (GamePlay candidate : invalid) {
+			assertThatThrownBy(() -> validator.validate(candidate, input("cheese")))
+					.isInstanceOf(IllegalStateException.class);
+		}
+	}
+
+	@ParameterizedTest
+	@ValueSource(longs = {-1, 0, 4294967296L})
+	@DisplayName("주문 seed 범위가 손상되면 기록을 INVALID로 확정하지 않고 설정 오류를 알린다")
+	void rejectsInvalidSeed(long seed) {
+		// given
+		GamePlay candidate = restored(play.getRulesSnapshot(), play.getGeneratorVersion(), seed);
+		// when / then
+		assertThatThrownBy(() -> validator.validate(candidate, input("cheese")))
+				.isInstanceOf(IllegalStateException.class);
+	}
+
+	private GamePlay restored(String snapshot, String generator, long seed) {
+		return new GamePlay(play.getId(), play.getGameId(), play.getUserId(), play.getRuleVersion(), snapshot,
+				play.getPlayTokenHash(), generator, seed, play.getStartedAt(), null, null, null);
 	}
 
 	private static TakkoOrderRoundInput wrong(int sequence, List<TakkoOrderMenu> expected) {

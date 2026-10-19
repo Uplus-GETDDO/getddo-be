@@ -19,9 +19,7 @@ public class TakkoTimingValidator {
 	public Long validate(GamePlay play, TakkoTimingSubmission submission) {
 		Objects.requireNonNull(play, "play");
 		Objects.requireNonNull(submission, "submission");
-		if (!play.hasVerificationContext() || !TakkoTimingRules.RULE_VERSION.equals(play.getRuleVersion())
-				|| !TakkoTimingRules.GENERATOR_VERSION.equals(play.getGeneratorVersion())
-				|| play.getGenerationSeed() < 1 || play.getGenerationSeed() > 0xffff_ffffL) {
+		if (!play.hasVerificationContext(TakkoTimingRules.RULE_VERSION, TakkoTimingRules.GENERATOR_VERSION)) {
 			throw new IllegalStateException("지원하는 타이밍 게임의 시작 스냅샷이 필요합니다.");
 		}
 		TakkoTimingRules.fromStoredSnapshot(play.getRulesSnapshot());

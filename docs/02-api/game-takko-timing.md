@@ -45,7 +45,7 @@
 사용자가 작업 폴더에서 실행할 명령:
 
 ```bash
-cd /tmp/getddo-timing-20261018
+# getddo-be 저장소 루트에서 실행
 ./gradlew :core:test --tests '*TakkoTiming*' --tests '*GamePlayResultRecorderTest'
 ./gradlew :api:test --tests '*TakkoTiming*'
 ```
@@ -63,3 +63,9 @@ FE 소스는 수정하지 않았다. 담당자에게 다음 변경을 전달해�
 5. spec의 고정 예제로 양측 결과를 확인한다. seed 기반 기록 재현이 사람의 실제 플레이를 증명하지는 않는다.
 
 남은 순서는 CI·리뷰 → 병합·배포 → 공유 DB의 게임·유효 GAME 보상 정책 최초 등록 → FE 실제 연결 확인이다. 현재 공유 DB에 타이밍을 등록하지 않았다. 타꼬주문은 이후 별도 답변으로18점 기준을 채택했으며 [주문 구현](game-takko-order.md)을 따른다.
+
+## PR #136 리뷰 반영 — 2026-10-19
+
+타이밍·주문·타꼬런의 시작 스냅샷 검사를 기존 GamePlay.hasVerificationContext(ruleVersion, generatorVersion)로 모았다. 게임별 버전·오류 메시지·seed 범위는 유지했다. 주문 sequence의 int 범위 초과, 저장 규칙·생성 버전·seed 손상, 주문 길이 초과와 공통 검사 경계 테스트를 추가했다. 영구 문서의 명령은 저장소 루트 기준으로 수정했다.
+
+기존0ddd5f0e의 CI 빌드·테스트는 성공했다. 이 리뷰 수정에서 추가·변경한 테스트는 사용자 지시에 따라 로컬 실행하지 않았고 새 CI 결과로 확인해야 한다. 앞의67개는 최초 구현의 사용자 실행 결과이며 이번 수정의 통과 건수가 아니다.

@@ -19,9 +19,7 @@ public class TakkoOrderValidator {
 	public Long validate(GamePlay play, TakkoOrderSubmission submission) {
 		Objects.requireNonNull(play, "play");
 		Objects.requireNonNull(submission, "submission");
-		if (!play.hasVerificationContext() || !TakkoOrderRules.RULE_VERSION.equals(play.getRuleVersion())
-				|| !TakkoOrderRules.GENERATOR_VERSION.equals(play.getGeneratorVersion())
-				|| play.getGenerationSeed() < 1 || play.getGenerationSeed() > 0xffff_ffffL) {
+		if (!play.hasVerificationContext(TakkoOrderRules.RULE_VERSION, TakkoOrderRules.GENERATOR_VERSION)) {
 			throw new IllegalStateException("지원하는 주문 게임의 시작 스냅샷이 필요합니다.");
 		}
 		TakkoOrderRules rules = TakkoOrderRules.fromStoredSnapshot(play.getRulesSnapshot());

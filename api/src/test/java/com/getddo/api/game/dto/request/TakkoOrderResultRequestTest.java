@@ -37,10 +37,11 @@ class TakkoOrderResultRequestTest {
 	@ParameterizedTest
 	@ValueSource(strings = {"{\"rounds\":null}", "{\"rounds\":{}}", "{\"rounds\":[null]}",
 			"{\"rounds\":[{\"sequence\":1}]}", "{\"rounds\":[{\"sequence\":1.1,\"picks\":[]}]}",
+			"{\"rounds\":[{\"sequence\":2147483648,\"picks\":[]}]}",
 			"{\"rounds\":[{\"sequence\":1,\"picks\":[null]}]}", "{\"rounds\":[{\"sequence\":1,\"picks\":[\"CHEESE\"]}]}",
 			"{\"rounds\":[],\"answers\":[]}", "{\"rounds\":[],\"inputs\":[]}", "{\"rounds\":[],\"taps\":[]}",
 			"{\"rounds\":[],\"endTick\":0}", "{\"rounds\":[],\"totalTicks\":0}"})
-	@DisplayName("누락·소수 번호·잘못된 메뉴·다른 게임 입력 혼합은 COMMON-005다")
+	@DisplayName("누락·소수/범위 초과 번호·잘못된 메뉴·다른 게임 입력 혼합은 COMMON-005다")
 	void rejectsMalformed(String input) {
 		// given / when / then
 		assertThatThrownBy(() -> parse(input)).isInstanceOfSatisfying(BusinessException.class,
