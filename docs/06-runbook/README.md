@@ -8,5 +8,5 @@
 
 - [배너 이전·공개 이미지 설정 확인](banner-migration.md)
 - [컨테이너 CD](container-cd.md)
-- [매일 오전 8시 자동 릴리스](daily-release.md)
+- [매일 오전 7시 자동 릴리스](daily-release.md)
 - [Parameter Store 설정 조회·반영·복구](parameter-store.md)
