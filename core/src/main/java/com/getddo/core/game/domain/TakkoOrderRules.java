@@ -1,13 +1,8 @@
 package com.getddo.core.game.domain;
 
-import java.util.Objects;
-
 import lombok.Getter;
 import tools.jackson.core.JacksonException;
-import tools.jackson.core.StreamReadFeature;
-import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.json.JsonMapper;
 
 /** 주문 게임 v1의 공개 목숨·길이 규칙. 실제 판정은 발급 당시 저장한 규칙을 사용한다. */
 @Getter
@@ -20,11 +15,6 @@ public final class TakkoOrderRules implements GameStartRules {
 	public static final int START_LENGTH = 3;
 	public static final int MAX_LENGTH = 8;
 	public static final int MINIMUM_REWARD_SCORE = 18;
-
-	private static final JsonMapper JSON = JsonMapper.builder()
-			.enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
-			.enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-			.build();
 
 	private final int initialLives;
 	private final int startLength;
@@ -41,10 +31,7 @@ public final class TakkoOrderRules implements GameStartRules {
 
 	/** 누락·소수·중복 키를 보정하지 않고 서버에 저장된 v1 규칙을 검증한다. */
 	public static TakkoOrderRules fromSnapshot(String snapshot) {
-		JsonNode rules = JSON.readTree(Objects.requireNonNull(snapshot, "snapshot"));
-		if (rules == null || !rules.isObject()) {
-			throw new IllegalArgumentException("주문 게임 규칙은 JSON 객체여야 합니다.");
-		}
+		JsonNode rules = StoredRulesSnapshot.readObject(snapshot, "주문 게임 규칙은 JSON 객체여야 합니다.");
 		return new TakkoOrderRules(integer(rules, "initialLives"), integer(rules, "startLength"),
 				integer(rules, "maxLength"));
 	}
@@ -54,17 +41,11 @@ public final class TakkoOrderRules implements GameStartRules {
 		try {
 			return fromSnapshot(snapshot);
 		} catch (JacksonException | IllegalArgumentException invalidConfiguration) {
-			IllegalStateException safeCause = new IllegalStateException(invalidConfiguration.getClass().getName());
-			safeCause.setStackTrace(invalidConfiguration.getStackTrace());
-			throw new IllegalStateException("저장된 주문 게임 규칙이 올바르지 않습니다.", safeCause);
+			throw StoredRulesSnapshot.wrapStoredFailure("저장된 주문 게임 규칙이 올바르지 않습니다.", invalidConfiguration);
 		}
 	}
 
 	private static int integer(JsonNode rules, String name) {
-		JsonNode value = rules.get(name);
-		if (value == null || !value.isIntegralNumber() || !value.canConvertToInt()) {
-			throw new IllegalArgumentException("주문 게임 규칙에는 정수 필드가 필요합니다.");
-		}
-		return value.intValue();
+		return StoredRulesSnapshot.requireInt(rules, name, "주문 게임 규칙에는 정수 필드가 필요합니다.");
 	}
 }

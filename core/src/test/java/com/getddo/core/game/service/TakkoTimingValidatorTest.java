@@ -58,6 +58,23 @@ class TakkoTimingValidatorTest {
 		assertThatThrownBy(() -> validator.validate(corrupt, input("0"))).isInstanceOf(IllegalStateException.class);
 	}
 
+	@ParameterizedTest
+	@CsvSource({
+			"unsupported-rule,takko-timing-generator-v1,1",
+			"takko-timing-v1,unsupported-generator,1",
+			"takko-timing-v1,takko-timing-generator-v1,0",
+			"takko-timing-v1,takko-timing-generator-v1,-1",
+			"takko-timing-v1,takko-timing-generator-v1,4294967296"
+	})
+	@DisplayName("타이밍 검증기 호출은 미지원 버전·seed 범위를 INVALID가 아닌 설정 오류로 처리한다")
+	void rejectsUnsupportedVerificationContext(String ruleVersion, String generatorVersion, long seed) {
+		// given
+		GamePlay invalid = new GamePlay(play.getId(), play.getGameId(), play.getUserId(), ruleVersion,
+				play.getRulesSnapshot(), "a".repeat(64), generatorVersion, seed, play.getStartedAt(), null, null, null);
+		// when / then
+		assertThatThrownBy(() -> validator.validate(invalid, input("0"))).isInstanceOf(IllegalStateException.class);
+	}
+
 	private static TakkoTimingSubmission input(String times) {
 		List<TakkoTimingTap> taps = new ArrayList<>();
 		if (!times.isEmpty()) {

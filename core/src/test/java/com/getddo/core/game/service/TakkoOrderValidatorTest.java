@@ -86,7 +86,10 @@ class TakkoOrderValidatorTest {
 	void rejectsCorruptVerificationContext() {
 		// given
 		List<GamePlay> invalid = List.of(restored("{}", play.getGeneratorVersion(), 1L),
-				restored(play.getRulesSnapshot(), "unsupported-generator", 1L));
+				restored(play.getRulesSnapshot(), "unsupported-generator", 1L),
+				new GamePlay(play.getId(), play.getGameId(), play.getUserId(), "unsupported-rule",
+						play.getRulesSnapshot(), play.getPlayTokenHash(), play.getGeneratorVersion(), 1L,
+						play.getStartedAt(), null, null, null));
 		// when / then
 		for (GamePlay candidate : invalid) {
 			assertThatThrownBy(() -> validator.validate(candidate, input("cheese")))
