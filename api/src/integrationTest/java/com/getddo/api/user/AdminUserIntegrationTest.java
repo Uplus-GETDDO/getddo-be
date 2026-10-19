@@ -41,9 +41,12 @@ class AdminUserIntegrationTest {
 
 	@Autowired private MockMvc mvc;
 	@Autowired private JdbcTemplate jdbc;
+	private long activeRegularUsersBeforeSeed;
 
 	@BeforeEach
 	void seed() {
+		activeRegularUsersBeforeSeed = jdbc.queryForObject(
+				"select count(*) from users where role = 'USER' and status = 'ACTIVE'", Long.class);
 		insert(ADMIN, "GD206 관리자", "ADMIN", "ACTIVE", null);
 		insert(USER, "GD206 일반", "USER", "ACTIVE", "VIP");
 		insert(INACTIVE, "GD206 비활성", "ADMIN", "INACTIVE", null);
@@ -95,6 +98,53 @@ class AdminUserIntegrationTest {
 		mvc.perform(admin(PATH).param("userId", UNDERSCORE.toString()).param("membership", "vip"))
 				.andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements").value(0))
 				.andExpect(jsonPath("$.data.items", hasSize(0)));
+	}
+
+	@Test
+	@DisplayName("참여율 분모는 사용자 목록의 크기·집계 기간과 무관하며 비활성화 시 두 API에 반영된다")
+	void dailyStatsMatchesActiveRegularUserTotal() throws Exception {
+		// given
+		// 시드 7명 중 활성 일반 사용자는 4명이다. 관리자 2명과 비활성 일반 사용자 1명은 제외한다.
+		long total = activeRegularUsersBeforeSeed + 4;
+
+		// when / then
+		mvc.perform(admin(PATH).param("size", "1"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.totalUserCount").value(total));
+		mvc.perform(admin(PATH).param("keyword", "GD206").param("role", "ADMIN").param("status", "INACTIVE"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.totalElements").value(1))
+				.andExpect(jsonPath("$.data.totalUserCount").value(total));
+		mvc.perform(admin(PATH).param("userId", UUID.randomUUID().toString()).param("page", "2").param("size", "1"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.items", hasSize(0)))
+				.andExpect(jsonPath("$.data.totalElements").value(0))
+				.andExpect(jsonPath("$.data.totalUserCount").value(total));
+		mvc.perform(admin(PATH).param("role", "USER").param("status", "ACTIVE").param("size", "1"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.items", hasSize(1)))
+				.andExpect(jsonPath("$.data.items[0].role").value("USER"))
+				.andExpect(jsonPath("$.data.items[0].status").value("ACTIVE"))
+				.andExpect(jsonPath("$.data.totalElements").value(total))
+				.andExpect(jsonPath("$.data.totalUserCount").value(total));
+		mvc.perform(admin("/api/v1/admin/stats/daily").param("from", "2031-03-10").param("to", "2031-03-10"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.totalUserCount").value(total));
+		mvc.perform(admin("/api/v1/admin/stats/daily").param("from", "2031-04-01").param("to", "2031-04-30"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.totalUserCount").value(total));
+
+		// when: 활성 일반 사용자를 비활성화하면 현재 사용자 수에서 빠진다.
+		jdbc.update("update users set status = 'INACTIVE' where id = ?", UuidBinary.toBytes(USER));
+
+		// then
+		mvc.perform(admin(PATH).param("role", "USER").param("status", "ACTIVE").param("size", "1"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.totalElements").value(total - 1))
+				.andExpect(jsonPath("$.data.totalUserCount").value(total - 1));
+		mvc.perform(admin("/api/v1/admin/stats/daily").param("from", "2031-03-10").param("to", "2031-03-10"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.totalUserCount").value(total - 1));
 	}
 
 	@ParameterizedTest
