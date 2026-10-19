@@ -16,9 +16,9 @@ import com.getddo.api.common.context.CurrentUser;
 import com.getddo.api.common.exception.CommonErrorCode;
 import com.getddo.api.common.response.ResponseEnvelope;
 import com.getddo.api.user.dto.request.AdminUserQueryRequest;
+import com.getddo.api.user.dto.response.AdminUserListResponse;
 import com.getddo.api.user.dto.response.AdminUserResponse;
 import com.getddo.core.common.exception.BusinessException;
-import com.getddo.core.common.pagination.PageResult;
 import com.getddo.core.user.domain.User;
 import com.getddo.core.user.service.AdminUserQueryService;
 
@@ -30,13 +30,13 @@ public class AdminUserController {
 	private final AdminUserQueryService service;
 
 	@GetMapping
-	public ResponseEnvelope<PageResult<AdminUserResponse>> list(@CurrentUser(membershipRequired = false) User actor,
+	public ResponseEnvelope<AdminUserListResponse> list(@CurrentUser(membershipRequired = false) User actor,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int size,
 			@ModelAttribute @ParameterObject AdminUserQueryRequest request, BindingResult bindingResult) {
 		if (bindingResult.hasErrors()) {
 			throw new BusinessException(CommonErrorCode.INVALID_FORMAT);
 		}
-		return ResponseEnvelope.success(service.findAll(actor, request.toDomain(page, size)).map(AdminUserResponse::from));
+		return ResponseEnvelope.success(AdminUserListResponse.from(service.findAll(actor, request.toDomain(page, size))));
 	}
 
 	@GetMapping("/{userId}")
