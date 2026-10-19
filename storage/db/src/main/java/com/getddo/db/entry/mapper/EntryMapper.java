@@ -29,13 +29,14 @@ public interface EntryMapper {
 				entry.getStatus(), entry.getRejectionCode(), entry.getRejectionReason(),
 				entry.getRequestedTicketCount(), entry.getDeductedTicketCount(),
 				Math.toIntExact(requested.get(TicketGrade.BRONZE)), Math.toIntExact(requested.get(TicketGrade.SILVER)),
-				Math.toIntExact(requested.get(TicketGrade.GOLD)), entry.getCreatedAt());
+				Math.toIntExact(requested.get(TicketGrade.GOLD)), Math.toIntExact(requested.get(TicketGrade.PLATINUM)),
+				entry.getCreatedAt());
 	}
 
 	default Entry toDomain(EventEntryEntity entity) {
 		Map<TicketGrade, Long> requested = Map.of(TicketGrade.BRONZE, (long) entity.getRequestedBronzeCount(),
 				TicketGrade.SILVER, (long) entity.getRequestedSilverCount(), TicketGrade.GOLD,
-				(long) entity.getRequestedGoldCount());
+				(long) entity.getRequestedGoldCount(), TicketGrade.PLATINUM, (long) entity.getRequestedPlatinumCount());
 		return new Entry(entity.getId(), entity.getParticipantId(), entity.getEventId(), entity.getUserId(),
 				entity.getStatus(), entity.getRequestedTicketCount(), requested, entity.getDeductedTicketCount(),
 				entity.getRejectionCode(), entity.getRejectionReason(), entity.getCreatedAt());

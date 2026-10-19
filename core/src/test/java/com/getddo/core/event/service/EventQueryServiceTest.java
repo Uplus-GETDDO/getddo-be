@@ -7,6 +7,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -24,6 +25,10 @@ import com.getddo.core.event.domain.AdminEventQuery;
 import com.getddo.core.event.domain.EventQueryFilter;
 import com.getddo.core.event.domain.EventStatus;
 import com.getddo.core.event.domain.EventType;
+import com.getddo.core.event.domain.EventSort;
+import com.getddo.core.event.domain.EventView;
+import com.getddo.core.event.domain.RegisteredEvent;
+import com.getddo.core.event.domain.MembershipRule;
 import com.getddo.core.user.domain.Membership;
 import com.getddo.core.user.domain.User;
 import com.getddo.core.user.domain.UserRole;
@@ -39,6 +44,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -260,6 +266,83 @@ class EventQueryServiceTest {
 		when(events.findById(id)).thenReturn(Optional.empty());
 		// when / then
 		assertError(() -> service.findUserEvent(user, id), EventErrorCode.EVENT_NOT_FOUND);
+	}
+
+	@Test
+	@DisplayName("사용자 목록은 현재 페이지의 정상 참여 여부를 한 번에 연결하고 페이지 정보를 보존한다")
+	void attachesParticipationInOneBatch() {
+		// given
+		UUID entered = UUID.randomUUID();
+		UUID notEntered = UUID.randomUUID();
+		when(events.findAll(eq(EMPTY), any(), eq(true)))
+				.thenReturn(new PageResult<>(List.of(view(entered), view(notEntered)), 2, 2, 7));
+		when(events.findEnteredEventIds(ACTOR_ID, List.of(entered, notEntered))).thenReturn(Set.of(entered));
+		// when
+		PageResult<EventView> result = service.findUserEvents(user, 2, 2, EMPTY);
+		// then
+		assertThat(result.getItems()).extracting(EventView::isMyEntered).containsExactly(true, false);
+		assertThat(result.getPage()).isEqualTo(2);
+		assertThat(result.getSize()).isEqualTo(2);
+		assertThat(result.getTotalElements()).isEqualTo(7);
+		verify(events).findEnteredEventIds(ACTOR_ID, List.of(entered, notEntered));
+	}
+
+	@Test
+	@DisplayName("관리자는 사용자 목록에서도 응모 여부를 조회하지 않고 false를 반환한다")
+	void adminParticipationIsAlwaysFalse() {
+		// given
+		user = user(UserRole.ADMIN, UserStatus.ACTIVE, null);
+		when(events.findAll(eq(EMPTY), any(), eq(true)))
+				.thenReturn(new PageResult<>(List.of(view(UUID.randomUUID()).withMyEntered(true)), 1, 20, 1));
+		// when / then
+		assertThat(service.findUserEvents(user, 1, 20, EMPTY).getItems().getFirst().isMyEntered()).isFalse();
+		verify(events, never()).findEnteredEventIds(any(), any());
+	}
+
+	@Test
+	@DisplayName("등록일 조건도 KST 양끝 포함 UTC 범위로 변환하고 가중치 false와 정렬을 보존한다")
+	void convertsCreatedDatesAndKeepsNewConditions() {
+		// given
+		user = user(UserRole.ADMIN, UserStatus.ACTIVE, null);
+		LocalDate day = LocalDate.parse("2026-10-17");
+		when(events.findAll(any(), any(), eq(false))).thenReturn(new PageResult<>(List.of(), 1, 20, 0));
+		// when
+		service.findAdminEvents(user, 1, 20, new AdminEventQuery(null, null, null,
+				null, null, false, day, day, "title,asc"));
+		// then
+		ArgumentCaptor<EventQueryFilter> filters = ArgumentCaptor.forClass(EventQueryFilter.class);
+		verify(events).findAll(filters.capture(), any(), eq(false));
+		assertThat(filters.getValue().getWeightingEnabled()).isFalse();
+		assertThat(filters.getValue().getSort()).isEqualTo(EventSort.TITLE_ASC);
+		assertThat(filters.getValue().getCreatedFrom()).isEqualTo(Instant.parse("2026-10-16T15:00:00Z"));
+		assertThat(filters.getValue().getCreatedTo()).isEqualTo(Instant.parse("2026-10-17T15:00:00Z"));
+	}
+
+	@Test
+	@DisplayName("허용되지 않은 정렬과 역전·지원 범위 밖 등록일은 저장소 호출 전에 거절한다")
+	void rejectsInvalidNewConditions() {
+		// given
+		user = user(UserRole.ADMIN, UserStatus.ACTIVE, null);
+		LocalDate day = LocalDate.parse("2026-10-17");
+		// when / then
+		for (String sort : List.of("", "id,asc", "title,invalid", "title,asc;delete from events")) {
+			assertError(() -> service.findAdminEvents(user, 1, 20,
+					new AdminEventQuery(null, null, null, null, null, null, null, null, sort)), EventErrorCode.INVALID_QUERY);
+		}
+		for (AdminEventQuery query : List.of(
+				new AdminEventQuery(null, null, null, null, null, null, day, day.minusDays(1), null),
+				new AdminEventQuery(null, null, null, null, null, null, LocalDate.of(999, 1, 1), null, null),
+				new AdminEventQuery(null, null, null, null, null, null, null, LocalDate.MAX, null))) {
+			assertError(() -> service.findAdminEvents(user, 1, 20, query), EventErrorCode.INVALID_QUERY);
+		}
+		verifyNoInteractions(events);
+	}
+
+	private EventView view(UUID id) {
+		RegisteredEvent event = new RegisteredEvent(id, "이벤트", "설명", null, EventType.NO_TICKET,
+				false, null, MembershipRule.excellent, Instant.EPOCH, Instant.EPOCH.plusSeconds(60),
+				EventStatus.OPEN, Instant.EPOCH, Instant.EPOCH, List.of());
+		return new EventView(event, EventStatus.OPEN, null);
 	}
 
 	private User user(UserRole role, UserStatus status, Membership membership) {

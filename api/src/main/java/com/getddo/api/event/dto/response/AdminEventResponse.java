@@ -3,6 +3,7 @@ package com.getddo.api.event.dto.response;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Function;
 
 import com.getddo.core.event.domain.EventStatus;
 import com.getddo.core.event.domain.EventType;
@@ -33,19 +34,27 @@ public record AdminEventResponse(
 		List<PrizeImage> prizeImages
 ) {
 	public static AdminEventResponse from(RegisteredEvent event, Instant serverTime) {
-		return from(event, serverTime, null);
+		return from(event, serverTime, null, ignored -> null);
+	}
+
+	public static AdminEventResponse from(RegisteredEvent event, Instant serverTime, Function<String, String> imageUrls) {
+		return from(event, serverTime, null, imageUrls);
 	}
 
 	public static AdminEventResponse from(EventView event, Instant serverTime) {
-		return from(event.getDetails(), serverTime, event.getCanceledAt());
+		return from(event, serverTime, ignored -> null);
+	}
+
+	public static AdminEventResponse from(EventView event, Instant serverTime, Function<String, String> imageUrls) {
+		return from(event.getDetails(), serverTime, event.getCanceledAt(), imageUrls);
 	}
 
 	private static AdminEventResponse from(RegisteredEvent event, Instant serverTime,
-			Instant canceledAt) {
-		return new AdminEventResponse(event.getId(), event.getTitle(), null, event.getEventType(), event.isWeightingEnabled(),
+			Instant canceledAt, Function<String, String> imageUrls) {
+		return new AdminEventResponse(event.getId(), event.getTitle(), imageUrls.apply(event.getImageKey()), event.getEventType(), event.isWeightingEnabled(),
 				event.getMembershipRule(), event.getStartsAt(), event.getEndsAt(), event.getStatus(),
 				event.getDrawScheduledAt(), serverTime,
-				event.getDescription(), event.getMaxTicketsPerUser(), event.getPrizes().stream().map(PrizeResponse::from).toList(),
+				event.getDescription(), event.getMaxTicketsPerUser(), event.getPrizes().stream().map(prize -> PrizeResponse.from(prize, imageUrls)).toList(),
 				event.getImageKey(), event.getCreatedAt(), event.getUpdatedAt(),
 				canceledAt, event.getPrizes().stream().map(PrizeImage::from).toList());
 	}

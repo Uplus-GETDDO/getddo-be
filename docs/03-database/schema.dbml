@@ -38,6 +38,7 @@ Enum reward_policies_reward_type_enum {
 }
 
 Enum reward_policies_reward_ticket_type_enum {
+  PLATINUM
   GOLD
   SILVER
   BRONZE
@@ -164,6 +165,7 @@ Enum tickets_grade_enum {
   BRONZE
   SILVER
   GOLD
+  PLATINUM
 }
 
 Enum tickets_status_enum {

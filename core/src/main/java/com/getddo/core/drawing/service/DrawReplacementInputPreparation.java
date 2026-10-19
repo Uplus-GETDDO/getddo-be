@@ -57,9 +57,9 @@ public class DrawReplacementInputPreparation implements DrawInputPreparation {
 		ReplacementDrawInput input = builder.build(original, target,
 				replacements.findCurrentResults(registered.eventId(), original), canceled);
 		DrawSnapshot.Rules rules = input.originalRules();
-		DrawSnapshot.Rules fixedRules = new DrawSnapshot.Rules(2, rules.weightingEnabled(),
+		DrawSnapshot.Rules fixedRules = new DrawSnapshot.Rules(rules.supportsPlatinum() ? 4 : 2, rules.weightingEnabled(),
 				rules.eventType(), rules.membershipRule(),
-				rules.bronzeWeight(), rules.silverWeight(), rules.goldWeight(), rules.prizes(), input.originalRunId(),
+				rules.bronzeWeight(), rules.silverWeight(), rules.goldWeight(), rules.platinumWeight(), rules.prizes(), input.originalRunId(),
 				input.vacantSlots(),
 				input.retainedResults().stream().map(result -> new DrawSnapshot.RetainedAward(result.getId(),
 				result.getSelection().getUserId(), result.getSelection().getPrizeId(), result.getSelection().getSlotNumber())).toList());

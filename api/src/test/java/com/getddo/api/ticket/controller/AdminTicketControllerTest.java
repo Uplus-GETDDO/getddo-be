@@ -133,6 +133,20 @@ class AdminTicketControllerTest {
 	}
 
 	@Test
+	@DisplayName("AO03은 grade=PLATINUM 필터를 받아 서비스에 넘긴다")
+	void acceptsPlatinumGradeFilter() throws Exception {
+		// given
+		when(service.getGrants(any(), any(), any())).thenReturn(new PageResult<>(List.of(), 1, 20, 0));
+		// when
+		mvc.perform(asAdmin(get("/api/v1/admin/ticket-grants")).param("grade", "PLATINUM"))
+				.andExpect(status().isOk());
+		// then
+		ArgumentCaptor<TicketGrantFilter> filter = ArgumentCaptor.forClass(TicketGrantFilter.class);
+		verify(service).getGrants(any(User.class), filter.capture(), any(PageQuery.class));
+		assertThat(filter.getValue().getGrade()).isEqualTo(TicketGrade.PLATINUM);
+	}
+
+	@Test
 	@DisplayName("AO03은 파라미터를 생략하면 기본 1페이지 20건에 조건 없이 조회한다")
 	void usesDefaults() throws Exception {
 		// given
@@ -146,7 +160,7 @@ class AdminTicketControllerTest {
 	}
 
 	@ParameterizedTest(name = "{0}은 400이다")
-	@ValueSource(strings = {"page=0", "size=0", "size=101", "sourceType=BOGUS", "grade=PLATINUM", "userId=not-uuid",
+	@ValueSource(strings = {"page=0", "size=0", "size=101", "sourceType=BOGUS", "grade=DIAMOND", "userId=not-uuid",
 			"from=2026-10-01T00:00:00"})
 	@DisplayName("AO03은 범위·형식이 잘못된 파라미터를 서비스 호출 없이 400으로 거절한다")
 	void rejectsInvalidParameters(String pair) throws Exception {

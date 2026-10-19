@@ -60,7 +60,7 @@ class EventQueryIntegrationTest {
 	}
 
 	@Test
-	@DisplayName("검색 DTO를 사용해도 Swagger에는 기존 쿼리 파라미터와 날짜 형식만 공개한다")
+	@DisplayName("Swagger에 관리자 검색 조건과 날짜 형식을 공개하고 내부 검증용 입력은 숨긴다")
 	void adminSearchDtoPreservesOpenApiParameters() throws Exception {
 		// given / when
 		String response = mvc.perform(get("/v3/api-docs")).andExpect(status().isOk())
@@ -70,8 +70,9 @@ class EventQueryIntegrationTest {
 		// then
 		assertThat(parameters.stream().filter(parameter -> "query".equals(parameter.get("in"))).toList())
 				.extracting(parameter -> parameter.get("name"))
-				.containsExactlyInAnyOrder("page", "size", "keyword", "status", "eventType", "from", "to");
-		for (String date : new String[]{"from", "to"}) {
+				.containsExactlyInAnyOrder("page", "size", "keyword", "status", "eventType", "from", "to",
+						"weightingEnabled", "createdFrom", "createdTo", "sort");
+		for (String date : new String[]{"from", "to", "createdFrom", "createdTo"}) {
 			Map<?, ?> schema = (Map<?, ?>) parameters.stream()
 					.filter(parameter -> date.equals(parameter.get("name"))).findFirst().orElseThrow().get("schema");
 			assertThat(schema.get("type")).isEqualTo("string");
@@ -544,6 +545,129 @@ class EventQueryIntegrationTest {
 				.param("to", "2099-10-10")).andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.code").value("EVENT-008"));
 		request(user, get("/api/v1/events").param("membershipRule", "gold")).andExpect(status().isBadRequest());
+	}
+
+	@Test
+	@DisplayName("관리자 정렬은 전체 결과에 적용하고 동률 ID 순서와 다음 페이지를 안정적으로 유지한다")
+	void newSortOptionsApplyBeforePagination() throws Exception {
+		// given: 등록일·제목과 모집 시작/마감 순서가 서로 다르며 B·C의 등록일은 같다.
+		UUID a = UUID.fromString("22600000-0000-4000-8000-000000000001");
+		UUID b = UUID.fromString("22600000-0000-4000-8000-000000000002");
+		UUID c = UUID.fromString("22600000-0000-4000-8000-000000000003");
+		insertEvent(a, prefix + "-a", "SCHEDULED", "NO_TICKET", "excellent", "2099-10-03T00:00:00Z", "2099-10-04T00:00:00Z");
+		insertEvent(b, prefix + "-b", "SCHEDULED", "NO_TICKET", "excellent", "2099-10-01T00:00:00Z", "2099-10-02T00:00:00Z");
+		insertEvent(c, prefix + "-c", "SCHEDULED", "NO_TICKET", "excellent", "2099-10-02T00:00:00Z", "2099-10-03T00:00:00Z");
+		jdbc.update("update events set created_at=? where id=?", at("2099-09-01T00:00:00Z"), bytes(a));
+		jdbc.update("update events set created_at=? where id in (?,?)", at("2099-09-02T00:00:00Z"), bytes(b), bytes(c));
+		Map<String, List<UUID>> expected = Map.of(
+				"createdAt,asc", List.of(a, b, c), "createdAt,desc", List.of(c, b, a),
+				"startsAt,asc", List.of(b, c, a), "startsAt,desc", List.of(a, c, b),
+				"endsAt,asc", List.of(b, c, a), "endsAt,desc", List.of(a, c, b),
+				"title,asc", List.of(a, b, c), "title,desc", List.of(c, b, a));
+		// when / then
+		for (Map.Entry<String, List<UUID>> sort : expected.entrySet()) {
+			request(admin, get("/api/v1/admin/events").param("keyword", prefix).param("size", "2").param("sort", sort.getKey()))
+					.andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements").value(3))
+					.andExpect(jsonPath("$.data.items[*].id", org.hamcrest.Matchers.contains(
+							sort.getValue().getFirst().toString(), sort.getValue().get(1).toString())));
+			request(admin, get("/api/v1/admin/events").param("keyword", prefix).param("size", "2").param("page", "2")
+					.param("sort", sort.getKey())).andExpect(status().isOk())
+					.andExpect(jsonPath("$.data.items[0].id").value(sort.getValue().getLast().toString()));
+		}
+	}
+
+	@Test
+	@DisplayName("등록일 KST 양끝 포함·가중치 true/false·기존 모집 기간을 같은 count와 목록에 적용한다")
+	void creationDatesAndWeightingCombineWithRecruitmentDates() throws Exception {
+		// given
+		UUID first = insertEvent(prefix + "-first", "OPEN", "TICKET", "vip", "2099-10-09T15:00:00Z", "2099-10-10T15:00:00Z");
+		UUID last = insertEvent(prefix + "-last", "OPEN", "NO_TICKET", "vip", "2099-10-09T15:00:00Z", "2099-10-10T15:00:00Z");
+		UUID after = insertEvent(prefix + "-after", "OPEN", "TICKET", "vip", "2099-10-09T15:00:00Z", "2099-10-10T15:00:00Z");
+		UUID before = insertEvent(prefix + "-before", "OPEN", "TICKET", "vip", "2099-10-09T15:00:00Z", "2099-10-10T15:00:00Z");
+		UUID outsidePeriod = insertEvent(prefix + "-outside", "OPEN", "TICKET", "vip", "2099-11-01T00:00:00Z", "2099-11-02T00:00:00Z");
+		jdbc.update("update events set created_at=? where id=?", at("2099-09-30T15:00:00Z"), bytes(first));
+		jdbc.update("update events set created_at=? where id=?", at("2099-10-01T14:59:59.999999Z"), bytes(last));
+		jdbc.update("update events set created_at=? where id=?", at("2099-10-01T15:00:00Z"), bytes(after));
+		jdbc.update("update events set created_at=? where id=?", at("2099-09-30T14:59:59.999999Z"), bytes(before));
+		jdbc.update("update events set created_at=? where id=?", at("2099-10-01T00:00:00Z"), bytes(outsidePeriod));
+		// when / then
+		request(admin, get("/api/v1/admin/events").param("keyword", prefix)
+				.param("createdFrom", "2099-10-01").param("createdTo", "2099-10-01")
+				.param("from", "2099-10-10").param("to", "2099-10-10"))
+				.andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements").value(2));
+		for (String weighting : new String[]{"true", "false"}) {
+			request(admin, get("/api/v1/admin/events").param("keyword", prefix)
+					.param("createdFrom", "2099-10-01").param("createdTo", "2099-10-01")
+					.param("from", "2099-10-10").param("to", "2099-10-10").param("weightingEnabled", weighting))
+					.andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements").value(1))
+					.andExpect(jsonPath("$.data.items[0].id").value(("true".equals(weighting) ? first : last).toString()));
+		}
+		request(admin, get("/api/v1/admin/events").param("keyword", prefix).param("createdFrom", "2099-10-02"))
+				.andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements").value(1));
+		request(admin, get("/api/v1/admin/events").param("keyword", prefix).param("createdTo", "2099-09-30"))
+				.andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements").value(1));
+	}
+
+	@Test
+	@DisplayName("등록일·가중치 형식과 잘못된 정렬·역전 범위는 400을 반환한다")
+	void malformedAdditionalFiltersAreBadRequests() throws Exception {
+		// given / when / then
+		for (String[] parameter : new String[][]{
+				{"createdFrom", "2026-02-30"}, {"createdTo", "2026/10/17"}, {"createdFrom", ""},
+				{"createdTo", "+10000-01-01"}, {"weightingEnabled", "invalid"},
+				{"sort", "id,asc"}, {"sort", "createdAt,INVALID"}, {"sort", ""},
+				{"createdFrom", "0999-01-01"}}) {
+			request(admin, get("/api/v1/admin/events").param(parameter[0], parameter[1])).andExpect(status().isBadRequest());
+		}
+		request(admin, get("/api/v1/admin/events").param("createdFrom", "2099-10-17").param("createdTo", "2099-10-16"))
+				.andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("EVENT-008"));
+	}
+
+	@Test
+	@DisplayName("내 응모 여부는 응모권 미사용 정상 접수도 포함하고 타인·거절만 있는 이벤트·관리자를 구분한다")
+	void userListReturnsParticipationWithoutDependingOnSpentTickets() throws Exception {
+		// given
+		UUID free = insertEvent(prefix + "-free", "OPEN", "NO_TICKET", "excellent", "2099-10-01T00:00:00Z", "2099-10-20T00:00:00Z");
+		UUID paid = insertEvent(prefix + "-paid", "OPEN", "TICKET", "vip", "2099-10-01T00:00:00Z", "2099-10-20T00:00:00Z");
+		UUID rejected = insertEvent(prefix + "-rejected", "OPEN", "TICKET", "vip", "2099-10-01T00:00:00Z", "2099-10-20T00:00:00Z");
+		UUID untouched = insertEvent(prefix + "-untouched", "OPEN", "TICKET", "vip", "2099-10-01T00:00:00Z", "2099-10-20T00:00:00Z");
+		UUID other = insertUser("USER", "vip", "ACTIVE");
+		insertParticipation(free, user, 0);
+		insertParticipation(paid, user, 3);
+		insertParticipation(untouched, other, 1);
+		jdbc.update("""
+				insert into event_entries(id,event_id,user_id,status,rejection_code,rejection_reason,
+				requested_ticket_count,deducted_ticket_count,created_at)
+				values(?,?,?,'REJECTED','TICKET-006','응모권 부족',1,0,?)
+				""", bytes(UUID.randomUUID()), bytes(rejected), bytes(user), at(CREATED_AT));
+		// when / then: 현재 테스트의 네 이벤트를 사용자의 목록에서 골라 확인한다.
+		String response = request(user, get("/api/v1/events").param("size", "100"))
+				.andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+		List<Map<String, Object>> items = JsonPath.read(response, "$.data.items");
+		Map<String, Boolean> entered = new java.util.HashMap<>();
+		items.forEach(item -> entered.put((String) item.get("id"), (Boolean) item.get("myEntered")));
+		assertThat(entered).containsEntry(free.toString(), true).containsEntry(paid.toString(), true)
+				.containsEntry(rejected.toString(), false).containsEntry(untouched.toString(), false);
+		request(other, get("/api/v1/events").param("size", "100"))
+				.andExpect(status().isOk()).andExpect(jsonPath("$.data.items[?(@.id=='" + free + "')].myEntered", org.hamcrest.Matchers.contains(false)))
+				.andExpect(jsonPath("$.data.items[?(@.id=='" + untouched + "')].myEntered", org.hamcrest.Matchers.contains(true)));
+		request(admin, get("/api/v1/events").param("size", "100"))
+				.andExpect(status().isOk()).andExpect(jsonPath("$.data.items[*].myEntered", org.hamcrest.Matchers.everyItem(org.hamcrest.Matchers.is(false))));
+		request(admin, get("/api/v1/admin/events").param("keyword", prefix))
+				.andExpect(status().isOk()).andExpect(jsonPath("$.data.items[0].myEntered").doesNotHaveJsonPath());
+		request(user, "/api/v1/events/" + free)
+				.andExpect(status().isOk()).andExpect(jsonPath("$.data.myEntered").doesNotHaveJsonPath());
+		assertThat(events.findEnteredEventIds(user, List.of())).isEmpty();
+	}
+
+	private void insertParticipation(UUID event, UUID actor, int spent) {
+		UUID participant = UUID.randomUUID();
+		jdbc.update("insert into event_participants(id,event_id,user_id,created_at,used_ticket_count) values(?,?,?,?,?)",
+				bytes(participant), bytes(event), bytes(actor), at(CREATED_AT), spent);
+		jdbc.update("""
+				insert into event_entries(id,event_id,participant_id,user_id,status,requested_ticket_count,deducted_ticket_count,created_at)
+				values(?,?,?,?,'ACCEPTED',?,?,?)
+				""", bytes(UUID.randomUUID()), bytes(event), bytes(participant), bytes(actor), spent, spent, at(CREATED_AT));
 	}
 
 	private ResultActions request(UUID actor, String path) throws Exception {

@@ -34,10 +34,16 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** 실제 Controller·사용자 문맥·업무 서비스와 저장소 대역을 연결한 API 테스트다. */
 class AdminDrawControllerTest {
@@ -149,6 +155,34 @@ class AdminDrawControllerTest {
 		// when / then
 		mvc.perform(get("/api/v1/admin/draws/{id}/participants", runId).header("X-User-ID", actorId).header("X-User-Role", selected.getRole().name())).andExpect(status().isOk());
 		verify(repository).findCandidates(runId, new PageQuery(1, 20));
+	}
+
+	@ParameterizedTest
+	@CsvSource({"1, 1, 0, 0", "3, 2, 10, 2"})
+	@DisplayName("관리자 조회는 신규 플래티넘 값과 기존 스냅샷의 0을 반환한다")
+	void returnsPlatinumRulesAndEvidence(int rulesVersion, int evidenceVersion,
+			int platinumWeight, long platinumCount) throws Exception {
+		// given
+		DrawSnapshot.Rules rules = new DrawSnapshot.Rules(rulesVersion, true, "TICKET", "ALL",
+				1, 3, 5, platinumWeight, List.of());
+		DrawInspectionView.Run stored = new DrawInspectionView.Run(runId, eventId, 0, DrawType.INITIAL,
+				DrawRunStatus.CONFIRMED, null, "weighted-without-replacement-v1", rules, now, now, now, now);
+		DrawSnapshot.Candidate candidate = new DrawSnapshot.Candidate(UUID.randomUUID(), UUID.randomUUID(),
+				UUID.randomUUID(), platinumCount, platinumCount * platinumWeight,
+				new DrawSnapshot.EntryEvidence(evidenceVersion, 0, 0, 0, platinumCount, List.of()), null);
+		when(repository.findRun(runId)).thenReturn(Optional.of(stored));
+		when(repository.findCandidates(runId, new PageQuery(1, 20))).thenReturn(new PageResult<>(
+				List.of(new DrawInspectionView.Candidate(candidate, runId, eventId, eventId, candidate.userId())),
+				1, 20, 1));
+		// when / then
+		mvc.perform(get("/api/v1/admin/draws/{id}", runId)
+				.header("X-User-ID", actorId).header("X-User-Role", "ADMIN"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.rulesSnapshot.platinumWeight").value(platinumWeight));
+		mvc.perform(get("/api/v1/admin/draws/{id}/participants", runId)
+				.header("X-User-ID", actorId).header("X-User-Role", "ADMIN"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.items[0].entrySnapshot.platinumCount").value((int) platinumCount));
 	}
 
 	/** 다음 동작을 검증한다: 재추첨 상세는 버전 2의 최초 실행·실제 빈 자리·유지 배정을 반환한다. */

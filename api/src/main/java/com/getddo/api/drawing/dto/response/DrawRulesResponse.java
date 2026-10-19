@@ -8,7 +8,7 @@ import com.getddo.core.drawing.domain.DrawReplacementRulesView;
 import com.getddo.core.drawing.domain.DrawSnapshot;
 
 public record DrawRulesResponse(int version, boolean weightingEnabled, String eventType, String membershipRule,
-		int bronzeWeight, int silverWeight, int goldWeight, List<Prize> prizes,
+		int bronzeWeight, int silverWeight, int goldWeight, int platinumWeight, List<Prize> prizes,
 		UUID originalRunId, List<Slot> targetSlots, List<RetainedAward> retainedAwards) {
 	public DrawRulesResponse {
 		prizes = List.copyOf(prizes);
@@ -21,7 +21,7 @@ public record DrawRulesResponse(int version, boolean weightingEnabled, String ev
 		DrawReplacementRulesView replacement = run.getReplacementRules();
 		return rules == null ? null : new DrawRulesResponse(rules.version(), rules.weightingEnabled(),
 				rules.eventType(),
-				rules.membershipRule(), rules.bronzeWeight(), rules.silverWeight(), rules.goldWeight(),
+				rules.membershipRule(), rules.bronzeWeight(), rules.silverWeight(), rules.goldWeight(), rules.platinumWeight(),
 				rules.prizes().stream().map(prize -> new Prize(prize.id(), prize.rank(), prize.winnerCount())).toList(),
 				replacement == null ? null : replacement.getOriginalRunId(),
 				replacement == null ? List.of() : replacement.getTargetSlots().stream()

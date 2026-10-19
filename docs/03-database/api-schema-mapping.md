@@ -37,6 +37,7 @@
 | [V025](../../storage/db/src/main/resources/db/migration/mission/V025__add_mission_submission_request_hash.sql) | `mission_submissions.request_hash` | GD-175 미션 제출(M03)의 같은 제출 ID 재전송 본문 비교. 처음 요청의 SHA-256을 보존한다. 이 컬럼을 기록하기 전의 제출은 빈 문자열이다. 공개 API는 추가하지 않음 |
 | [V027](../../storage/db/src/main/resources/db/migration/event/V027__add_event_lifecycle_due_indexes.sql) | `events`의 상태·삭제 여부·시작/마감 기한 인덱스 두 개 | GD-203 모집 상태 전환의 상태별 due 후보 조회. 새 테이블·컬럼·공개 API는 추가하지 않음 |
 | [V028](../../storage/db/src/main/resources/db/migration/event/V028__link_banner_events_and_catalog_lock.sql) | `banners.event_id`, `banner_catalog_lock` | GD-209 이벤트 연결·빈 목록 쓰기 잠금. 기존 URL·행·CHECK·UNIQUE 보존. 실제 DB 적용은 미실행 |
+| [V029](../../storage/db/src/main/resources/db/migration/ticket/V029__add_platinum_ticket_grade.sql) | `tickets.grade`·`reward_policies.reward_ticket_type` ENUM에 `PLATINUM`, `event_entries.requested_platinum_count`와 등급별 요청 장수 CHECK | GD-228 플래티넘 응모권 등급(ADR-025). 기존 행·기존 등급의 비음수 검증 의미·UNIQUE 보존. `chk_entry_requested_grades`는 플래티넘을 포함해 재정의하고 기존 응모의 플래티넘 요청 장수는 0. GD-228의 실제 DB 검증 결과는 해당 PR #126의 기록을 별도로 확인하며, GD-230의 통합 테스트는 미완료 |
 
 ## 응모 API 현행 매핑 (GD-134, GD-145, GD-200)
 

@@ -453,8 +453,8 @@ class DrawExecutionIntegrationTest {
 			List<DrawSnapshot.RetainedAward> retained = initial.getResults().stream().filter(result -> !result.getId().equals(canceled.getId()))
 					.map(result -> new DrawSnapshot.RetainedAward(result.getId(), result.getSelection().getUserId(), prizeId, result.getSelection().getSlotNumber())).toList();
 			DrawSnapshot.Rules old = original.rules();
-			DrawSnapshot.Rules rules = new DrawSnapshot.Rules(2, old.weightingEnabled(), old.eventType(), old.membershipRule(),
-					old.bronzeWeight(), old.silverWeight(), old.goldWeight(), old.prizes(), original.runId(),
+			DrawSnapshot.Rules rules = new DrawSnapshot.Rules(old.supportsPlatinum() ? 4 : 2, old.weightingEnabled(), old.eventType(), old.membershipRule(),
+					old.bronzeWeight(), old.silverWeight(), old.goldWeight(), old.platinumWeight(), old.prizes(), original.runId(),
 					List.of(new DrawSnapshot.Slot(prizeId, 1, 3)), retained);
 			inputs.saveRegisteredReplacement(new DrawSnapshot(run.getId(), eventId, DrawRunStatus.READY, NOW.plusSeconds(1),
 					DrawSnapshotService.ALGORITHM_VERSION, rules, remaining, DrawType.REPLACEMENT));

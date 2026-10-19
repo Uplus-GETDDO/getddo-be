@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.getddo.api.common.context.CurrentUser;
 import com.getddo.api.common.response.ResponseEnvelope;
+import com.getddo.api.event.config.EventImageUrls;
 import com.getddo.api.event.dto.response.EventDetailResponse;
 import com.getddo.api.event.dto.response.EventSummaryResponse;
 import com.getddo.core.common.pagination.PageResult;
@@ -29,10 +30,12 @@ import com.getddo.core.user.domain.User;
 public class EventController {
 	private final EventQueryService queryService;
 	private final TimeProvider timeProvider;
+	private final EventImageUrls imageUrls;
 
-	public EventController(EventQueryService queryService, TimeProvider timeProvider) {
+	public EventController(EventQueryService queryService, TimeProvider timeProvider, EventImageUrls imageUrls) {
 		this.queryService = queryService;
 		this.timeProvider = timeProvider;
+		this.imageUrls = imageUrls;
 	}
 
 	/** 조회 조건과 페이지 입력을 서비스에 전달하고 결과를 사용자 목록 응답으로 변환한다. */
@@ -47,7 +50,7 @@ public class EventController {
 		PageResult<EventView> result = queryService.findUserEvents(user, page, size,
 				new EventQueryFilter(status, eventType, membershipRule, null, null, null));
 		Instant now = timeProvider.now();
-		return ResponseEnvelope.success(result.map(event -> EventSummaryResponse.from(event, now)));
+		return ResponseEnvelope.success(result.map(event -> EventSummaryResponse.from(event, now, imageUrls::resolve)));
 	}
 
 	/** Spring이 변환한 이벤트 UUID로 상세 정보와 경품을 조회한다. */
@@ -56,6 +59,6 @@ public class EventController {
 			@CurrentUser User user,
 			@PathVariable UUID eventId) {
 		return ResponseEnvelope.success(EventDetailResponse.from(
-				queryService.findUserEvent(user, eventId), timeProvider.now()));
+				queryService.findUserEvent(user, eventId), timeProvider.now(), imageUrls::resolve));
 	}
 }

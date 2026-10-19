@@ -14,8 +14,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
-import static org.assertj.core.api.Assertions.*;
+import org.junit.jupiter.params.provider.CsvSource;
+import static org.assertj.core.api.Assertions.assertThat;
 
 class DrawStoredVerificationTest {
 	private final UUID runId = UUID.randomUUID(), eventId = UUID.randomUUID(), prizeId = UUID.randomUUID();
@@ -43,19 +43,21 @@ class DrawStoredVerificationTest {
 	}
 
 	@ParameterizedTest
-	@EnumSource(TicketGrade.class)
-	@DisplayName("가중치 미적용 응모권 이벤트는 저장된 브론즈 한 장 근거만 통과한다")
-	void unweightedTicketEvidenceRequiresBronze(TicketGrade grade) {
+	@CsvSource({"1, BRONZE", "1, SILVER", "1, GOLD", "1, PLATINUM",
+			"3, BRONZE", "3, SILVER", "3, GOLD", "3, PLATINUM"})
+	@DisplayName("신규·기존 비가중치 응모권 이벤트는 저장된 브론즈 한 장 근거만 통과한다")
+	void unweightedTicketEvidenceRequiresBronze(int rulesVersion, TicketGrade grade) {
 		// given
 		DrawInspectionView.Run weighted = run(DrawType.INITIAL);
 		DrawInspectionView.Run unweighted = new DrawInspectionView.Run(runId, eventId, 0, DrawType.INITIAL, DrawRunStatus.CONFIRMED, null,
-				weighted.getAlgorithmVersion(), new DrawSnapshot.Rules(1, false, "TICKET", "ALL", 1, 3, 5,
+				weighted.getAlgorithmVersion(), new DrawSnapshot.Rules(rulesVersion, false, "TICKET", "ALL", 1, 3, 5, rulesVersion == 3 ? 10 : 0,
 				weighted.getRules().prizes()), fixedAt, fixedAt, fixedAt, fixedAt);
 		DrawSnapshotSource.Use use = new DrawSnapshotSource.Use(UUID.randomUUID(), UUID.randomUUID(), userId, grade);
 		DrawSnapshotSource.Entry entry = new DrawSnapshotSource.Entry(UUID.randomUUID(), 1, fixedAt.minusSeconds(300), List.of(use));
 		DrawSnapshot.Candidate snapshot = new DrawSnapshot.Candidate(candidateId, participantId, userId, 1, 1,
-				new DrawSnapshot.EntryEvidence(1, grade == TicketGrade.BRONZE ? 1 : 0, grade == TicketGrade.SILVER ? 1 : 0,
-				grade == TicketGrade.GOLD ? 1 : 0, List.of(entry)),
+				new DrawSnapshot.EntryEvidence(rulesVersion == 3 ? 2 : 1, grade == TicketGrade.BRONZE ? 1 : 0,
+				grade == TicketGrade.SILVER ? 1 : 0, grade == TicketGrade.GOLD ? 1 : 0,
+				grade == TicketGrade.PLATINUM ? 1L : 0L, List.of(entry)),
 				new DrawSnapshot.EligibilityEvidence(1, userId, "VIP", "USER", false, fixedAt));
 		// when
 		List<DrawVerification.Item> checks = DrawStoredVerification.verify(unweighted,
@@ -105,6 +107,43 @@ class DrawStoredVerificationTest {
 		// when / then
 		assertThat(DrawStoredVerification.verify(run, List.of(new DrawInspectionView.Candidate(broken, runId, eventId, eventId, userId)), validResults()))
 				.anyMatch(item -> !item.isPassed());
+	}
+
+	/** 신규 근거의 플래티넘 수량과 가중치를 검증하고 옛 형식으로 위장한 입력을 거절한다. */
+	@Test
+	@DisplayName("신규 플래티넘 근거는 가중치 10을 검증하며 누락·변조·옛 버전 위장을 거절한다")
+	void verifiesPlatinumOnlyForNewEvidence() {
+		// given
+		DrawInspectionView.Run legacy = run(DrawType.INITIAL);
+		DrawInspectionView.Run current = new DrawInspectionView.Run(runId, eventId, 0, DrawType.INITIAL,
+				DrawRunStatus.CONFIRMED, null, legacy.getAlgorithmVersion(),
+				new DrawSnapshot.Rules(3, true, "TICKET", "ALL", 1, 3, 5, 10, legacy.getRules().prizes()),
+				fixedAt, fixedAt, fixedAt, fixedAt);
+		DrawSnapshotSource.Use use = new DrawSnapshotSource.Use(UUID.randomUUID(), UUID.randomUUID(), userId, TicketGrade.PLATINUM);
+		DrawSnapshotSource.Entry entry = new DrawSnapshotSource.Entry(UUID.randomUUID(), 1, fixedAt.minusSeconds(1), List.of(use));
+		DrawSnapshot.EntryEvidence evidence = new DrawSnapshot.EntryEvidence(2, 0, 0, 0, 1L, List.of(entry));
+		DrawSnapshot.Candidate base = candidate(1, 5).getSnapshot();
+		DrawSnapshot.Candidate valid = new DrawSnapshot.Candidate(candidateId, participantId, userId, 1, 10,
+				evidence, base.eligibilityEvidence());
+		// when / then
+		assertThat(DrawStoredVerification.verify(current, List.of(view(valid)), validResults()))
+				.allMatch(DrawVerification.Item::isPassed);
+		for (DrawSnapshot.Candidate broken : List.of(
+				new DrawSnapshot.Candidate(candidateId, participantId, userId, 1, 5, evidence, base.eligibilityEvidence()),
+				new DrawSnapshot.Candidate(candidateId, participantId, userId, 1, 10,
+						new DrawSnapshot.EntryEvidence(2, 0, 0, 0, 0L, List.of(entry)), base.eligibilityEvidence()),
+				new DrawSnapshot.Candidate(candidateId, participantId, userId, 1, 10,
+						new DrawSnapshot.EntryEvidence(1, 0, 0, 0, List.of(entry)), base.eligibilityEvidence()))) {
+			assertThat(DrawStoredVerification.verify(current, List.of(view(broken)), validResults()))
+					.anyMatch(item -> item.getCode().equals("CANDIDATE_EVIDENCE") && !item.isPassed());
+		}
+		assertThat(DrawStoredVerification.verify(legacy, List.of(view(valid)), validResults()))
+				.anyMatch(item -> item.getCode().equals("CANDIDATE_EVIDENCE") && !item.isPassed());
+	}
+
+	/** 후보의 기존 실행·이벤트·사용자 관계를 유지한 검증용 조회값을 만든다. */
+	private DrawInspectionView.Candidate view(DrawSnapshot.Candidate candidate) {
+		return new DrawInspectionView.Candidate(candidate, runId, eventId, eventId, userId);
 	}
 
 	private List<DrawVerification.Item> checks(List<DrawInspectionView.Candidate> candidates, List<DrawInspectionView.Result> results) {

@@ -38,7 +38,7 @@ public class EntryRepositoryImpl implements EntryRepository {
 	private static final String HISTORY_SELECT = """
 			select e.id, e.event_id, ev.title, e.participant_id, e.user_id, e.status, e.rejection_code,
 			       e.rejection_reason, e.requested_ticket_count, e.deducted_ticket_count, e.requested_bronze_count,
-			       e.requested_silver_count, e.requested_gold_count, e.created_at
+			       e.requested_silver_count, e.requested_gold_count, e.requested_platinum_count, e.created_at
 			from event_entries e join events ev on ev.id = e.event_id
 			""";
 	private static final String HISTORY_COUNT =
@@ -98,6 +98,7 @@ public class EntryRepositoryImpl implements EntryRepository {
 				.addScalar("requested_bronze_count", Integer.class)
 				.addScalar("requested_silver_count", Integer.class)
 				.addScalar("requested_gold_count", Integer.class)
+				.addScalar("requested_platinum_count", Integer.class)
 				.addScalar("created_at", Instant.class);
 		parameters.forEach(select::setParameter);
 		select.setFirstResult((int) page.offset());
@@ -137,7 +138,8 @@ public class EntryRepositoryImpl implements EntryRepository {
 		Map<TicketGrade, Long> requested = Map.of(
 				TicketGrade.BRONZE, row.get("requested_bronze_count", Integer.class).longValue(),
 				TicketGrade.SILVER, row.get("requested_silver_count", Integer.class).longValue(),
-				TicketGrade.GOLD, row.get("requested_gold_count", Integer.class).longValue());
+				TicketGrade.GOLD, row.get("requested_gold_count", Integer.class).longValue(),
+				TicketGrade.PLATINUM, row.get("requested_platinum_count", Integer.class).longValue());
 		Entry entry = new Entry(row.get("id", UUID.class), row.get("participant_id", UUID.class),
 				row.get("event_id", UUID.class), row.get("user_id", UUID.class),
 				EntryStatus.valueOf(row.get("status", String.class)), row.get("requested_ticket_count", Integer.class),

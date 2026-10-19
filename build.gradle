@@ -13,8 +13,8 @@ allprojects {
 	}
 }
 
-// storage는 경로 구분용 프로젝트이며, 실제 Java 모듈은 아래 세 개다.
-configure([project(':api'), project(':core'), project(':storage:db')]) {
+// storage는 경로 구분용 프로젝트이며, 실제 Java 모듈만 설정한다.
+configure([project(':api'), project(':core'), project(':storage:db'), project(':storage:s3')]) {
 	apply plugin: 'java'
 	apply plugin: 'io.spring.dependency-management'
 
