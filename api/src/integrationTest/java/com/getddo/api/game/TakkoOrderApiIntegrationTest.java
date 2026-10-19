@@ -88,7 +88,7 @@ class TakkoOrderApiIntegrationTest {
 			""";
 
 	@Test
-	@DisplayName("주문 상세·시작은 목숨·길이 규칙과 seed·생성 버전을 제공한다")
+	@DisplayName("주문 상세·시작 규칙과 응답 seed·DB seed 일치를 확인한다")
 	void readsAndStartsOrder() throws Exception {
 		// given / when / then
 		mvc.perform(get("/api/v1/games/{gameId}", game).header("X-User-ID", user).header("X-User-Role", "USER"))
@@ -96,9 +96,14 @@ class TakkoOrderApiIntegrationTest {
 				.andExpect(jsonPath("$.data.rules.initialLives").value(3))
 				.andExpect(jsonPath("$.data.rules.startLength").value(3))
 				.andExpect(jsonPath("$.data.rules.maxLength").value(8));
-		mvc.perform(post("/api/v1/games/{gameId}/plays", game).header("X-User-ID", user).header("X-User-Role", "USER"))
+		JsonNode started = data(mvc.perform(post("/api/v1/games/{gameId}/plays", game)
+				.header("X-User-ID", user).header("X-User-Role", "USER"))
 				.andExpect(status().isCreated()).andExpect(jsonPath("$.data.gameData.generatorVersion").value("takko-order-generator-v1"))
-				.andExpect(jsonPath("$.data.gameData.seed").isNumber()).andExpect(jsonPath("$.data.gameData.tickMs").doesNotExist());
+				.andExpect(jsonPath("$.data.gameData.seed").isNumber()).andExpect(jsonPath("$.data.gameData.tickMs").doesNotExist()));
+
+		Long storedSeed = jdbc.queryForObject("select generation_seed from game_plays where id=?", Long.class,
+				bytes(UUID.fromString(started.path("playId").asString())));
+		assertThat(storedSeed).isNotNull().isEqualTo(started.path("gameData").path("seed").longValue());
 	}
 
 	@Test

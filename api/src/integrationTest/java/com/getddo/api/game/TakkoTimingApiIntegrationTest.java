@@ -81,7 +81,7 @@ class TakkoTimingApiIntegrationTest {
 	}
 
 	@Test
-	@DisplayName("타이밍 상세·시작은 점수 규칙 세 개와 seed·생성 버전을 제공하며 tickMs는 노출하지 않는다")
+	@DisplayName("타이밍 상세·시작은 점수 규칙 세 개와 seed·생성 버전을 제공하고 응답 seed와 DB seed가 같다")
 	void readsAndStartsTiming() throws Exception {
 		// given / when / then
 		mvc.perform(get("/api/v1/games/{gameId}", game).header("X-User-ID", user).header("X-User-Role", "USER"))
@@ -89,9 +89,14 @@ class TakkoTimingApiIntegrationTest {
 				.andExpect(jsonPath("$.data.rules.points").value(10))
 				.andExpect(jsonPath("$.data.rules.perfectPoints").value(20))
 				.andExpect(jsonPath("$.data.rules.minimumRewardScore").value(50));
-		mvc.perform(post("/api/v1/games/{gameId}/plays", game).header("X-User-ID", user).header("X-User-Role", "USER"))
+		JsonNode started = data(mvc.perform(post("/api/v1/games/{gameId}/plays", game)
+				.header("X-User-ID", user).header("X-User-Role", "USER"))
 				.andExpect(status().isCreated()).andExpect(jsonPath("$.data.gameData.generatorVersion").value("takko-timing-generator-v1"))
-				.andExpect(jsonPath("$.data.gameData.seed").isNumber()).andExpect(jsonPath("$.data.gameData.tickMs").doesNotExist());
+				.andExpect(jsonPath("$.data.gameData.seed").isNumber()).andExpect(jsonPath("$.data.gameData.tickMs").doesNotExist()));
+
+		Long storedSeed = jdbc.queryForObject("select generation_seed from game_plays where id=?", Long.class,
+				bytes(UUID.fromString(started.path("playId").asString())));
+		assertThat(storedSeed).isNotNull().isEqualTo(started.path("gameData").path("seed").longValue());
 	}
 
 	@Test
