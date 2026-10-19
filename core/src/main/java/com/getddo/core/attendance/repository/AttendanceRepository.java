@@ -8,6 +8,7 @@ import java.util.UUID;
 
 import com.getddo.core.attendance.domain.Attendance;
 
+/** 출석 기록 저장소. 사용자·KST 날짜마다 출석은 한 건만 저장할 수 있다. */
 public interface AttendanceRepository {
 
 	/**

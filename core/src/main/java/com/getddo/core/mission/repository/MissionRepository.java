@@ -9,6 +9,7 @@ import com.getddo.core.mission.domain.Mission;
 import com.getddo.core.mission.domain.MissionDetail;
 import com.getddo.core.mission.domain.MissionSearch;
 
+/** 미션과 문항·선택지 저장소. 미션 등록과 사용자·관리자 조회에 쓴다. */
 public interface MissionRepository {
 
 	/**

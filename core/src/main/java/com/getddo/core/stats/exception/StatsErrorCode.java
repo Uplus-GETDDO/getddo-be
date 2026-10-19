@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 
 import com.getddo.core.common.exception.ErrorCode;
 
+/** 관리자 집계 업무 오류 코드. 코드는 {@code STATS-숫자} 형식이다. */
 @Getter
 @RequiredArgsConstructor
 public enum StatsErrorCode implements ErrorCode {

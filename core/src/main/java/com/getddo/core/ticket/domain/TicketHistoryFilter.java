@@ -28,6 +28,7 @@ public final class TicketHistoryFilter {
 		return new TicketHistoryFilter(operationType, from, to);
 	}
 
+	/** 조건이 없는 조회 조건. 전체를 조회한다. */
 	public static TicketHistoryFilter none() {
 		return NONE;
 	}
