@@ -31,7 +31,7 @@ import com.getddo.db.common.util.UuidBinary;
 
 /**
  * 이벤트 조회 전용 JDBC 구현. BINARY(16)은 공통 UUID 변환을 사용하고 DATETIME(6)은 UTC로 해석한다.
- * 관리자 목록의 경품은 페이지의 이벤트 ID를 모아 한 번에 읽고, 사용자 목록에서는 경품을 읽지 않는다.
+ * 관리자 목록의 경품 상세는 페이지 단위로 일괄 조회하고, 사용자 목록에서는 인원 합계만 읽는다.
  * 추첨 영역의 발표 기록은 공개 상태 판정을 위해 읽기만 한다.
  */
 @Repository
@@ -48,7 +48,10 @@ public class EventQueryRepositoryImpl implements EventQueryRepository {
 			       e.weighting_enabled, e.max_tickets_per_user, e.membership_rule,
 			       e.starts_at, e.ends_at, e.status, e.created_at, e.updated_at,
 			       e.canceled_at,
-			""" + PUBLIC_STATUS + " as public_status from events e";
+			""" + PUBLIC_STATUS + " as public_status, ";
+	private static final String WINNER_COUNT = """
+			(select coalesce(sum(p.winner_count), 0) from event_prizes p where p.event_id = e.id)
+			""";
 	private final NamedParameterJdbcTemplate jdbc;
 
 	public EventQueryRepositoryImpl(NamedParameterJdbcTemplate jdbc) {
@@ -63,7 +66,7 @@ public class EventQueryRepositoryImpl implements EventQueryRepository {
 		long total = jdbc.queryForObject("select count(*) from events e" + where, parameters, Long.class);
 		parameters.put("limit", page.getSize());
 		parameters.put("offset", page.offset());
-		List<EventView> rows = jdbc.query(SELECT + where
+		List<EventView> rows = jdbc.query(select(publicView) + where
 				+ " order by " + orderBy(filter.getSort()) + " limit :limit offset :offset",
 				parameters, (row, rowNumber) -> toView(row));
 		return new PageResult<>(publicView ? rows : attachPrizes(rows),
@@ -73,7 +76,7 @@ public class EventQueryRepositoryImpl implements EventQueryRepository {
 	/** 삭제되지 않은 이벤트와 경품을 읽는다. 실제 상태·공개 상태의 선택은 응답 변환에서 수행한다. */
 	@Override
 	public Optional<EventView> findById(UUID eventId) {
-		List<EventView> rows = jdbc.query(SELECT + " where e.deleted_at is null and e.id = :id",
+		List<EventView> rows = jdbc.query(select(false) + " where e.deleted_at is null and e.id = :id",
 				Map.of("id", UuidBinary.toBytes(eventId)), (row, rowNumber) -> toView(row));
 		return attachPrizes(rows).stream().findFirst();
 	}
@@ -105,6 +108,11 @@ public class EventQueryRepositoryImpl implements EventQueryRepository {
 			case TITLE_DESC -> "e.title desc, e.id desc";
 			case TITLE_ASC -> "e.title asc, e.id asc";
 		};
+	}
+
+	/** 합계를 같은 SELECT에서 읽어 상세 조회나 이벤트별 추가 쿼리를 실행하지 않는다. */
+	private static String select(boolean includeWinnerCount) {
+		return SELECT + (includeWinnerCount ? WINNER_COUNT : "0") + " as winner_count from events e";
 	}
 
 	private static String where(EventQueryFilter filter, boolean publicView, Map<String, Object> parameters) {
@@ -202,7 +210,7 @@ public class EventQueryRepositoryImpl implements EventQueryRepository {
 				instant(row, "starts_at"), instant(row, "ends_at"), EventStatus.valueOf(row.getString("status")),
 				instant(row, "created_at"), instant(row, "updated_at"), List.of());
 		return new EventView(details, EventStatus.valueOf(row.getString("public_status")),
-				instant(row, "canceled_at"));
+				instant(row, "canceled_at"), row.getLong("winner_count"));
 	}
 
 	private static EventView withPrizes(EventView view, List<RegisteredEvent.Prize> prizes) {

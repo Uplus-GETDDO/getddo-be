@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -658,6 +659,104 @@ class EventQueryIntegrationTest {
 		request(user, "/api/v1/events/" + free)
 				.andExpect(status().isOk()).andExpect(jsonPath("$.data.myEntered").doesNotHaveJsonPath());
 		assertThat(events.findEnteredEventIds(user, List.of())).isEmpty();
+	}
+
+	@Test
+	@DisplayName("경품 인원 합계를 제공하며 기존 필터·최신 등록순·페이지 경계·64비트 합계를 유지한다")
+	void winnerCountsAreAggregatedWithoutChangingPagination() throws Exception {
+		// given
+		UUID empty = new UUID(0, 25100);
+		UUID first = new UUID(0, 25101);
+		UUID tied = new UUID(0, 25102);
+		UUID larger = new UUID(0, 25103);
+		UUID huge = new UUID(0, 25104);
+		for (UUID id : List.of(empty, first, tied, larger, huge)) {
+			insertEvent(id, prefix + "-" + id, "NO_ENTRANTS", "NO_TICKET", "vvip",
+					"2099-10-01T00:00:00Z", "2099-10-02T00:00:00Z");
+		}
+		insertPrize(first, 1, 1);
+		insertPrize(first, 2, 3);
+		insertPrize(tied, 1, 4);
+		insertPrize(larger, 1, 7);
+		insertPrize(huge, 1, Integer.MAX_VALUE);
+		insertPrize(huge, 2, Integer.MAX_VALUE);
+		UUID deleted = insertEvent(prefix + "-deleted", "NO_ENTRANTS", "NO_TICKET", "vvip",
+				"2099-10-01T00:00:00Z", "2099-10-02T00:00:00Z");
+		insertPrize(deleted, 1, Integer.MAX_VALUE);
+		jdbc.update("update events set deleted_at=? where id=?", at(CREATED_AT), bytes(deleted));
+		insertPrize(insertEvent(prefix + "-other-type", "NO_ENTRANTS", "TICKET", "vvip",
+				"2099-10-01T00:00:00Z", "2099-10-02T00:00:00Z"), 1, 100);
+		insertPrize(insertEvent(prefix + "-other-status", "CANCELED", "NO_TICKET", "vvip",
+				"2099-10-01T00:00:00Z", "2099-10-02T00:00:00Z"), 1, 100);
+		insertPrize(insertEvent(prefix + "-other-membership", "NO_ENTRANTS", "NO_TICKET", "excellent",
+				"2099-10-01T00:00:00Z", "2099-10-02T00:00:00Z"), 1, 100);
+		List<UUID> expectedIds = List.of(huge, larger, tied, first, empty);
+		List<Long> expectedCounts = List.of(4_294_967_294L, 7L, 4L, 4L, 0L);
+		List<String> ids = new ArrayList<>();
+		List<Long> counts = new ArrayList<>();
+
+		// when: 여러 페이지를 각각 서버에서 받아 전체 순서와 중복을 검증한다.
+		for (int page = 1; page <= 3; page++) {
+			String response = request(user, get("/api/v1/events").param("page", String.valueOf(page)).param("size", "2")
+					.param("status", "NO_ENTRANTS").param("eventType", "NO_TICKET").param("membershipRule", "vvip"))
+					.andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements").value(5))
+					.andExpect(jsonPath("$.data.page").value(page)).andExpect(jsonPath("$.data.size").value(2))
+					.andExpect(jsonPath("$.data.items[*].prizes").isEmpty())
+					.andReturn().getResponse().getContentAsString();
+			List<Map<String, Object>> items = JsonPath.read(response, "$.data.items");
+			for (Map<String, Object> item : items) {
+				ids.add((String) item.get("id"));
+				counts.add(((Number) item.get("winnerCount")).longValue());
+			}
+		}
+
+		// then
+		assertThat(ids).containsExactlyElementsOf(expectedIds.stream().map(UUID::toString).toList()).doesNotHaveDuplicates();
+		assertThat(counts).containsExactlyElementsOf(expectedCounts);
+		request(user, get("/api/v1/events").param("page", "4").param("size", "2")
+				.param("status", "NO_ENTRANTS").param("eventType", "NO_TICKET").param("membershipRule", "vvip"))
+				.andExpect(status().isOk()).andExpect(jsonPath("$.data.items").isEmpty())
+				.andExpect(jsonPath("$.data.totalElements").value(5));
+	}
+
+	@Test
+	@DisplayName("목록 합계는 변경된 경품 설정을 반영하고 응모 여부·기본 정렬·관리자 및 상세 응답을 유지한다")
+	void winnerCountTracksPrizeSettingsAndPreservesExistingContracts() throws Exception {
+		// given
+		UUID first = new UUID(0, 25111);
+		UUID second = new UUID(0, 25112);
+		for (UUID id : List.of(first, second)) {
+			insertEvent(id, prefix + "-" + id, "SCHEDULED", "NO_TICKET", "vvip",
+					"2199-10-01T00:00:00Z", "2199-10-02T00:00:00Z");
+		}
+		UUID prize = insertPrize(first, 1, 2);
+		insertPrize(first, 2, 3);
+		insertPrize(second, 1, 8);
+		insertParticipation(first, user, 0);
+		MockHttpServletRequestBuilder query = get("/api/v1/events").param("status", "SCHEDULED")
+				.param("eventType", "NO_TICKET").param("membershipRule", "vvip");
+
+		// when / then: 기본 정렬은 기존 createdAt DESC, id DESC다.
+		request(user, query).andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.items[0].id").value(second.toString()))
+				.andExpect(jsonPath("$.data.items[0].winnerCount").value(8))
+				.andExpect(jsonPath("$.data.items[1].id").value(first.toString()))
+				.andExpect(jsonPath("$.data.items[1].winnerCount").value(5))
+				.andExpect(jsonPath("$.data.items[1].myEntered").value(true))
+				.andExpect(jsonPath("$.data.items[1].imageUrl").value(nullValue()));
+		jdbc.update("update event_prizes set winner_count=6 where id=?", bytes(prize));
+		request(user, get("/api/v1/events").param("status", "SCHEDULED").param("eventType", "NO_TICKET")
+				.param("membershipRule", "vvip"))
+				.andExpect(status().isOk()).andExpect(jsonPath("$.data.items[0].id").value(second.toString()))
+				.andExpect(jsonPath("$.data.items[1].id").value(first.toString()))
+				.andExpect(jsonPath("$.data.items[1].winnerCount").value(9))
+				.andExpect(jsonPath("$.data.items[1].myEntered").value(true));
+		request(admin, "/api/v1/admin/events/" + first).andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.prizes[0].winnerCount").value(6))
+				.andExpect(jsonPath("$.data.winnerCount").doesNotHaveJsonPath());
+		request(user, "/api/v1/events/" + first).andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.prizes[1].winnerCount").value(3))
+				.andExpect(jsonPath("$.data.winnerCount").doesNotHaveJsonPath());
 	}
 
 	private void insertParticipation(UUID event, UUID actor, int spent) {
