@@ -73,6 +73,24 @@ class EventModelTest {
 		assertThat(new EventView(event, EventStatus.SCHEDULED, null).getCanceledAt()).isNull();
 	}
 
+	@Test
+	@DisplayName("경품 인원은 long으로 합산하고 목록의 참여 여부를 연결해도 DB 합계를 유지한다")
+	void winnerCountDoesNotOverflowOrDisappearWhenAttachingParticipation() {
+		// given
+		RegisteredEvent event = registered(List.of(
+				new RegisteredEvent.Prize(ID, 1, "첫 경품", null, null, Integer.MAX_VALUE),
+				new RegisteredEvent.Prize(UUID.randomUUID(), 2, "둘째 경품", null, null, Integer.MAX_VALUE)));
+
+		// when / then
+		assertThat(new EventView(event, EventStatus.SCHEDULED, null).getWinnerCount()).isEqualTo(4_294_967_294L);
+		EventView summary = new EventView(registered(List.of()), EventStatus.SCHEDULED, null, 9);
+		assertThat(summary.withMyEntered(true).getWinnerCount()).isEqualTo(9);
+		assertThat(summary.withMyEntered(true).isMyEntered()).isTrue();
+		assertThat(new EventView(registered(List.of()), EventStatus.SCHEDULED, null).getWinnerCount()).isZero();
+		assertThatThrownBy(() -> new EventView(event, EventStatus.SCHEDULED, null, -1))
+				.isInstanceOf(IllegalArgumentException.class);
+	}
+
 	private EventRegistration registration(List<EventRegistration.Prize> prizes) {
 		return new EventRegistration(ID, "이벤트", "설명", null, EventType.NO_TICKET, false, null,
 				MembershipRule.excellent, Instant.EPOCH, Instant.EPOCH.plusSeconds(60), prizes);
