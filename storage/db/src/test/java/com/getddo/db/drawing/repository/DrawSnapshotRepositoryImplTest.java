@@ -11,6 +11,7 @@ import org.hibernate.Session;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -43,6 +44,7 @@ class DrawSnapshotRepositoryImplTest {
 	private final DrawSnapshotRepositoryImpl repository = new DrawSnapshotRepositoryImpl(
 			source, runs, candidates, links, mapper, entityManager);
 	private final AtomicReference<Integer> activeBatchSize = new AtomicReference<>();
+	private Integer expectedRestoredBatchSize;
 	private final UUID eventId = UUID.randomUUID();
 	private final UUID runId = UUID.randomUUID();
 	private final DrawRunEntity run = mock(DrawRunEntity.class);
@@ -51,7 +53,7 @@ class DrawSnapshotRepositoryImplTest {
 	private final DrawSnapshot.Candidate inputCandidate = mock(DrawSnapshot.Candidate.class);
 	private final DrawCandidateEntity entity = mock(DrawCandidateEntity.class);
 
-	/** 후보·연결 저장과 재조회가 같은 배치 설정 아래 수행되는 저장소 대역을 준비한다. */
+	/** 후보·연결 저장에만 배치 100을 사용하고 이후에는 기존 설정을 사용하는지 검사한다. */
 	@BeforeEach
 	void setUp() {
 		when(entityManager.unwrap(Session.class)).thenReturn(session);
@@ -76,9 +78,21 @@ class DrawSnapshotRepositoryImplTest {
 			assertThat(activeBatchSize.get()).isEqualTo(100);
 			return invocation.getArgument(0);
 		});
+		doAnswer(invocation -> {
+			assertThat(activeBatchSize.get()).isEqualTo(expectedRestoredBatchSize);
+			return null;
+		}).when(mapper).fixInput(run, input);
+		doAnswer(invocation -> {
+			assertThat(activeBatchSize.get()).isEqualTo(expectedRestoredBatchSize);
+			return null;
+		}).when(runs).flush();
+		doAnswer(invocation -> {
+			assertThat(activeBatchSize.get()).isEqualTo(expectedRestoredBatchSize);
+			return null;
+		}).when(entityManager).refresh(run);
 		when(runs.findByEventIdAndDrawTypeAndRunNumber(eventId, DrawType.INITIAL, 0))
 				.thenAnswer(invocation -> {
-					assertThat(activeBatchSize.get()).isEqualTo(100);
+					assertThat(activeBatchSize.get()).isEqualTo(expectedRestoredBatchSize);
 					return Optional.of(run);
 				});
 		when(links.findCandidates(runId)).thenReturn(List.of(entity));
@@ -89,9 +103,10 @@ class DrawSnapshotRepositoryImplTest {
 	@ParameterizedTest
 	@NullSource
 	@ValueSource(ints = {17, 200})
-	@DisplayName("최초 후보·연결은 배치 100으로 저장하고 재조회 결과를 반환한 뒤 이전 설정을 복원한다")
+	@DisplayName("최초 후보·연결은 배치 100으로 저장하고 입력 고정·flush·재조회 전에 이전 설정을 복원한다")
 	void restoresCallerBatchSizeAfterSaving(Integer previousBatchSize) {
 		// given
+		expectedRestoredBatchSize = previousBatchSize;
 		activeBatchSize.set(previousBatchSize);
 
 		// when
@@ -102,23 +117,35 @@ class DrawSnapshotRepositoryImplTest {
 		assertThat(activeBatchSize.get()).isEqualTo(previousBatchSize);
 	}
 
-	/** 중간 저장·재조회가 실패해도 예외를 삼키지 않고 세션 설정을 되돌린다. */
+	/** 저장·입력 고정·재조회 실패 시 기본 설정 상속(null)과 명시 설정을 유지하고 예외를 전파한다. */
 	@ParameterizedTest
-	@ValueSource(strings = {"candidate", "link", "reload"})
-	@DisplayName("후보 저장·연결 저장·재조회 실패는 전파하고 호출자의 배치 설정을 복원한다")
-	void restoresCallerBatchSizeAndPropagatesFailure(String step) {
+	@CsvSource(value = {
+			"candidate, NULL", "candidate, 17",
+			"link, NULL", "link, 17",
+			"fix, NULL", "fix, 17",
+			"flush, NULL", "flush, 17",
+			"refresh, NULL", "refresh, 17",
+			"lookup, NULL", "lookup, 17"
+	}, nullValues = "NULL")
+	@DisplayName("후보·연결 저장과 복원 후 입력 고정·flush·재조회 실패는 전파하고 이전 설정을 유지한다")
+	void restoresCallerBatchSizeAndPropagatesFailure(String step, Integer previousBatchSize) {
 		// given
-		activeBatchSize.set(17);
+		expectedRestoredBatchSize = previousBatchSize;
+		activeBatchSize.set(previousBatchSize);
 		DataIntegrityViolationException failure = new DataIntegrityViolationException("test failure");
 		switch (step) {
 			case "candidate" -> doThrow(failure).when(candidates).saveAllAndFlush(anyList());
 			case "link" -> doThrow(failure).when(links).saveAllAndFlush(anyList());
-			case "reload" -> doThrow(failure).when(entityManager).refresh(run);
+			case "fix" -> doThrow(failure).when(mapper).fixInput(run, input);
+			case "flush" -> doThrow(failure).when(runs).flush();
+			case "refresh" -> doThrow(failure).when(entityManager).refresh(run);
+			case "lookup" -> doThrow(failure).when(runs)
+					.findByEventIdAndDrawTypeAndRunNumber(eventId, DrawType.INITIAL, 0);
 			default -> throw new IllegalArgumentException(step);
 		}
 
 		// when / then
 		assertThatThrownBy(() -> repository.saveInitial(input)).isSameAs(failure);
-		assertThat(activeBatchSize.get()).isEqualTo(17);
+		assertThat(activeBatchSize.get()).isEqualTo(previousBatchSize);
 	}
 }

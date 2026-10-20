@@ -5,7 +5,7 @@
 
 ## 변경 범위
 
-`DrawSnapshotRepositoryImpl.saveInput`의 최초 후보·실행별 연결 저장에만 Hibernate 세션 배치 크기 100을 지정한다. 정상 반환과 예외 모두 `finally`에서 이전 값으로 복원한다. `null`은 전역 기본 설정 상속이므로 그대로 복원한다.
+`DrawSnapshotRepositoryImpl.saveInput`의 최초 후보·실행별 연결 저장에만 Hibernate 세션 배치 크기 100을 지정한다. 두 저장 호출이 끝나거나 실패하면 `finally`에서 이전 값으로 복원한다. 입력 고정·flush·재조회는 복원 후 실행한다. `null`은 전역 기본 설정 상속이므로 그대로 복원한다.
 
 후보·연결은 기존 `saveAllAndFlush`로 저장한다. UUID v7·감사 시각·JSON 매핑은 기존 Entity/JPA 처리를 사용한다. 입력 고정과 실제 DB 정밀도로 재조회하는 흐름, 서비스 트랜잭션·잠금 순서·실패 전파·재추첨 후보 재사용은 변경하지 않는다. 100은 JDBC 배치 크기이며 커밋 단위가 아니다.
 

@@ -127,15 +127,15 @@ public class DrawSnapshotRepositoryImpl implements DrawSnapshotRepository {
 					.map(candidate -> mapper.toEntity(run, candidate)).toList());
 			links.saveAllAndFlush(savedCandidates.stream()
 					.map(candidate -> new DrawRunCandidateEntity(run, candidate)).toList());
-			mapper.fixInput(run, snapshot);
-			runs.flush();
-
-			// 실제 DB 정밀도로 다시 읽어 첫 응답과 재요청의 스냅샷을 일치시킨다.
-			entityManager.refresh(run);
-			return findInitial(snapshot.eventId()).orElseThrow();
 		} finally {
-			// 같은 서비스 트랜잭션의 후속 작업에 추첨용 배치 크기가 전파되지 않게 한다.
+			// 입력 고정과 같은 서비스 트랜잭션의 후속 작업에는 호출자의 배치 설정을 사용한다.
 			session.setJdbcBatchSize(previousBatchSize);
 		}
+		mapper.fixInput(run, snapshot);
+		runs.flush();
+
+		// 실제 DB 정밀도로 다시 읽어 첫 응답과 재요청의 스냅샷을 일치시킨다.
+		entityManager.refresh(run);
+		return findInitial(snapshot.eventId()).orElseThrow();
 	}
 }
