@@ -1,6 +1,6 @@
 # 실제 실행 보고서
 
-실제 테스트를 실행한 뒤 [검증 결과 양식](../../templates/verification-report.md)을 복사해 이 폴더에 보고서를 추가합니다. 현재 이 PR에는 실제 실행 결과 보고서를 등록하지 않았습니다. 기존 README·Wiki의 과거 결과와는 별개입니다.
+실제 테스트를 실행한 뒤 [검증 결과 양식](../../templates/verification-report.md)을 복사해 이 폴더에 보고서를 추가합니다. 기존 README·Wiki의 과거 결과와는 별개입니다.
 
 ## 작성과 등록
 
