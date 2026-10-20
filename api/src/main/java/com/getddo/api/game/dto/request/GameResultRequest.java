@@ -17,17 +17,34 @@ import com.getddo.core.game.domain.GameResultSubmission;
 import com.getddo.core.game.domain.TakkoRunAction;
 import com.getddo.core.game.domain.TakkoRunInput;
 import com.getddo.core.game.domain.TakkoRunSubmission;
+import com.getddo.core.game.domain.TakkoTimingSubmission;
+import com.getddo.core.game.domain.TakkoTimingTap;
+import com.getddo.core.game.domain.TakkoOrderMenu;
+import com.getddo.core.game.domain.TakkoOrderRoundInput;
+import com.getddo.core.game.domain.TakkoOrderSubmission;
 import com.getddo.core.game.exception.GameErrorCode;
 
-/** G04의 게임별 입력 형식만 검증한다. 색깔 답변과 타꼬런 입력은 분리하며 점수 판정은 하지 않는다. */
+/** G04의 게임별 입력 형식만 검증한다. 게임별 입력은 분리하며 점수 판정은 하지 않는다. */
 @Builder
 public record GameResultRequest(@NotBlank String playToken, @NotNull JsonNode validationData) {
 
 	public static final int MAX_ANSWERS = 10_000;
 	public static final int MAX_INPUTS = 10_000;
+	public static final int MAX_TAPS = 10_000;
+	public static final int MAX_ROUNDS = 10_000;
 
 	public GameResultSubmission toDomain(UUID gameId, UUID playId) {
 		if (validationData == null || !validationData.isObject()) throw format();
+		if (validationData.has("rounds")) {
+			if (validationData.has("answers") || validationData.has("inputs") || validationData.has("taps")
+					|| validationData.has("endTick") || validationData.has("totalTicks")) throw format();
+			return takkoOrder(gameId, playId);
+		}
+		if (validationData.has("taps")) {
+			if (validationData.has("answers") || validationData.has("inputs")
+					|| validationData.has("endTick") || validationData.has("totalTicks")) throw format();
+			return takkoTiming(gameId, playId);
+		}
 		if (validationData.has("inputs") || validationData.has("endTick")) {
 			if (validationData.has("answers") || validationData.has("totalTicks")) {
 				throw format();
@@ -61,6 +78,51 @@ public record GameResultRequest(@NotBlank String playToken, @NotNull JsonNode va
 			parsed.add(new ColorWordAnswer(sequence.intValue(), choice, elapsed.longValue()));
 		}
 		return new GameResultSubmission(gameId, playId, playToken, parsed);
+	}
+
+	private GameResultSubmission takkoOrder(UUID gameId, UUID playId) {
+		JsonNode rounds = validationData.get("rounds");
+		if (!rounds.isArray()) throw format();
+		if (rounds.size() > MAX_ROUNDS) throw new BusinessException(GameErrorCode.RESULT_TOO_LARGE);
+
+		List<TakkoOrderRoundInput> parsed = new ArrayList<>(rounds.size());
+		for (JsonNode round : rounds) {
+			if (!round.isObject()) throw format();
+			JsonNode sequence = round.get("sequence");
+			JsonNode picks = round.get("picks");
+			if (sequence == null || !sequence.isIntegralNumber() || !sequence.canConvertToInt()
+					|| picks == null || !picks.isArray()) throw format();
+			List<TakkoOrderMenu> choices = new ArrayList<>(picks.size());
+			for (JsonNode pick : picks) {
+				if (!pick.isString()) throw format();
+				choices.add(switch (pick.asString()) {
+					case "scallion" -> TakkoOrderMenu.SCALLION;
+					case "cheese" -> TakkoOrderMenu.CHEESE;
+					case "shrimp" -> TakkoOrderMenu.SHRIMP;
+					case "nori" -> TakkoOrderMenu.NORI;
+					default -> throw format();
+				});
+			}
+			parsed.add(new TakkoOrderRoundInput(sequence.intValue(), choices));
+		}
+		return new GameResultSubmission(gameId, playId, playToken, new TakkoOrderSubmission(parsed));
+	}
+
+	private GameResultSubmission takkoTiming(UUID gameId, UUID playId) {
+		JsonNode taps = validationData.get("taps");
+		if (!taps.isArray()) throw format();
+		if (taps.size() > MAX_TAPS) throw new BusinessException(GameErrorCode.RESULT_TOO_LARGE);
+
+		List<TakkoTimingTap> parsed = new ArrayList<>(taps.size());
+		for (JsonNode tap : taps) {
+			if (!tap.isObject()) throw format();
+			JsonNode sequence = tap.get("sequence");
+			JsonNode elapsed = tap.get("elapsedMs");
+			if (sequence == null || !sequence.isIntegralNumber() || !sequence.canConvertToInt()
+					|| elapsed == null || !elapsed.isIntegralNumber() || !elapsed.canConvertToLong()) throw format();
+			parsed.add(new TakkoTimingTap(sequence.intValue(), elapsed.longValue()));
+		}
+		return new GameResultSubmission(gameId, playId, playToken, new TakkoTimingSubmission(parsed));
 	}
 
 	private GameResultSubmission takkoRun(UUID gameId, UUID playId) {

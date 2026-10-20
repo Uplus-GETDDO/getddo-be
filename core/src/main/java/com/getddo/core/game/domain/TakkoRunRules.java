@@ -1,13 +1,8 @@
 package com.getddo.core.game.domain;
 
-import java.util.Objects;
-
 import lombok.Getter;
 import tools.jackson.core.JacksonException;
-import tools.jackson.core.StreamReadFeature;
-import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.json.JsonMapper;
 
 /** FE 계약의 120Hz·xorshift32 재현과 활성 10분 종료 규칙. 저장값을 임의로 보정하지 않는다. */
 @Getter
@@ -22,11 +17,6 @@ public final class TakkoRunRules implements GameStartRules {
 	public static final int DISTANCE_PER_POINT = 10;
 	public static final int MINIMUM_REWARD_SCORE = 400;
 
-	private static final JsonMapper JSON = JsonMapper.builder()
-			.enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
-			.enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-			.build();
-
 	private final int minimumRewardScore;
 	private final int maxTicks;
 
@@ -40,10 +30,7 @@ public final class TakkoRunRules implements GameStartRules {
 
 	/** 공개 규칙을 시작 스냅샷에서 검증한다. 누락·중복·타입 오류는 서버 설정 오류다. */
 	public static TakkoRunRules fromSnapshot(String snapshot) {
-		JsonNode rules = JSON.readTree(Objects.requireNonNull(snapshot, "snapshot"));
-		if (rules == null || !rules.isObject()) {
-			throw new IllegalArgumentException("타꼬런 규칙은 JSON 객체여야 합니다.");
-		}
+		JsonNode rules = StoredRulesSnapshot.readObject(snapshot, "타꼬런 규칙은 JSON 객체여야 합니다.");
 		return new TakkoRunRules(integer(rules, "minimumRewardScore"), integer(rules, "maxTicks"));
 	}
 
@@ -52,17 +39,11 @@ public final class TakkoRunRules implements GameStartRules {
 		try {
 			return fromSnapshot(snapshot);
 		} catch (JacksonException | IllegalArgumentException invalidConfiguration) {
-			IllegalStateException safeCause = new IllegalStateException(invalidConfiguration.getClass().getName());
-			safeCause.setStackTrace(invalidConfiguration.getStackTrace());
-			throw new IllegalStateException("저장된 타꼬런 규칙이 올바르지 않습니다.", safeCause);
+			throw StoredRulesSnapshot.wrapStoredFailure("저장된 타꼬런 규칙이 올바르지 않습니다.", invalidConfiguration);
 		}
 	}
 
 	private static int integer(JsonNode rules, String name) {
-		JsonNode value = rules.get(name);
-		if (value == null || !value.isIntegralNumber() || !value.canConvertToInt()) {
-			throw new IllegalArgumentException("타꼬런 규칙에는 정수 필드가 필요합니다.");
-		}
-		return value.intValue();
+		return StoredRulesSnapshot.requireInt(rules, name, "타꼬런 규칙에는 정수 필드가 필요합니다.");
 	}
 }

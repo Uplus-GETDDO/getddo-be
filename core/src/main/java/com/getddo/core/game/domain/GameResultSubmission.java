@@ -19,6 +19,8 @@ public final class GameResultSubmission {
 	private final String playToken;
 	private final List<ColorWordAnswer> answers;
 	private final TakkoRunSubmission takkoRun;
+	private final TakkoTimingSubmission takkoTiming;
+	private final TakkoOrderSubmission takkoOrder;
 	private final String resultHash;
 
 	public GameResultSubmission(UUID gameId, UUID playId, String playToken, List<ColorWordAnswer> answers) {
@@ -27,6 +29,8 @@ public final class GameResultSubmission {
 		this.playToken = Objects.requireNonNull(playToken, "playToken");
 		this.answers = List.copyOf(answers);
 		this.takkoRun = null;
+		this.takkoTiming = null;
+		this.takkoOrder = null;
 		this.resultHash = hash(this.answers);
 	}
 
@@ -37,7 +41,62 @@ public final class GameResultSubmission {
 		this.playToken = Objects.requireNonNull(playToken, "playToken");
 		this.answers = List.of();
 		this.takkoRun = Objects.requireNonNull(takkoRun, "takkoRun");
+		this.takkoTiming = null;
+		this.takkoOrder = null;
 		this.resultHash = hash(takkoRun);
+	}
+
+	/** 기존 게임의 해시는 보존하고 타이밍의 판 번호·정수 ms·배열 순서를 별도 종류로 해시한다. */
+	public GameResultSubmission(UUID gameId, UUID playId, String playToken, TakkoTimingSubmission takkoTiming) {
+		this.gameId = Objects.requireNonNull(gameId, "gameId");
+		this.playId = Objects.requireNonNull(playId, "playId");
+		this.playToken = Objects.requireNonNull(playToken, "playToken");
+		this.answers = List.of();
+		this.takkoRun = null;
+		this.takkoTiming = Objects.requireNonNull(takkoTiming, "takkoTiming");
+		this.takkoOrder = null;
+		this.resultHash = hash(takkoTiming);
+	}
+
+	/** 메뉴 순서뿐 아니라 각 주문의 번호·선택 개수도 해시해 주문 경계를 보존한다. */
+	public GameResultSubmission(UUID gameId, UUID playId, String playToken, TakkoOrderSubmission takkoOrder) {
+		this.gameId = Objects.requireNonNull(gameId, "gameId");
+		this.playId = Objects.requireNonNull(playId, "playId");
+		this.playToken = Objects.requireNonNull(playToken, "playToken");
+		this.answers = List.of();
+		this.takkoRun = null;
+		this.takkoTiming = null;
+		this.takkoOrder = Objects.requireNonNull(takkoOrder, "takkoOrder");
+		this.resultHash = hash(takkoOrder);
+	}
+
+	private static String hash(TakkoOrderSubmission submission) {
+		try {
+			MessageDigest digest = MessageDigest.getInstance("SHA-256");
+			digest.update((TakkoOrderRules.RULE_VERSION + ":rounds:sequence/picks").getBytes(StandardCharsets.US_ASCII));
+			for (TakkoOrderRoundInput round : submission.getRounds()) {
+				digest.update(ByteBuffer.allocate(8).putInt(round.getSequence()).putInt(round.getPicks().size()).array());
+				for (TakkoOrderMenu pick : round.getPicks()) {
+					digest.update(ByteBuffer.allocate(4).putInt(pick.ordinal()).array());
+				}
+			}
+			return HexFormat.of().formatHex(digest.digest());
+		} catch (NoSuchAlgorithmException failure) {
+			throw new IllegalStateException("SHA-256을 사용할 수 없습니다.", failure);
+		}
+	}
+
+	private static String hash(TakkoTimingSubmission submission) {
+		try {
+			MessageDigest digest = MessageDigest.getInstance("SHA-256");
+			digest.update((TakkoTimingRules.RULE_VERSION + ":taps:sequence/elapsedMs").getBytes(StandardCharsets.US_ASCII));
+			for (TakkoTimingTap tap : submission.getTaps()) {
+				digest.update(ByteBuffer.allocate(12).putInt(tap.getSequence()).putLong(tap.getElapsedMs()).array());
+			}
+			return HexFormat.of().formatHex(digest.digest());
+		} catch (NoSuchAlgorithmException failure) {
+			throw new IllegalStateException("SHA-256을 사용할 수 없습니다.", failure);
+		}
 	}
 
 	private static String hash(TakkoRunSubmission submission) {
