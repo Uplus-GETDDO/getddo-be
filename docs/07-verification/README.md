@@ -24,7 +24,7 @@
 
 ## 결과 작성 순서
 
-1. [검증 결과 양식](../templates/verification-report.md)을 복사해 `reports/` 아래에 결과 파일을 만듭니다. 해당 폴더는 첫 보고서를 추가할 때 생성합니다.
+1. [검증 결과 양식](../templates/verification-report.md)을 복사해 `reports/` 아래에 결과 파일을 만듭니다. [보고서 목록과 작성 안내](reports/README.md)를 확인합니다.
 2. 관련 기능의 공용 계약을 연결하고 검증 범위·기대 결과를 먼저 적습니다.
 3. 단위·실제 MySQL 통합·통제된 동시성·HTTP·장애·부하 중 실행 방식을 구분합니다. 동시성·실패 시점의 재현을 먼저 확인하고 부하로 확대합니다.
 4. 실제 실행 환경·명령·데이터 준비 방법·대조 시점을 기록합니다.
@@ -39,8 +39,12 @@
 docs/
 ├── 07-verification/
 │   ├── README.md
-│   └── reports/                          # 첫 실제 보고서 작성 시 생성
-│       └── YYYY-MM-DD-주제.md
+│   └── reports/
+│       ├── README.md                     # 보고서 목록·작성 안내
+│       ├── YYYY-MM-DD-주제.md             # 실제 실행 후 추가
+│       └── assets/
+│           ├── README.md                 # 근거 파일 보관 안내
+│           └── YYYY-MM-DD-주제-summary.csv # 필요한 실제 산출물만 추가
 └── templates/
     └── verification-report.md
 ```
@@ -62,7 +66,7 @@ docs/
 
 자동 생성 HTML·XML·대용량 부하 원본은 Git에 일괄 추가하지 않습니다. 실제 실행에서 선택한 아티팩트·첨부 보관 위치를 보고서에 적고, 팀원이 열 수 있는지와 보관 만료 여부를 확인합니다. 현재 빌드 워크플로는 실패 시 테스트 보고서를 7일 보관하므로 성공 결과의 자동 업로드나 영구 보관을 전제하지 않습니다. 이 문서 추가로 워크플로를 변경하지 않습니다.
 
-정합성 대조를 수행했다면 대상 수·불일치 수와 실제 검사 쿼리·assertion 위치를 남깁니다. 필요할 때 요약 JSON·CSV를 함께 보관합니다. 이 문서는 해당 파일을 생성하는 자동화나 부하 스크립트를 제공하지 않습니다.
+정합성 대조를 수행했다면 대상 수·불일치 수와 실제 검사 쿼리·assertion 위치를 남깁니다. 작은 요약 JSON·CSV는 보고서 옆 `reports/assets/`에 함께 커밋할 수 있습니다. 자료별 선택 기준은 [근거 파일 보관 안내](reports/assets/README.md)를 따릅니다. 이 문서는 해당 파일을 생성하는 자동화나 부하 스크립트를 제공하지 않습니다.
 
 근거에는 테스트용 식별자를 사용하고 비밀값·개인정보를 포함하지 않습니다.
 
@@ -80,6 +84,8 @@ docs/
 ## 관련 문서
 
 - [검증 결과 양식](../templates/verification-report.md)
+- [실제 실행 보고서 목록·작성 안내](reports/README.md)
+- [근거 파일 보관 안내](reports/assets/README.md)
 - [API 검증 시나리오](../02-api/verification.md) — 계획 문서이며 실행 결과가 아님
 - [테스트 실행 자원 제한](../01-conventions/test-execution.md)
 - [공용 구현 범위](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/00-requirements/scope.md)
