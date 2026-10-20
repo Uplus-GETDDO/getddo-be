@@ -61,6 +61,20 @@ GitHub **Settings → Environments → production → Variables**에 다음 네 
 
 이미지 보관·전송에는 S3 저장 공간과 요청 요금 등이 발생한다. 전용 버킷의 `releases/`에 만료 정책을 적용해 누적을 제한하고, 접근 로그·CloudTrail 데이터 이벤트·CloudWatch 메트릭으로 운영 상태를 확인하는 것을 권장한다. 이 설정은 코드에서 자동 생성하지 않는다. [S3 요금 기준](https://aws.amazon.com/s3/pricing/)과 [보안·운영 권고](https://docs.aws.amazon.com/AmazonS3/latest/userguide/security-best-practices.html)를 따른다.
 
+## 애플리케이션 로그 수집 유지
+
+[compose.deploy.yaml](../../compose.deploy.yaml)의 `app.logging`에 `awslogs`를 포함해 자동 배포에서도 서울(`ap-northeast-2`)의 `/getddo/dev/api`로 stdout·stderr를 전송한다. 배포 스크립트는 release의 기본 Compose만 사용하므로 별도 수동 override 파일에 의존하지 않는다. 앱 환경변수나 Parameter Store 항목을 추가할 필요는 없다.
+
+- 배포 전에 Standard 로그 그룹 `/getddo/dev/api`와 보관 기간 14일을 준비한다. `awslogs-create-group: "false"`이므로 컨테이너가 로그 그룹을 만들지 않는다. 이 Compose는 그룹·보관 기간을 관리하지 않는다.
+- Docker 데몬이 사용하는 EC2 역할에 해당 그룹의 `logs:CreateLogStream`·`logs:PutLogEvents` 권한과 CloudWatch Logs 엔드포인트 연결이 필요하다. 앱 로그는 Docker가 직접 전송하며 CloudWatch Agent의 메모리·디스크 지표 수집과 구분한다.
+- stream 이름을 지정하지 않아 새 컨테이너 ID별로 생성된다. `mode: non-blocking`, `max-buffer-size: 4m`으로 전송 지연 시 앱의 로그 쓰기 대기를 피하지만 버퍼가 차면 로그가 유실될 수 있다. `json-file` 전용 `max-size`·`max-file` 옵션은 사용하지 않는다.
+- 배포 후 새 컨테이너 ID의 stream에 기동 로그와 이후 요청 로그가 들어오는지 확인한다. HTTP 기동 확인만으로 로그 수집 성공을 판단하지 않는다. 실패 시 로그 그룹·리전·역할 권한·네트워크를 확인한다.
+- 실패 복구는 이전 release의 Compose를 사용한다. 이전 파일이 `json-file`이면 복구 시 로그 드라이버도 되돌아가므로 CloudWatch 수집 유지 여부를 별도로 확인한다.
+
+오프라인에서는 비밀값 없는 임시 env 파일을 `APP_ENV_FILE`로 지정하고 `APP_IMAGE`를 설정한 뒤 `docker compose --project-name getddo --env-file /dev/null --file compose.deploy.yaml config --format json`으로 드라이버·옵션·raw env 보존을 검사한다. 이 검사는 AWS 권한·네트워크·실제 로그 도착을 검증하지 않는다. 실제 재배포 후 수집 확인은 별도 운영 검증으로 남는다.
+
+설정 근거: [Docker awslogs 드라이버](https://docs.docker.com/engine/logging/drivers/awslogs/), [non-blocking 버퍼 동작](https://docs.docker.com/engine/logging/configure/#configure-the-delivery-mode-of-log-messages-from-container-to-log-driver).
+
 ## 서버 교체와 실패 복구
 
 [deploy-ssm.py](../../infra/scripts/deploy-ssm.py)는 이미지 파일·체크섬·이미지 ID·Compose·교체 스크립트·설정 조회 스크립트만 묶어서 전달한다. `.env`, State, DB 비밀번호와 인증 파일은 포함하지 않는다. 서버는 전달 파일의 체크섬을 검증한 뒤 [deploy-container.sh](../../infra/scripts/deploy-container.sh)를 실행한다.
@@ -79,7 +93,7 @@ GitHub **Settings → Environments → production → Variables**에 다음 네 
 
 ## 함께 준비한 파일과 검증 범위
 
-[compose.deploy.yaml](../../compose.deploy.yaml)은 서버에서 앱 컨테이너 하나를 실행하기 위한 설정 초안이다. 자동 배포에서 이 파일을 사용한다. Parameter Store 설정·조회 권한·DB 연결·인증서를 사전에 준비해야 한다. 로컬 개발에는 기존 `compose.yaml`을 사용한다.
+[compose.deploy.yaml](../../compose.deploy.yaml)은 서버에서 앱 컨테이너 하나를 실행하기 위한 설정이다. 자동 배포에서 이 파일을 사용한다. Parameter Store 설정·조회 권한·DB 연결·인증서를 사전에 준비해야 한다. 로컬 개발에는 기존 `compose.yaml`을 사용한다.
 
 CI 성공은 테스트·이미지 빌드·파일 보관 성공을 뜻한다. CD 성공은 원격 교체 스크립트가 상태 확인까지 성공하고 SSM 결과도 성공했을 때만 표시한다. 실제 서버 배포는 미검증이다.
 
