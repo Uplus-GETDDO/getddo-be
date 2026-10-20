@@ -6,6 +6,8 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -154,6 +156,30 @@ class GamePlayTest {
 		assertThat(invalid.isCompleted()).isTrue();
 		assertThat(invalid.isValid()).isFalse();
 		assertThat(invalid.getResultHash()).isEqualTo(HASH);
+	}
+
+	@ParameterizedTest
+	@CsvSource({"1,true", "4294967295,true", "0,false", "-1,false", "4294967296,false"})
+	@DisplayName("게임별 공통 시작 정보 검사는 seed의 양쪽 경계를 동일하게 적용한다")
+	void checksReplaySeedBoundary(long seed, boolean supported) {
+		// given
+		GamePlay play = new GamePlay(UUID.randomUUID(), GAME, USER, "takko-order-v1", "{}", HASH,
+				"takko-order-generator-v1", seed, START, null, null, null);
+		// when / then
+		assertThat(play.hasVerificationContext("takko-order-v1", "takko-order-generator-v1")).isEqualTo(supported);
+	}
+
+	@Test
+	@DisplayName("게임별 공통 시작 정보 검사는 다른 규칙·생성 버전과 검증 정보 없는 과거 행을 거절한다")
+	void rejectsMismatchedReplayVersionAndLegacy() {
+		// given
+		GamePlay current = started();
+		GamePlay legacy = new GamePlay(UUID.randomUUID(), GAME, USER, current.getRuleVersion(),
+				null, null, null, null, START, null, null, null);
+		// when / then
+		assertThat(current.hasVerificationContext("unsupported-rule", current.getGeneratorVersion())).isFalse();
+		assertThat(current.hasVerificationContext(current.getRuleVersion(), "unsupported-generator")).isFalse();
+		assertThat(legacy.hasVerificationContext(current.getRuleVersion(), current.getGeneratorVersion())).isFalse();
 	}
 
 	private GamePlay restore(Long score, String hash, Instant completedAt, Instant startedAt) {

@@ -7,6 +7,7 @@ import java.util.UUID;
 import com.getddo.core.attendance.domain.AttendanceRewardClaim;
 import com.getddo.core.attendance.domain.AttendanceRewardType;
 
+/** 출석 보상 청구 저장소. 일일 보상과 연속 출석 단계 보상을 구분해 저장하며, 청구는 응모권 지급의 근거가 된다. */
 public interface AttendanceRewardClaimRepository {
 
 	/**

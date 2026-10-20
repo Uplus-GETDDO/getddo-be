@@ -105,6 +105,24 @@ class TakkoRunValidatorTest {
 		}
 	}
 
+	@ParameterizedTest
+	@CsvSource({
+			"unsupported-rule,takko-run-generator-v1,1",
+			"takko-run-v1,unsupported-generator,1",
+			"takko-run-v1,takko-run-generator-v1,0",
+			"takko-run-v1,takko-run-generator-v1,-1",
+			"takko-run-v1,takko-run-generator-v1,4294967296"
+	})
+	@DisplayName("타꼬런 검증기 호출은 미지원 버전·seed 범위를 INVALID가 아닌 설정 오류로 처리한다")
+	void rejectsUnsupportedVerificationContext(String ruleVersion, String generatorVersion, long seed) {
+		// given
+		GamePlay invalid = new GamePlay(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), ruleVersion,
+				RULES, "a".repeat(64), generatorVersion, seed, Instant.EPOCH, null, null, null);
+		// when / then
+		assertThatThrownBy(() -> validator.validate(invalid, new TakkoRunSubmission(348, firstJump())))
+				.isInstanceOf(IllegalStateException.class);
+	}
+
 	private static List<TakkoRunInput> firstJump() {
 		return List.of(new TakkoRunInput(0, TakkoRunAction.PRESS));
 	}

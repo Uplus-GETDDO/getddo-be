@@ -6,6 +6,7 @@ import java.util.UUID;
 
 import com.getddo.core.mission.domain.QuizQuestionProgress;
 
+/** 퀴즈 문항의 정답 완료 기록 저장소. 사용자·문항당 한 건만 저장할 수 있다. */
 public interface QuizQuestionProgressRepository {
 
 	/**

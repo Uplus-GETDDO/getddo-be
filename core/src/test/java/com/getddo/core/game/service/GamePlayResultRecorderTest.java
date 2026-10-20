@@ -12,6 +12,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import com.getddo.core.common.exception.BusinessException;
 import com.getddo.core.common.time.TimeProvider;
@@ -24,6 +25,11 @@ import com.getddo.core.game.domain.GameRewardClaim;
 import com.getddo.core.game.domain.TakkoRunAction;
 import com.getddo.core.game.domain.TakkoRunInput;
 import com.getddo.core.game.domain.TakkoRunRules;
+import com.getddo.core.game.domain.TakkoTimingRules;
+import com.getddo.core.game.domain.TakkoTimingSubmission;
+import com.getddo.core.game.domain.TakkoOrderRules;
+import com.getddo.core.game.domain.TakkoOrderSubmission;
+import com.getddo.core.game.domain.GamePlayResult;
 import com.getddo.core.game.domain.TakkoRunSubmission;
 import com.getddo.core.game.exception.GameResultFormatException;
 import com.getddo.core.game.repository.GamePlayRepository;
@@ -42,6 +48,8 @@ class GamePlayResultRecorderTest {
 	private final GamePlayRepository plays = mock(GamePlayRepository.class);
 	private final ColorWordValidator validator = mock(ColorWordValidator.class);
 	private final TakkoRunValidator takkoRunValidator = mock(TakkoRunValidator.class);
+	private final TakkoTimingValidator takkoTimingValidator = mock(TakkoTimingValidator.class);
+	private final TakkoOrderValidator takkoOrderValidator = mock(TakkoOrderValidator.class);
 	private final GameStatisticsRepository stats = mock(GameStatisticsRepository.class);
 	private final GameRewardClaimRepository claims = mock(GameRewardClaimRepository.class);
 	private final TicketGrantService grants = mock(TicketGrantService.class);
@@ -52,7 +60,7 @@ class GamePlayResultRecorderTest {
 	private final GameResultSubmission submission = new GameResultSubmission(game, id, token.getPlayToken(),
 			List.of(new ColorWordAnswer(1, null, 3000)));
 	private final GamePlayResultRecorder recorder = new GamePlayResultRecorder(plays, validator, takkoRunValidator,
-			stats, claims, grants,
+			takkoTimingValidator, takkoOrderValidator, stats, claims, grants,
 			new TimeProvider(Clock.fixed(NOW, ZoneOffset.UTC)));
 	private GamePlay play;
 
@@ -171,4 +179,60 @@ class GamePlayResultRecorderTest {
 		verify(plays, never()).complete(any());
 		verifyNoInteractions(stats, validator, takkoRunValidator, claims, grants);
 	}
+	@ParameterizedTest
+	@CsvSource({"true,40,false", "true,50,true", "true,60,true", "false,12,false", "false,18,true", "false,25,true"})
+	@DisplayName("타이밍50·주문18점 보상 경계는 기존 통계·청구·지급 서비스로 연결한다")
+	void routesNewGamesAndRewardBoundary(boolean timing, long score, boolean eligible) {
+		// given: 이 테스트는 판정 점수가 확정된 이후 Recorder의 연결 책임만 확인한다.
+		String version = timing ? TakkoTimingRules.RULE_VERSION : TakkoOrderRules.RULE_VERSION;
+		String generator = timing ? TakkoTimingRules.GENERATOR_VERSION : TakkoOrderRules.GENERATOR_VERSION;
+		GamePlay started = new GamePlay(id, game, user, version, "{}", token.getPlayTokenHash(), generator,
+				1L, NOW.minusSeconds(1), null, null, null);
+		GameResultSubmission request;
+		if (timing) {
+			TakkoTimingSubmission input = new TakkoTimingSubmission(List.of());
+			request = new GameResultSubmission(game, id, token.getPlayToken(), input);
+			when(takkoTimingValidator.validate(started, input)).thenReturn(score);
+		} else {
+			TakkoOrderSubmission input = new TakkoOrderSubmission(List.of());
+			request = new GameResultSubmission(game, id, token.getPlayToken(), input);
+			when(takkoOrderValidator.validate(started, input)).thenReturn(score);
+		}
+		when(plays.findForUpdateNowait(id, user, game)).thenReturn(Optional.of(started));
+		GrantResult reward = mock(GrantResult.class);
+		if (eligible) {
+			GameRewardClaim saved = mock(GameRewardClaim.class);
+			when(saved.getId()).thenReturn(UUID.randomUUID());
+			when(claims.requirePolicy(game, NOW)).thenReturn(UUID.randomUUID());
+			when(claims.insert(any())).thenReturn(saved);
+			when(grants.grant(any())).thenReturn(reward);
+		}
+		// when
+		GamePlayResult result = recorder.record(user, request);
+		// then
+		assertThat(result.getScore()).isEqualTo(score);
+		verify(stats).addScore(user, game, score);
+		verifyNoInteractions(validator, takkoRunValidator);
+		if (eligible) assertThat(result.getReward()).isSameAs(reward);
+		else verifyNoInteractions(claims, grants);
+	}
+
+	@ParameterizedTest
+	@CsvSource({"color-word-v1,color-word-generator-v1", "takko-run-v1,takko-run-generator-v1"})
+	@DisplayName("기존 색깔·타꼬런 플레이에 신규 게임 입력을 보내도 결과를 저장하지 않는다")
+	void rejectsNewShapeForExistingGames(String version, String generator) {
+		// given
+		when(plays.findForUpdateNowait(id, user, game)).thenReturn(Optional.of(new GamePlay(id, game, user,
+				version, "{}", token.getPlayTokenHash(), generator, 1L, NOW.minusSeconds(1), null, null, null)));
+		List<GameResultSubmission> requests = List.of(
+				new GameResultSubmission(game, id, token.getPlayToken(), new TakkoTimingSubmission(List.of())),
+				new GameResultSubmission(game, id, token.getPlayToken(), new TakkoOrderSubmission(List.of())));
+		// when / then
+		for (GameResultSubmission request : requests) {
+			assertThatThrownBy(() -> recorder.record(user, request)).isInstanceOf(GameResultFormatException.class);
+		}
+		verify(plays, never()).complete(any());
+		verifyNoInteractions(stats, validator, takkoRunValidator, takkoTimingValidator, takkoOrderValidator, claims, grants);
+	}
+
 }

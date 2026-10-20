@@ -2,8 +2,8 @@ name: Daily Release
 
 on:
   schedule:
-    # UTC 23:00 = 다음 날 한국 시간 08:00. GitHub 예약 실행은 지연될 수 있다.
-    - cron: '0 23 * * *'
+    # UTC 22:00 = 다음 날 한국 시간 07:00. GitHub 예약 실행은 지연될 수 있다.
+    - cron: '0 22 * * *'
   workflow_dispatch:
     inputs:
       dry_run:

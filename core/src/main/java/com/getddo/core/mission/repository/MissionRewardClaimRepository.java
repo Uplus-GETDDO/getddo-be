@@ -5,6 +5,7 @@ import java.util.UUID;
 
 import com.getddo.core.mission.domain.MissionRewardClaim;
 
+/** 미션 보상 청구 저장소. 사용자·미션당 청구는 한 건만 저장할 수 있다. */
 public interface MissionRewardClaimRepository {
 
 	/**

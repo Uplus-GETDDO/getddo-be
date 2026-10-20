@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 
 import com.getddo.core.common.exception.ErrorCode;
 
+/** 출석 업무 오류 코드. 코드는 {@code ATTENDANCE-숫자} 형식이다. */
 @Getter
 @RequiredArgsConstructor
 public enum AttendanceErrorCode implements ErrorCode {

@@ -21,10 +21,12 @@ public final class TicketRefundFilter {
 		this.to = to;
 	}
 
+	/** 조회 조건을 만든다. 값은 검증하지 않으며 기간은 {@link #hasValidPeriod()}로 확인한다. */
 	public static TicketRefundFilter of(UUID eventId, UUID userId, Instant from, Instant to) {
 		return new TicketRefundFilter(eventId, userId, from, to);
 	}
 
+	/** 시작과 끝이 모두 있으면 시작이 끝보다 앞서는지 확인한다. */
 	public boolean hasValidPeriod() {
 		return from == null || to == null || from.isBefore(to);
 	}

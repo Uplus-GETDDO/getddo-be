@@ -19,8 +19,9 @@ import com.getddo.core.ticket.domain.TicketGradeDrawer;
  * 나머지(10000에서 셋을 뺀 값)다. 설정이 음수이거나 합이 10000을 넘으면 시작할 때 실패한다. 개별 사용자나 일정 횟수 안에서
  * 등급 비율을 맞추지 않는 단순 무작위다.</p>
  *
- * <p>설정 기본값은 실버 18%(1800bp), 골드 2%(200bp), 플래티넘 0%다. 플래티넘은 추첨 스냅샷이 플래티넘 가중치를
- * 지원하기 전까지 지급하지 않으려고 0으로 두며, 확정 확률 0.02%(2bp)는 지급을 켤 때 설정한다.</p>
+ * <p>설정 기본값은 실버 18%(1800bp), 골드 2%(200bp), 플래티넘 0.02%(2bp)이고 브론즈는 79.98%다. 플래티넘은
+ * 추첨 스냅샷이 플래티넘 가중치를 지원한 뒤(GD-230)에 지급을 켰다. 환경에서 플래티넘 지급을 끄려면
+ * {@code getddo.ticket.grade-probability.platinum-bp}를 0으로 설정한다.</p>
  */
 @Component
 public class RandomTicketGradeDrawer implements TicketGradeDrawer {
@@ -36,7 +37,7 @@ public class RandomTicketGradeDrawer implements TicketGradeDrawer {
 	public RandomTicketGradeDrawer(
 			@Value("${getddo.ticket.grade-probability.silver-bp:1800}") int silverBp,
 			@Value("${getddo.ticket.grade-probability.gold-bp:200}") int goldBp,
-			@Value("${getddo.ticket.grade-probability.platinum-bp:0}") int platinumBp) {
+			@Value("${getddo.ticket.grade-probability.platinum-bp:2}") int platinumBp) {
 		this(new SecureRandom(), silverBp, goldBp, platinumBp);
 	}
 
