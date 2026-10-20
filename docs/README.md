@@ -9,6 +9,8 @@
 - [공용 요구사항](https://github.com/GETDDO/getddo-spec/blob/main/00-requirements/README.md)
 - [공용 도메인 규칙](https://github.com/GETDDO/getddo-spec/blob/main/02-domain/README.md)
 - [공용 협업 규칙](https://github.com/GETDDO/getddo-spec/blob/main/01-conventions/README.md)
+- [검증 결과 작성·보관 안내](07-verification/README.md)
+- [검증 결과 양식](templates/verification-report.md)
 
 ```text
 docs/
@@ -32,9 +34,12 @@ docs/
 │   └── 전민규/
 ├── 06-runbook/
 │   └── README.md
+├── 07-verification/             검증 결과 안내와 실행 보고서
+│   └── README.md
 └── templates/
     ├── worklog.md               일일 작업 일지 양식
-    └── adr.md                   설계 결정 양식
+    ├── adr.md                   설계 결정 양식
+    └── verification-report.md   검증 결과 양식
 ```
 
 ## 무엇을 기록하나요?
