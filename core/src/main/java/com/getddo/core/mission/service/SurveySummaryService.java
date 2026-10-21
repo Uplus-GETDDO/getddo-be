@@ -61,10 +61,10 @@ public class SurveySummaryService {
 	@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
 	public SurveySummary summarize(User admin, UUID missionId, LocalDate from, LocalDate to) {
 		SurveyScope scope = surveyScope(admin, missionId, from, to);
-		Map<LocalDate, Long> perDay = summaryRepository.countCompletedSubmissionsByDay(missionId, scope.start(),
-				scope.end());
-		Map<UUID, Long> perOption = summaryRepository.countSelectionsByOption(missionId, scope.start(), scope.end());
-		return new SurveySummary(dailyCounts(from, to, perDay), questionSummaries(scope.detail(), perOption));
+		Map<LocalDate, Long> perDay = summaryRepository.countCompletedSubmissionsByDay(missionId, scope.start,
+				scope.end);
+		Map<UUID, Long> perOption = summaryRepository.countSelectionsByOption(missionId, scope.start, scope.end);
+		return new SurveySummary(dailyCounts(from, to, perDay), questionSummaries(scope.detail, perOption));
 	}
 
 	/**
@@ -79,17 +79,27 @@ public class SurveySummaryService {
 	public PageResult<SurveyFreeTextAnswer> findFreeTextAnswers(User admin, UUID missionId, UUID questionId,
 			LocalDate from, LocalDate to, PageQuery page) {
 		SurveyScope scope = surveyScope(admin, missionId, from, to);
-		boolean freeTextQuestion = questionId != null && scope.detail().getSurveyQuestions().stream()
+		boolean freeTextQuestion = questionId != null && scope.detail.getSurveyQuestions().stream()
 				.anyMatch(question -> question.getId().equals(questionId)
 						&& question.getQuestionType() == SurveyQuestionType.FREE_TEXT);
 		if (!freeTextQuestion) {
 			throw new MissionException(MissionErrorCode.INVALID_MISSION_DEFINITION);
 		}
-		return summaryRepository.findFreeTextAnswers(questionId, scope.start(), scope.end(), page);
+		return summaryRepository.findFreeTextAnswers(questionId, scope.start, scope.end, page);
 	}
 
 	/** 조회 대상 설문 미션과 조회 기간의 UTC 범위. */
-	private record SurveyScope(MissionDetail detail, Instant start, Instant end) {
+	private static final class SurveyScope {
+
+		private final MissionDetail detail;
+		private final Instant start;
+		private final Instant end;
+
+		private SurveyScope(MissionDetail detail, Instant start, Instant end) {
+			this.detail = detail;
+			this.start = start;
+			this.end = end;
+		}
 	}
 
 	/**

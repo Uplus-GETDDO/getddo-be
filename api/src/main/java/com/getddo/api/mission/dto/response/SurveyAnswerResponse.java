@@ -13,6 +13,6 @@ import com.getddo.core.mission.domain.SurveyFreeTextAnswer;
 public record SurveyAnswerResponse(String answerText, Instant submittedAt) {
 
 	public static SurveyAnswerResponse from(SurveyFreeTextAnswer answer) {
-		return new SurveyAnswerResponse(answer.answerText(), answer.submittedAt());
+		return new SurveyAnswerResponse(answer.getAnswerText(), answer.getSubmittedAt());
 	}
 }

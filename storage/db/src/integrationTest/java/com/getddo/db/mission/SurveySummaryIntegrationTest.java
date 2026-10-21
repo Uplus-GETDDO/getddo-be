@@ -195,9 +195,9 @@ class SurveySummaryIntegrationTest extends MissionIntegrationTestSupport {
 				DAY_12, new PageQuery(1, 10));
 		// then
 		assertThat(day12.getTotalElements()).isEqualTo(2L);
-		assertThat(day12.getItems()).extracting(SurveyFreeTextAnswer::answerText)
+		assertThat(day12.getItems()).extracting(SurveyFreeTextAnswer::getAnswerText)
 				.containsExactly("당일 한 시간 뒤", "당일 첫 초");
-		assertThat(day12.getItems()).extracting(SurveyFreeTextAnswer::submittedAt)
+		assertThat(day12.getItems()).extracting(SurveyFreeTextAnswer::getSubmittedAt)
 				.containsExactly(KST_FIRST_SECOND_OF_12TH.plusSeconds(3_600), KST_FIRST_SECOND_OF_12TH);
 	}
 
@@ -218,7 +218,7 @@ class SurveySummaryIntegrationTest extends MissionIntegrationTestSupport {
 				DAY_12, DAY_12, new PageQuery(3, 2));
 		// then
 		assertThat(second.getTotalElements()).isEqualTo(3L);
-		assertThat(second.getItems()).extracting(SurveyFreeTextAnswer::answerText).containsExactly("답변 0");
+		assertThat(second.getItems()).extracting(SurveyFreeTextAnswer::getAnswerText).containsExactly("답변 0");
 		assertThat(beyond.getTotalElements()).isEqualTo(3L);
 		assertThat(beyond.getItems()).isEmpty();
 	}
@@ -260,8 +260,8 @@ class SurveySummaryIntegrationTest extends MissionIntegrationTestSupport {
 		assertThat(byIdDescending).containsExactlyInAnyOrder("동시 답변 A", "동시 답변 B");
 		assertThat(first.getTotalElements()).isEqualTo(2L);
 		assertThat(second.getTotalElements()).isEqualTo(2L);
-		assertThat(first.getItems()).extracting(SurveyFreeTextAnswer::answerText).containsExactly(byIdDescending.get(0));
-		assertThat(second.getItems()).extracting(SurveyFreeTextAnswer::answerText)
+		assertThat(first.getItems()).extracting(SurveyFreeTextAnswer::getAnswerText).containsExactly(byIdDescending.get(0));
+		assertThat(second.getItems()).extracting(SurveyFreeTextAnswer::getAnswerText)
 				.containsExactly(byIdDescending.get(1));
 	}
 
@@ -290,7 +290,7 @@ class SurveySummaryIntegrationTest extends MissionIntegrationTestSupport {
 		PageResult<SurveyFreeTextAnswer> answers = summaryService.findFreeTextAnswers(admin(), missionId, free.getId(),
 				DAY_12, DAY_12, new PageQuery(1, 10));
 		// then
-		assertThat(answers.getItems()).extracting(SurveyFreeTextAnswer::answerText).containsExactly("완료된 답변");
+		assertThat(answers.getItems()).extracting(SurveyFreeTextAnswer::getAnswerText).containsExactly("완료된 답변");
 		assertThatThrownBy(() -> summaryService.findFreeTextAnswers(admin(), missionId,
 				survey.getSurveyQuestions().get(0).getId(), DAY_12, DAY_12, new PageQuery(1, 10)))
 				.hasFieldOrPropertyWithValue("errorCode", MissionErrorCode.INVALID_MISSION_DEFINITION);
