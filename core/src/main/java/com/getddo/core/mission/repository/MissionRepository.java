@@ -1,5 +1,6 @@
 package com.getddo.core.mission.repository;
 
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -45,4 +46,13 @@ public interface MissionRepository {
 	 * @return 문항 없는 미션 목록
 	 */
 	PageResult<Mission> search(MissionSearch search, PageQuery page);
+
+	/**
+	 * 종료 시각이 {@code now} 이전이거나 같은데 아직 운영 중인 미션을 종료 상태로 바꾸고 수정 시각을 갱신한다. 이미 종료한
+	 * 미션은 건드리지 않아 같은 조건으로 다시 호출해도 결과가 같다.
+	 *
+	 * @param now 기준 시각
+	 * @return 이번에 종료한 미션 수
+	 */
+	int endExpired(Instant now);
 }

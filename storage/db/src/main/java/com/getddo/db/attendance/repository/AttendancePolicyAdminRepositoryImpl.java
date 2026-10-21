@@ -93,6 +93,33 @@ public class AttendancePolicyAdminRepositoryImpl implements AttendancePolicyAdmi
 		return toDomain(set, saved);
 	}
 
+	@Override
+	public Optional<DailyAttendancePolicy> findDailyPolicyForUpdate(UUID policyId) {
+		return rewardPolicies.findAttendanceByIdForUpdate(policyId)
+				.map(AttendancePolicyAdminRepositoryImpl::toDomain);
+	}
+
+	@Override
+	public DailyAttendancePolicy updateDailyRewardTicketCount(UUID policyId, int rewardTicketCount) {
+		rewardPolicies.updateRewardTicketCount(policyId, rewardTicketCount);
+		return toDomain(rewardPolicies.findById(policyId).orElseThrow());
+	}
+
+	@Override
+	public Optional<StreakPolicyRecord> findStreakPolicyForUpdate(UUID policySetId) {
+		return streakSets.findByIdForUpdate(policySetId)
+				.map(set -> toDomain(set, streakPolicies.findByPolicySetIdIn(List.of(set.getId()))));
+	}
+
+	@Override
+	public StreakPolicyRecord replaceStreakMilestones(UUID policySetId, List<MilestoneDraft> milestones) {
+		streakPolicies.deleteByPolicySetId(policySetId);
+		List<StreakPolicyEntity> saved = streakPolicies.saveAllAndFlush(milestones.stream()
+				.map(m -> new StreakPolicyEntity(policySetId, m.getMilestoneDays(), m.getRewardTicketCount()))
+				.toList());
+		return toDomain(streakSets.findById(policySetId).orElseThrow(), saved);
+	}
+
 	private Map<UUID, List<StreakPolicyEntity>> milestonesOf(Collection<UUID> setIds) {
 		if (setIds.isEmpty()) {
 			return Map.of();

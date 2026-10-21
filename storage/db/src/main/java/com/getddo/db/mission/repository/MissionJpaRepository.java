@@ -6,6 +6,7 @@ import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -27,4 +28,12 @@ public interface MissionJpaRepository extends JpaRepository<MissionEntity, UUID>
 	Page<MissionEntity> search(@Param("missionType") MissionType missionType, @Param("status") MissionStatus status,
 			@Param("titlePattern") String titlePattern, @Param("startsFrom") Instant startsFrom,
 			@Param("startsBefore") Instant startsBefore, Pageable pageable);
+
+	/** 종료 시각이 지난 운영 중 미션을 종료로 바꾼다. 일괄 갱신은 감사 필드를 거치지 않아 수정 시각을 직접 쓴다. */
+	@Modifying(flushAutomatically = true, clearAutomatically = true)
+	@Query("""
+			update MissionEntity m set m.status = com.getddo.core.mission.domain.MissionStatus.ENDED, m.updatedAt = :now
+			where m.status = com.getddo.core.mission.domain.MissionStatus.ACTIVE and m.endsAt <= :now
+			""")
+	int endExpired(@Param("now") Instant now);
 }
