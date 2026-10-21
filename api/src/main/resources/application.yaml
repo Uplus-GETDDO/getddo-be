@@ -43,7 +43,7 @@ management:
 server:
   tomcat:
     mbeanregistry:
-      enabled: ${GETDDO_METRICS_ENABLED:false}
+      enabled: ${getddo.metrics.enabled}
 
 getddo:
   metrics:

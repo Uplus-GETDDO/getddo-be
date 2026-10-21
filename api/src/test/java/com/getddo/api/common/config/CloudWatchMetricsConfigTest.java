@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.util.Set;
 import java.util.List;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.RejectedExecutionException;
 
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
@@ -30,6 +31,7 @@ import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.binder.jvm.ExecutorServiceMetrics;
 import io.micrometer.core.instrument.binder.tomcat.TomcatMetrics;
 import io.micrometer.core.instrument.binder.jvm.JvmMemoryMetrics;
+import io.micrometer.core.instrument.util.NamedThreadFactory;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.services.cloudwatch.CloudWatchAsyncClient;
 import software.amazon.awssdk.services.cloudwatch.model.MetricDatum;
@@ -38,10 +40,13 @@ import software.amazon.awssdk.services.cloudwatch.model.PutMetricDataResponse;
 import software.amazon.awssdk.services.cloudwatch.model.StandardUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -105,6 +110,59 @@ class CloudWatchMetricsConfigTest {
 			assertThat(config.enabled()).isTrue();
 			assertThat(ReflectionTestUtils.getField(registry, "scheduledExecutorService")).isNotNull();
 			registry.stop();
+		});
+	}
+
+	@Test
+	@DisplayName("publisher 시작 실패를 격리하고 예약 자원을 정리하며 종료 전송도 하지 않는다")
+	void publisherStartupFailureIsIsolated() {
+		// given
+		CloudWatchMetricsConfig configuration = new CloudWatchMetricsConfig();
+		CloudWatchAsyncClient client = client();
+		CloudWatchMeterRegistry registry = spy(configuration.cloudWatchMeterRegistry(
+			client, "a", "dev", "GETDDO/API", "60s"));
+		try {
+			Gauge.builder("hikaricp.connections.active", () -> 2).tag("pool", "getddo").register(registry);
+			CloudWatchConfig config = (CloudWatchConfig) ReflectionTestUtils.getField(registry, "config");
+			doAnswer(invocation -> {
+				registry.start(thread -> {
+					throw new RejectedExecutionException("publisher thread unavailable");
+				});
+				return null;
+			}).when(registry).start(any(NamedThreadFactory.class));
+			// when / then
+			assertThatCode(() -> configuration.cloudWatchPublisher(registry).onApplicationEvent(null))
+				.doesNotThrowAnyException();
+			assertThat(config.enabled()).isFalse();
+			assertThat(ReflectionTestUtils.getField(registry, "scheduledExecutorService")).isNull();
+			assertThat(ReflectionTestUtils.getField(registry, "meterPollingService")).isNull();
+		} finally {
+			registry.close();
+		}
+		verify(client, never()).putMetricData(any(PutMetricDataRequest.class));
+	}
+
+	@ParameterizedTest
+	@ValueSource(booleans = {false, true})
+	@DisplayName("직접 지정한 지표 활성화 설정과 Tomcat MBean 활성화 설정이 일치한다")
+	void tomcatMbeanRegistryFollowsMetricsProperty(boolean enabled) {
+		// when / then
+		runner.withPropertyValues("getddo.metrics.enabled=" + enabled, "getddo.metrics.server=a")
+			.withBean(CloudWatchAsyncClient.class, this::client).run(context -> {
+				assertThat(context).hasNotFailed();
+				assertThat(context.getEnvironment().getProperty("server.tomcat.mbeanregistry.enabled", Boolean.class))
+					.isEqualTo(enabled);
+			});
+	}
+
+	@Test
+	@DisplayName("실제 registry의 CloudWatch 응답 대기 상한은 3초이다")
+	void cloudWatchReadTimeoutIsThreeSeconds() {
+		// when / then
+		enabled(client()).run(context -> {
+			CloudWatchMeterRegistry registry = context.getBean(CloudWatchMeterRegistry.class);
+			CloudWatchConfig config = (CloudWatchConfig) ReflectionTestUtils.getField(registry, "config");
+			assertThat(config.readTimeout()).isEqualTo(Duration.ofSeconds(3));
 		});
 	}
 

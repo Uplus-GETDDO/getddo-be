@@ -21,6 +21,7 @@ import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.config.MeterFilter;
 import io.micrometer.core.instrument.config.MeterFilterReply;
 import io.micrometer.core.instrument.util.NamedThreadFactory;
+import lombok.extern.slf4j.Slf4j;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.http.nio.netty.NettyNioAsyncHttpClient;
@@ -31,6 +32,7 @@ import software.amazon.awssdk.services.cloudwatch.CloudWatchAsyncClient;
  * 명시적으로 활성화한 서버에서만 풀·JVM·기존 공용 스케줄러 지표를 CloudWatch로 전송한다.
  * 자격 증명은 클라이언트 생성 시 조회하지 않으며 전송 실패는 백그라운드 publisher에서 처리한다.
  */
+@Slf4j
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = "getddo.metrics.enabled", havingValue = "true")
 public class CloudWatchMetricsConfig {
@@ -132,7 +134,13 @@ public class CloudWatchMetricsConfig {
 	ApplicationListener<ApplicationReadyEvent> cloudWatchPublisher(CloudWatchMeterRegistry registry) {
 		return event -> {
 			publishingEnabled.set(true);
-			registry.start(new NamedThreadFactory("cloudwatch-metrics-publisher"));
+			try {
+				registry.start(new NamedThreadFactory("cloudwatch-metrics-publisher"));
+			} catch (RuntimeException exception) {
+				publishingEnabled.set(false);
+				registry.stop();
+				log.error("CloudWatch publisher를 시작하지 못했습니다.", exception);
+			}
 		};
 	}
 }
