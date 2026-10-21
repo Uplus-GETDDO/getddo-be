@@ -13,9 +13,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.getddo.core.common.pagination.PageQuery;
+import com.getddo.core.common.pagination.PageResult;
 import com.getddo.core.common.time.TimeProvider;
 import com.getddo.core.mission.domain.MissionDetail;
 import com.getddo.core.mission.domain.MissionType;
+import com.getddo.core.mission.domain.SurveyFreeTextAnswer;
 import com.getddo.core.mission.domain.SurveyQuestion;
 import com.getddo.core.mission.domain.SurveyQuestionType;
 import com.getddo.core.mission.domain.SurveySummary;
@@ -57,6 +60,52 @@ public class SurveySummaryService {
 	 */
 	@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
 	public SurveySummary summarize(User admin, UUID missionId, LocalDate from, LocalDate to) {
+		SurveyScope scope = surveyScope(admin, missionId, from, to);
+		Map<LocalDate, Long> perDay = summaryRepository.countCompletedSubmissionsByDay(missionId, scope.start,
+				scope.end);
+		Map<UUID, Long> perOption = summaryRepository.countSelectionsByOption(missionId, scope.start, scope.end);
+		return new SurveySummary(dailyCounts(from, to, perDay), questionSummaries(scope.detail, perOption));
+	}
+
+	/**
+	 * 설문 미션의 자유 서술 문항에 남은 답변을 제출 시각 최신순으로 조회한다. 익명이라 답변 원문과 제출 시각만 돌려준다.
+	 * 완료된 제출의 답변만 담고, 기간은 {@link #summarize}와 같은 KST 날짜 규칙이다.
+	 *
+	 * @param questionId 자유 서술 문항 ID. 이 미션의 자유 서술 문항이어야 한다
+	 * @throws MissionException 관리자가 아니거나({@code MISSION-006}), 미션이 없거나({@code MISSION-003}), 설문 미션이
+	 *         아니거나 문항이 이 미션의 자유 서술 문항이 아니거나 기간이 올바르지 않은 경우({@code MISSION-001})
+	 */
+	@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+	public PageResult<SurveyFreeTextAnswer> findFreeTextAnswers(User admin, UUID missionId, UUID questionId,
+			LocalDate from, LocalDate to, PageQuery page) {
+		SurveyScope scope = surveyScope(admin, missionId, from, to);
+		boolean freeTextQuestion = questionId != null && scope.detail.getSurveyQuestions().stream()
+				.anyMatch(question -> question.getId().equals(questionId)
+						&& question.getQuestionType() == SurveyQuestionType.FREE_TEXT);
+		if (!freeTextQuestion) {
+			throw new MissionException(MissionErrorCode.INVALID_MISSION_DEFINITION);
+		}
+		return summaryRepository.findFreeTextAnswers(questionId, scope.start, scope.end, page);
+	}
+
+	/** 조회 대상 설문 미션과 조회 기간의 UTC 범위. */
+	private static final class SurveyScope {
+
+		private final MissionDetail detail;
+		private final Instant start;
+		private final Instant end;
+
+		private SurveyScope(MissionDetail detail, Instant start, Instant end) {
+			this.detail = detail;
+			this.start = start;
+			this.end = end;
+		}
+	}
+
+	/**
+	 * 관리자·기간·미션·설문 유형을 같은 순서와 오류 코드로 확인하고, KST 날짜 범위를 UTC 시각 범위(시작 포함, 끝 제외)로 바꾼다.
+	 */
+	private SurveyScope surveyScope(User admin, UUID missionId, LocalDate from, LocalDate to) {
 		requireActiveAdmin(admin);
 		requireValidPeriod(from, to);
 		MissionDetail detail = missionRepository.findDetailById(missionId)
@@ -64,11 +113,8 @@ public class SurveySummaryService {
 		if (detail.getMission().getMissionType() != MissionType.SURVEY) {
 			throw new MissionException(MissionErrorCode.INVALID_MISSION_DEFINITION);
 		}
-		Instant start = timeProvider.toUtc(from.atStartOfDay());
-		Instant end = timeProvider.toUtc(to.plusDays(1).atStartOfDay());
-		Map<LocalDate, Long> perDay = summaryRepository.countCompletedSubmissionsByDay(missionId, start, end);
-		Map<UUID, Long> perOption = summaryRepository.countSelectionsByOption(missionId, start, end);
-		return new SurveySummary(dailyCounts(from, to, perDay), questionSummaries(detail, perOption));
+		return new SurveyScope(detail, timeProvider.toUtc(from.atStartOfDay()),
+				timeProvider.toUtc(to.plusDays(1).atStartOfDay()));
 	}
 
 	private static List<DailyCount> dailyCounts(LocalDate from, LocalDate to, Map<LocalDate, Long> perDay) {
