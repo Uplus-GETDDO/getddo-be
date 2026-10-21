@@ -233,9 +233,14 @@ class RollingTest(unittest.TestCase):
     def test_draining_timeout_stops_before_host_mutation(self):
         fake = FakeAWS()
         fake.drain_timeout = True
-        with patch.object(rolling.time, 'monotonic', side_effect=[0, 0, 0, 0, 0, 361]):
+        clock = [0]
+        def advance(seconds):
+            clock[0] += seconds
+        with patch.object(rolling.time, 'monotonic', side_effect=lambda: clock[0]), \
+             patch.object(rolling.time, 'sleep', side_effect=advance):
             with self.assertRaisesRegex(RuntimeError, 'transition timed out'):
                 self.run_roll(fake)
+        self.assertEqual(360, clock[0])
         self.assertEqual([], self.deployments(fake))
         self.assertEqual([], self.registrations(fake))
 

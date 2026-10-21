@@ -97,8 +97,8 @@ jobs:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: getddo-cd-${{ github.run_id }}
-          # 두 서버의 순차 SSM 대기·복구를 포함한다. Terraform 역할 상한도 7200으로 맞춘다.
-          role-duration-seconds: ${{ env.DEPLOY_MODE == 'rolling' && 7200 || 3600 }}
+          # 순차 배포와 초기 C의 직렬 SSM 검사·배포 대기를 포함한다. Terraform 역할 상한도 7200으로 맞춘다.
+          role-duration-seconds: ${{ env.DEPLOY_MODE == 'single' && 3600 || 7200 }}
 
       - name: 서버 앱 교체 및 상태 확인
         env:
