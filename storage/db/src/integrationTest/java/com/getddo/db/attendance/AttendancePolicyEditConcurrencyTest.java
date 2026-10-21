@@ -14,10 +14,14 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.mysql.MySQLContainer;
 
 import com.getddo.core.attendance.domain.AttendanceReceipt;
 import com.getddo.core.attendance.domain.MilestoneDraft;
+import com.getddo.core.attendance.repository.AttendancePolicyRepository;
 import com.getddo.core.attendance.service.AdminAttendancePolicyService;
 import com.getddo.core.attendance.service.AttendanceService;
 import com.getddo.core.user.domain.User;
@@ -43,6 +47,10 @@ class AttendancePolicyEditConcurrencyTest extends AttendanceIntegrationTestSuppo
 	private AdminAttendancePolicyService adminService;
 	@Autowired
 	private MySQLContainer mysql;
+	@Autowired
+	private AttendancePolicyRepository policyRepository;
+	@Autowired
+	private PlatformTransactionManager transactionManager;
 
 	/** 정책 수정이 남긴 감사 기록이 관리자 사용자를 참조하므로 부모 정리(사용자 삭제) 전에 지운다. */
 	@AfterEach
@@ -135,6 +143,43 @@ class AttendancePolicyEditConcurrencyTest extends AttendanceIntegrationTestSuppo
 		} finally {
 			releaseEdit.countDown();
 			ConcurrentTasks.shutdownAndAwait(executor);
+		}
+	}
+
+	@Test
+	@DisplayName("REPEATABLE READ 호출자가 먼저 일반 조회로 스냅샷을 만든 뒤에도 공유 잠금 조회는 수정이 끝난 단계를 읽는다")
+	void shareLockedReadSeesEditedStepsInsideRepeatableReadTransaction() throws Exception {
+		// given: 11월 묶음을 읽는 REPEATABLE READ 트랜잭션이 일반 조회로 수정 전 스냅샷을 만든다
+		UUID setId = policies.streakPolicySet(adminId, LocalDate.parse("2026-11-01"), Map.of(1, 1));
+		clock.set(Instant.parse("2026-10-31T14:00:00Z"));
+		TransactionTemplate repeatableRead = new TransactionTemplate(transactionManager);
+		repeatableRead.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+		ExecutorService editor = Executors.newSingleThreadExecutor();
+		try {
+			// when
+			int[] rewards = repeatableRead.execute(status -> {
+				int snapshot = policyRepository.findStreakPolicySetById(setId).orElseThrow().getMilestones().get(0)
+						.getRewardTicketCount();
+				editSteps(editor, setId);
+				int locked = policyRepository.findStreakPolicySetByIdForShare(setId).orElseThrow().getMilestones().get(0)
+						.getRewardTicketCount();
+				return new int[] {snapshot, locked};
+			});
+
+			// then: 일반 조회는 수정 전 값, 공유 잠금 조회는 수정이 끝난 값이다
+			assertThat(rewards).containsExactly(1, 9);
+		} finally {
+			ConcurrentTasks.shutdownAndAwait(editor);
+		}
+	}
+
+	/** 다른 트랜잭션(다른 스레드)에서 관리자 단계 교체를 커밋한다. */
+	private void editSteps(ExecutorService editor, UUID setId) {
+		try {
+			editor.submit(() -> transaction.execute(status -> adminService.updateStreakPolicy(admin(), setId,
+					java.util.List.of(new MilestoneDraft(1, 9))))).get(WAIT_SECONDS, TimeUnit.SECONDS);
+		} catch (Exception e) {
+			throw new IllegalStateException(e);
 		}
 	}
 
