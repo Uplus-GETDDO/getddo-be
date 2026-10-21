@@ -26,7 +26,7 @@
 - 연속 정책의 단계는 삭제 뒤 같은 트랜잭션에서 다시 저장한다. `(policy_set_id, milestone_days)` UNIQUE와 부딪히지 않도록 삭제를 먼저 DB에 반영한다.
 - 수정은 감사 기록을 남긴다(`ATTENDANCE_DAILY_POLICY_UPDATE`, `ATTENDANCE_STREAK_POLICY_UPDATE`). 수정 전·후 보상 수량(일일) 또는 단계 목록(연속)을 담는다.
 - 예약 취소(삭제)와 적용 시점 변경은 제공하지 않는다.
-- **적용 시작 순간의 직렬화**: 출석 기록(`AttendanceRecorder`)은 읽은 정책 행을 `FOR SHARE`로 잡는다(`findDailyPolicyForShare`, `findStreakPolicySetForShare`, `findStreakPolicySetByIdForShare`). 수정 트랜잭션이 적용 시작 시각 전에 시작해 시작 이후에 커밋되더라도, 그 사이에 들어온 출석은 수정이 끝날 때까지 기다린 뒤 수정된 수량으로 지급한다. 반대로 수정은 진행 중인 출석 처리가 끝날 때까지 기다린다. 연속 정책 단계는 묶음 행의 잠금을 얻은 뒤에 읽어 삭제 뒤 재저장 중인 단계를 지급 근거로 저장하다 외래 키 오류가 나는 일을 막는다. 공유 잠금끼리는 서로 기다리지 않으므로 동시 출석은 서로 막지 않고, 관리자 정책 등록·수정이 있을 때만 잠깐 기다린다. 읽기만 하는 현황 조회(`AttendanceQueryService`)는 잠금 없는 조회를 그대로 쓴다.
+- **적용 시작 순간의 직렬화**: 출석 기록(`AttendanceRecorder`)은 읽은 정책 행을 `FOR SHARE`로 잡는다(`findDailyPolicyForShare`, `findStreakPolicySetForShare`, `findStreakPolicySetByIdForShare`). 수정 트랜잭션이 적용 시작 시각 전에 시작해 시작 이후에 커밋되더라도, 그 사이에 들어온 출석은 수정이 끝날 때까지 기다린 뒤 수정된 수량으로 지급한다. 반대로 수정은 진행 중인 출석 처리가 끝날 때까지 기다린다. 연속 정책 단계는 묶음 행의 잠금을 얻은 뒤 단계 행도 같은 방식으로 잠그며 읽어 삭제 뒤 재저장 중인 단계를 지급 근거로 저장하다가 외래 키 오류가 나는 일을 막는다. 공유 잠금끼리는 서로 기다리지 않으므로 동시 출석은 서로 막지 않고, 관리자 정책 등록·수정이 있을 때만 잠깐 기다린다. 읽기만 하는 현황 조회(`AttendanceQueryService`)는 잠금 없는 조회를 그대로 쓴다.
 
 ## 저장과 적용 시점
 
@@ -48,6 +48,6 @@
 ## 검증
 
 - 단위: `AdminAttendancePolicyServiceTest`(권한, KST 자정·월 경계의 적용 시점, 중복·동시 등록 변환, 단계 규칙, 감사 기록, 예약 정책 수정의 시작 여부·오류 코드), `AdminAttendancePolicyControllerTest`(응답 필드·본문 검증·오류 코드, AP05·AP06 경로).
-- 통합: `AttendancePolicyAdminRepositoryIntegrationTest`가 일일 정책의 수량만 바뀌는지와 연속 정책 단계를 같은 일수를 포함해 통째로 바꿔도 UNIQUE에 걸리지 않는지를 실제 MySQL로 확인한다. `AttendancePolicyEditConcurrencyTest`는 수정 트랜잭션이 정책 행을 잡고 있는 동안 들어온 출석이 잠금 대기 뒤 수정된 수량(일일)·단계(연속)로 지급하는지를 확인한다(일일 정책은 `FOR SHARE`를 빼면 실패함을 확인했다. 연속 정책은 기존 재시도 로직이 최종 값을 맞춰 주므로 잠금을 빼도 통과하며, 잠금은 외래 키 오류와 재시도를 미리 막는다). 정책 수정끼리의 직렬화는 별도 동시 실행 테스트로 확인하지 않았다.
+- 통합: `AttendancePolicyAdminRepositoryIntegrationTest`가 일일 정책의 수량만 바뀌는지와 연속 정책 단계를 같은 일수를 포함해 통째로 바꿔도 UNIQUE에 걸리지 않는지를 실제 MySQL로 확인한다. `AttendancePolicyEditConcurrencyTest`는 수정 트랜잭션이 정책 행을 잡고 있는 동안 들어온 출석이 잠금 대기 뒤 수정된 수량(일일)·단계(연속)로 지급하는지를 확인한다(작업 중 `AttendancePolicyRepositoryImpl`의 `FOR SHARE`를 임시로 제거하고 `./gradlew :storage:db:integrationTest --tests '*AttendancePolicyEditConcurrencyTest'`를 실행했을 때 일일 정책 테스트가 `expected: 5L but was: 1L`로 실패했고, 연속 정책 테스트는 통과했다. 제거한 코드는 저장소에 남기지 않았다. 연속 정책은 기존 재시도 로직이 최종 값을 맞춰 주므로 잠금을 빼도 통과하며, 잠금은 외래 키 오류와 재시도를 미리 막는다). 두 테스트는 청구 수량뿐 아니라 사용 가능한 브론즈 응모권 수, 지급 이력 수, 청구에 연결된 응모권 수도 확인한다. 정책 수정끼리의 직렬화는 별도 동시 실행 테스트로 확인하지 않았다.
 - 작업 중 로컬 MySQL로 일일 정책의 종료·저장 순서, 중복 거절, 연속 정책 저장·조회, 감사 기록 저장을 한 번 확인했고 그 테스트는 저장소에 남기지 않았다. 등록·조회(GD-219) 작업에는 통합 테스트를 포함하지 않았고, 예약 정책 수정(GD-270)의 통합 테스트는 위 항목이다. GD-270 통합 테스트는 해당 클래스만 로컬에서 실행했고 전체 `./gradlew build`는 CI로 확인한다.
 - 기존 통합 테스트 컨텍스트(`TicketIntegrationTestApplication`)가 출석 서비스를 함께 올리므로 새 서비스가 쓰는 감사 로그 빈을 그 컨텍스트에 추가했다.

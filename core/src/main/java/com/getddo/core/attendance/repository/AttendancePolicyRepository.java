@@ -46,8 +46,8 @@ public interface AttendancePolicyRepository {
 	Optional<DailyRewardPolicy> findDailyPolicyForShare(Instant at);
 
 	/**
-	 * {@link #findStreakPolicySet}과 같되 읽은 묶음 행을 공유 잠금으로 잡는다. 단계는 묶음 잠금을 얻은 뒤에 읽어 관리자
-	 * 수정이 끝난 값을 본다. 호출자 트랜잭션 안에서 호출한다.
+	 * {@link #findStreakPolicySet}과 같되 읽은 묶음 행을 공유 잠금으로 잡는다. 단계 행도 묶음 잠금을 얻은 뒤 공유 잠금으로
+	 * 읽어 관리자 수정이 끝난 값을 본다. 호출자 트랜잭션 안에서 호출한다.
 	 */
 	Optional<StreakPolicySet> findStreakPolicySetForShare(LocalDate month);
 

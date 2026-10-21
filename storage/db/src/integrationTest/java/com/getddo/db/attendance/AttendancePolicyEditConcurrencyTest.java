@@ -88,6 +88,7 @@ class AttendancePolicyEditConcurrencyTest extends AttendanceIntegrationTestSuppo
 			assertThat(receipt.isCreated()).isTrue();
 			assertThat(count("select ticket_count from attendance_reward_claims where user_id = ? and reward_type = 'DAILY'",
 					bytes(userId))).isEqualTo(5);
+			assertLedgerMatches(5, "DAILY", 5);
 		} finally {
 			releaseEdit.countDown();
 			ConcurrentTasks.shutdownAndAwait(executor);
@@ -130,10 +131,28 @@ class AttendancePolicyEditConcurrencyTest extends AttendanceIntegrationTestSuppo
 					bytes(setId))).isEqualTo(9);
 			assertThat(count("select ticket_count from attendance_reward_claims where user_id = ? and reward_type = 'STREAK'",
 					bytes(userId))).isEqualTo(9);
+			assertLedgerMatches(10, "STREAK", 9);
 		} finally {
 			releaseEdit.countDown();
 			ConcurrentTasks.shutdownAndAwait(executor);
 		}
+	}
+
+	/**
+	 * 출석 청구 수량이 실제 지급과 맞는지 확인한다. 사용자의 사용 가능한 브론즈 응모권 전체 수, 지급 이력 수, 그리고 지정한
+	 * 종류의 청구에 연결된 응모권 수를 비교한다.
+	 */
+	private void assertLedgerMatches(long totalTickets, String claimType, long claimTickets) {
+		assertThat(count("select count(*) from tickets where user_id = ? and grade = 'BRONZE' and status = 'AVAILABLE'",
+				bytes(userId))).isEqualTo(totalTickets);
+		assertThat(count("""
+				select count(*) from ticket_histories h join tickets t on t.id = h.ticket_id
+				where t.user_id = ? and h.operation_type = 'GRANT'
+				""", bytes(userId))).isEqualTo(totalTickets);
+		assertThat(count("""
+				select count(*) from tickets t join attendance_reward_claims c on c.id = t.attendance_reward_claim_id
+				where c.user_id = ? and c.reward_type = ?
+				""", bytes(userId), claimType)).isEqualTo(claimTickets);
 	}
 
 	private static void await(CountDownLatch latch) {

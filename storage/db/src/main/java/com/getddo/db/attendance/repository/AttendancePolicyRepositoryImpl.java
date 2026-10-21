@@ -26,7 +26,7 @@ import com.getddo.db.common.util.UuidBinary;
  *
  * <p>{@code ...ForShare} 메서드는 같은 쿼리에 {@code FOR SHARE}를 붙여 읽은 정책 행을 공유 잠금으로 잡는다. MySQL은
  * {@code LIMIT}이 {@code FOR SHARE}보다 앞에 와야 해서 잠금 변형은 {@code LIMIT 1}을 쿼리에 직접 쓴다. 연속 정책 단계는
- * 묶음 행의 잠금을 얻은 뒤 읽는다.</p>
+ * 묶음 행의 잠금을 얻은 뒤 같은 방식으로 잠그며 읽는다.</p>
  */
 @Repository
 @RequiredArgsConstructor
@@ -68,22 +68,22 @@ public class AttendancePolicyRepositoryImpl implements AttendancePolicyRepositor
 
 	@Override
 	public Optional<StreakPolicySet> findStreakPolicySet(LocalDate month) {
-		return findStreakByMonth(tupleQuery(STREAK_SET_BY_MONTH_SQL).setMaxResults(1), month);
+		return findStreakByMonth(tupleQuery(STREAK_SET_BY_MONTH_SQL).setMaxResults(1), month, false);
 	}
 
 	@Override
 	public Optional<StreakPolicySet> findStreakPolicySetForShare(LocalDate month) {
-		return findStreakByMonth(tupleQuery(STREAK_SET_BY_MONTH_SQL + LIMIT_ONE_FOR_SHARE), month);
+		return findStreakByMonth(tupleQuery(STREAK_SET_BY_MONTH_SQL + LIMIT_ONE_FOR_SHARE), month, true);
 	}
 
 	@Override
 	public Optional<StreakPolicySet> findStreakPolicySetById(UUID policySetId) {
-		return findStreakById(tupleQuery(STREAK_SET_BY_ID_SQL), policySetId);
+		return findStreakById(tupleQuery(STREAK_SET_BY_ID_SQL), policySetId, false);
 	}
 
 	@Override
 	public Optional<StreakPolicySet> findStreakPolicySetByIdForShare(UUID policySetId) {
-		return findStreakById(tupleQuery(STREAK_SET_BY_ID_SQL + FOR_SHARE), policySetId);
+		return findStreakById(tupleQuery(STREAK_SET_BY_ID_SQL + FOR_SHARE), policySetId, true);
 	}
 
 	private static Optional<DailyRewardPolicy> findDaily(NativeQuery<Tuple> query, Instant at) {
@@ -96,24 +96,26 @@ public class AttendancePolicyRepositoryImpl implements AttendancePolicyRepositor
 				new DailyRewardPolicy(row.get("id", UUID.class), row.get("reward_ticket_count", Integer.class)));
 	}
 
-	private Optional<StreakPolicySet> findStreakByMonth(NativeQuery<Tuple> query, LocalDate month) {
+	private Optional<StreakPolicySet> findStreakByMonth(NativeQuery<Tuple> query, LocalDate month,
+			boolean forShare) {
 		List<Tuple> rows = query
 				.addScalar("id", UUID.class)
 				.setParameter("month", month)
 				.getResultList();
-		return rows.stream().findFirst().map(row -> withMilestones(row.get("id", UUID.class)));
+		return rows.stream().findFirst().map(row -> withMilestones(row.get("id", UUID.class), forShare));
 	}
 
-	private Optional<StreakPolicySet> findStreakById(NativeQuery<Tuple> query, UUID policySetId) {
+	private Optional<StreakPolicySet> findStreakById(NativeQuery<Tuple> query, UUID policySetId,
+			boolean forShare) {
 		List<Tuple> rows = query
 				.addScalar("id", UUID.class)
 				.setParameter("id", UuidBinary.toBytes(policySetId))
 				.getResultList();
-		return rows.stream().findFirst().map(row -> withMilestones(row.get("id", UUID.class)));
+		return rows.stream().findFirst().map(row -> withMilestones(row.get("id", UUID.class), forShare));
 	}
 
-	private StreakPolicySet withMilestones(UUID policySetId) {
-		List<StreakMilestone> milestones = tupleQuery(MILESTONES_SQL)
+	private StreakPolicySet withMilestones(UUID policySetId, boolean forShare) {
+		List<StreakMilestone> milestones = tupleQuery(forShare ? MILESTONES_SQL + FOR_SHARE : MILESTONES_SQL)
 				.addScalar("id", UUID.class)
 				.addScalar("milestone_days", Integer.class)
 				.addScalar("reward_ticket_count", Integer.class)
