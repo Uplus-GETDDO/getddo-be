@@ -41,5 +41,5 @@
 
 - 단위: `AdminMissionServiceTest`(권한, 보상 정책 연결, 정답 규칙, 기간), `AdminMissionControllerTest`(응답 필드, 필터, 요청 검증, 오류 코드), `MissionEndServiceTest`·`MissionEndWorkerTest`(종료 처리 요청과 실패 격리).
 - 통합: `MissionRepositoryIntegrationTest`가 종료 시각이 지났거나 정각인 미션만 `ENDED`로 바꾸고 다시 실행하면 바꾸는 것이 없는지를 실제 MySQL로 확인한다.
-- 작업 중 로컬 MySQL로 등록→상세 조회→기간 필터 조회→보상 정책·감사 기록 저장을 한 번 확인했고 그 테스트는 저장소에 남기지 않았다. 통합 테스트는 이번 작업에 포함하지 않았다.
+- 작업 중 로컬 MySQL로 등록→상세 조회→기간 필터 조회→보상 정책·감사 기록 저장을 한 번 확인했고 그 테스트는 저장소에 남기지 않았다. 등록·조회(GD-177) 작업에는 통합 테스트를 포함하지 않았고, 종료 워커(GD-269)의 통합 테스트는 위 항목이다.
 - 기존 통합 테스트 컨텍스트(`TicketIntegrationTestApplication`)가 미션 서비스를 함께 올리므로 새 서비스가 쓰는 감사 로그 빈을 그 컨텍스트에 추가했다.

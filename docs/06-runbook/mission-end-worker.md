@@ -1,6 +1,6 @@
 # 미션 종료 워커 확인
 
-GD-269의 운영 종료 시각이 지난 미션을 종료(`ENDED`)로 바꾸는 워커의 실행 방식과 확인 절차다. 미션 상태·제출 규칙의 원본은 공용 [미션 계약](https://github.com/GETDDO/getddo-spec/blob/main/05-api/mission.md)이다.
+GD-269의 운영 종료 시각이 지난 미션을 종료(`ENDED`)로 바꾸는 워커의 실행 방식과 확인 절차다. 미션 상태·제출 규칙의 원본은 공용 [미션 계약](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/05-api/mission.md)이다.
 
 ## 동작
 
@@ -19,7 +19,7 @@ GD-269의 운영 종료 시각이 지난 미션을 종료(`ENDED`)로 바꾸는 
 | `getddo.mission.end-worker.poll-delay` | `60000` | 폴링 간격(밀리초) |
 
 - 통합 테스트 프로필(`application-test.properties`)에서는 워커를 끈다.
-- 새 마이그레이션은 없다. 조회는 `missions` 테이블의 `status`, `ends_at` 조건이며 미션 수가 적어 별도 인덱스를 두지 않았다.
+- 새 마이그레이션은 없다. 조회는 `missions` 테이블의 `status`, `ends_at` 조건이며 이 조건에 맞는 복합 인덱스는 두지 않았다. 미션 수가 지금처럼 적으면 폴링당 비용이 작아 문제가 없다. 미션이 수천 건 이상으로 늘거나 `Missions ended` 처리와 폴링 간격 사이의 지연이 눈에 띄면 `(status, ends_at)` 인덱스를 새 마이그레이션으로 추가하는 것을 검토한다. 실제 실행 계획은 측정하지 않았다.
 
 ## 확인 방법
 
