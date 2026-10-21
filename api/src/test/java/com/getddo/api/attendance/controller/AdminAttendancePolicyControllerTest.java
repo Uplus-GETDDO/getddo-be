@@ -26,6 +26,7 @@ import com.getddo.core.attendance.exception.AttendanceException;
 import com.getddo.core.attendance.service.AdminAttendancePolicyService;
 import com.getddo.core.common.pagination.PageQuery;
 import com.getddo.core.common.pagination.PageResult;
+import com.getddo.core.user.domain.NamedValue;
 import com.getddo.core.user.domain.User;
 import com.getddo.core.user.domain.UserRole;
 import com.getddo.core.user.domain.UserStatus;
@@ -80,6 +81,10 @@ class AdminAttendancePolicyControllerTest {
 		return new DailyAttendancePolicy(UUID.randomUUID(), count, FROM, until, ADMIN_ID, AT);
 	}
 
+	private static <T> NamedValue<T> named(T value) {
+		return new NamedValue<>(value, "작성자");
+	}
+
 	private static StreakPolicyRecord streak() {
 		return new StreakPolicyRecord(UUID.randomUUID(), LocalDate.of(2026, 11, 1),
 				List.of(new StreakMilestone(UUID.randomUUID(), 14, 3), new StreakMilestone(UUID.randomUUID(), 7, 1)),
@@ -91,7 +96,7 @@ class AdminAttendancePolicyControllerTest {
 	void returnsDailyPolicies() throws Exception {
 		// given
 		when(service.findDailyPolicies(any(), eq(new PageQuery(1, 20)))).thenReturn(new PageResult<>(
-				List.of(daily(3, null), daily(1, Instant.parse("2026-10-18T15:00:00Z"))), 1, 20, 2));
+				List.of(named(daily(3, null)), named(daily(1, Instant.parse("2026-10-18T15:00:00Z")))), 1, 20, 2));
 		// when
 		// then
 		mvc.perform(asAdmin(get(DAILY)))
@@ -102,6 +107,7 @@ class AdminAttendancePolicyControllerTest {
 				.andExpect(jsonPath("$.data.items[0].effectiveUntil").hasJsonPath())
 				.andExpect(jsonPath("$.data.items[0].effectiveUntil").value(nullValue()))
 				.andExpect(jsonPath("$.data.items[0].createdBy").value(ADMIN_ID.toString()))
+				.andExpect(jsonPath("$.data.items[0].createdByName").value("작성자"))
 				.andExpect(jsonPath("$.data.items[1].effectiveUntil").value("2026-10-18T15:00:00Z"));
 	}
 
@@ -109,7 +115,7 @@ class AdminAttendancePolicyControllerTest {
 	@DisplayName("AP02는 보상 수량만 받아 201로 돌려준다")
 	void createsDailyPolicy() throws Exception {
 		// given
-		when(service.createDailyPolicy(any(), eq(3))).thenReturn(daily(3, null));
+		when(service.createDailyPolicy(any(), eq(3))).thenReturn(named(daily(3, null)));
 		// when
 		// then
 		mvc.perform(json(post(DAILY), "{\"rewardTicketCount\":3}"))
@@ -147,7 +153,7 @@ class AdminAttendancePolicyControllerTest {
 	void returnsStreakPolicies() throws Exception {
 		// given
 		when(service.findStreakPolicies(any(), eq(new PageQuery(2, 5))))
-				.thenReturn(new PageResult<>(List.of(streak()), 2, 5, 6));
+				.thenReturn(new PageResult<>(List.of(named(streak())), 2, 5, 6));
 		// when
 		// then
 		mvc.perform(asAdmin(get(STREAK).param("page", "2").param("size", "5")))
@@ -156,14 +162,15 @@ class AdminAttendancePolicyControllerTest {
 				.andExpect(jsonPath("$.data.items[0].effectiveMonth").value("2026-11"))
 				.andExpect(jsonPath("$.data.items[0].milestones[0].milestoneDays").value(7))
 				.andExpect(jsonPath("$.data.items[0].milestones[1].rewardTicketCount").value(3))
-				.andExpect(jsonPath("$.data.items[0].createdBy").value(ADMIN_ID.toString()));
+				.andExpect(jsonPath("$.data.items[0].createdBy").value(ADMIN_ID.toString()))
+				.andExpect(jsonPath("$.data.items[0].createdByName").value("작성자"));
 	}
 
 	@Test
 	@DisplayName("AP04는 단계를 서비스에 넘기고 201로 돌려준다")
 	void createsStreakPolicy() throws Exception {
 		// given
-		when(service.createStreakPolicy(any(), any())).thenReturn(streak());
+		when(service.createStreakPolicy(any(), any())).thenReturn(named(streak()));
 		// when
 		mvc.perform(json(post(STREAK),
 				"{\"milestones\":[{\"milestoneDays\":7,\"rewardTicketCount\":1},"
@@ -219,7 +226,7 @@ class AdminAttendancePolicyControllerTest {
 	void updatesDailyPolicy() throws Exception {
 		// given
 		DailyAttendancePolicy updated = daily(5, null);
-		when(service.updateDailyPolicy(any(), eq(updated.getId()), eq(5))).thenReturn(updated);
+		when(service.updateDailyPolicy(any(), eq(updated.getId()), eq(5))).thenReturn(named(updated));
 		// when
 		// then
 		mvc.perform(json(put(DAILY + "/" + updated.getId()), "{\"rewardTicketCount\":5}"))
@@ -259,7 +266,7 @@ class AdminAttendancePolicyControllerTest {
 	void updatesStreakPolicy() throws Exception {
 		// given
 		StreakPolicyRecord updated = streak();
-		when(service.updateStreakPolicy(any(), eq(updated.getId()), any())).thenReturn(updated);
+		when(service.updateStreakPolicy(any(), eq(updated.getId()), any())).thenReturn(named(updated));
 		// when
 		// then
 		mvc.perform(json(put(STREAK + "/" + updated.getId()),

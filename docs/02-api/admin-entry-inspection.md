@@ -16,6 +16,7 @@
 ## 판단과 제약
 
 - AO06 응답은 내 응모 이력(E06)의 응모 결과 필드에 `userId`와 `participantId`를 더한 것이다. 거절 건은 응모자가 없어 `participantId`가 `null`이다.
+- AO06·AO07 응답은 `userId`와 함께 사용자의 현재 이름 `userName`을 담는다(ADR-028). 이름은 요청 시점에 `UserNameRepository`로 한 번에 읽고(N+1 없음), 저장하지 않으며 표시용이다. 사용자 행이 없으면 `null`이다.
 - 기간은 결과 기록 시각(`created_at`) 기준 `[from, to)`이고 시각은 `Z`나 오프셋을 포함해야 한다. 시작이 끝보다 앞서지 않으면 400 `COMMON-002`이다(E06과 같다).
 - 정렬은 AO06이 `created_at DESC, id DESC`, AO07이 `created_at DESC, id DESC`다. 페이지 시작 위치가 int 범위를 넘으면 조회하지 않고 빈 목록과 전체 건수를 돌려준다.
 - AO06 쿼리는 E06의 SQL을 사용자 조건만 선택으로 바꿔 함께 쓴다. 이벤트 제목은 이벤트 도메인 테이블을 읽기 전용 JOIN으로 가져온다.
@@ -25,5 +26,6 @@
 
 ## 검증
 
-- 단위: `AdminEntryQueryServiceTest`(권한·이벤트 확인·저장소 위임), `AdminEntryControllerTest`(응답 필드·파라미터·400/403/404).
+- 단위: `AdminEntryQueryServiceTest`(권한·이벤트 확인·저장소 위임·이름 결합), `AdminEntryControllerTest`(응답 필드·파라미터·400/403/404).
+- 실제 MySQL: `AdminEntryNamesIntegrationTest`(`userName`이 `users.name`과 같고 이름을 바꾸면 다음 조회에 반영).
 - 실제 MySQL 통합 테스트는 이번 작업에 포함하지 않았다. 저장소 SQL(필터 조합·기간 경계·정렬·페이지·응모자 조회)은 작업 중 로컬 MySQL로 한 번 확인했지만 저장소에는 남기지 않았다.
