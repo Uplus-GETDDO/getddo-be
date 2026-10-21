@@ -1,6 +1,9 @@
 spring:
   application:
     name: GETDDO-BE
+  datasource:
+    hikari:
+      pool-name: getddo
   servlet:
     multipart:
       # MB는 십진 단위다. 요청 전체 상한은 파일 외의 multipart 헤더 공간을 포함한다.
@@ -25,7 +28,32 @@ springdoc:
     tags-sorter: alpha
     operations-sorter: alpha
 
+# 기존 공개 health 경로(/v3/api-docs)를 유지하며 Actuator HTTP/JMX 경로는 열지 않는다.
+management:
+  endpoints:
+    web:
+      exposure:
+        exclude: '*'
+      discovery:
+        enabled: false
+    jmx:
+      exposure:
+        exclude: '*'
+
+server:
+  tomcat:
+    mbeanregistry:
+      enabled: ${GETDDO_METRICS_ENABLED:false}
+
 getddo:
+  metrics:
+    enabled: ${GETDDO_METRICS_ENABLED:false}
+    server: ${GETDDO_METRICS_SERVER:}
+    environment: ${GETDDO_METRICS_ENVIRONMENT:dev}
+    namespace: ${GETDDO_METRICS_NAMESPACE:GETDDO/API}
+    step: ${GETDDO_METRICS_STEP:60s}
+    region: ${AWS_REGION:}
+
   images:
     # 백엔드가 업로드할 비공개 S3 버킷.
     bucket: ${GETDDO_IMAGES_BUCKET:}
