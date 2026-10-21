@@ -149,37 +149,42 @@ class AttendancePolicyEditConcurrencyTest extends AttendanceIntegrationTestSuppo
 	@Test
 	@DisplayName("REPEATABLE READ 호출자가 먼저 일반 조회로 스냅샷을 만든 뒤에도 공유 잠금 조회는 수정이 끝난 단계를 읽는다")
 	void shareLockedReadSeesEditedStepsInsideRepeatableReadTransaction() throws Exception {
-		// given: 11월 묶음을 읽는 REPEATABLE READ 트랜잭션이 일반 조회로 수정 전 스냅샷을 만든다
+		// given: 수정 트랜잭션이 11월 묶음의 단계를 바꾸고 커밋 직전에 멈춘다
 		UUID setId = policies.streakPolicySet(adminId, LocalDate.parse("2026-11-01"), Map.of(1, 1));
 		clock.set(Instant.parse("2026-10-31T14:00:00Z"));
 		TransactionTemplate repeatableRead = new TransactionTemplate(transactionManager);
 		repeatableRead.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
-		ExecutorService editor = Executors.newSingleThreadExecutor();
+		CountDownLatch edited = new CountDownLatch(1);
+		CountDownLatch releaseEdit = new CountDownLatch(1);
+		ExecutorService executor = Executors.newFixedThreadPool(2);
 		try {
-			// when
-			int[] rewards = repeatableRead.execute(status -> {
+			Future<?> edit = executor.submit(() -> transaction.execute(status -> {
+				adminService.updateStreakPolicy(admin(), setId, java.util.List.of(new MilestoneDraft(1, 9)));
+				edited.countDown();
+				await(releaseEdit);
+				return null;
+			}));
+			assertThat(edited.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+
+			// when: REPEATABLE READ 호출자가 일반 조회로 수정 전 스냅샷을 만든 뒤 공유 잠금 조회로 잠금을 기다린다
+			Future<int[]> caller = executor.submit(() -> repeatableRead.execute(status -> {
 				int snapshot = policyRepository.findStreakPolicySetById(setId).orElseThrow().getMilestones().get(0)
 						.getRewardTicketCount();
-				editSteps(editor, setId);
 				int locked = policyRepository.findStreakPolicySetByIdForShare(setId).orElseThrow().getMilestones().get(0)
 						.getRewardTicketCount();
 				return new int[] {snapshot, locked};
-			});
+			}));
+			new LockWaitProbe(mysql).awaitLockWaits(1);
+			assertThat(caller.isDone()).isFalse();
+			releaseEdit.countDown();
+			edit.get(WAIT_SECONDS, TimeUnit.SECONDS);
+			int[] rewards = caller.get(WAIT_SECONDS, TimeUnit.SECONDS);
 
-			// then: 일반 조회는 수정 전 값, 공유 잠금 조회는 수정이 끝난 값이다
+			// then: 일반 조회는 수정 전 값, 잠금을 기다린 공유 잠금 조회는 수정이 끝난 값이다
 			assertThat(rewards).containsExactly(1, 9);
 		} finally {
-			ConcurrentTasks.shutdownAndAwait(editor);
-		}
-	}
-
-	/** 다른 트랜잭션(다른 스레드)에서 관리자 단계 교체를 커밋한다. */
-	private void editSteps(ExecutorService editor, UUID setId) {
-		try {
-			editor.submit(() -> transaction.execute(status -> adminService.updateStreakPolicy(admin(), setId,
-					java.util.List.of(new MilestoneDraft(1, 9))))).get(WAIT_SECONDS, TimeUnit.SECONDS);
-		} catch (Exception e) {
-			throw new IllegalStateException(e);
+			releaseEdit.countDown();
+			ConcurrentTasks.shutdownAndAwait(executor);
 		}
 	}
 
