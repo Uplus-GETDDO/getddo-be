@@ -178,6 +178,7 @@ class RollingTest(unittest.TestCase):
             self.run_roll(fake)
         self.assertEqual([A, C], self.deployments(fake))
         self.assertEqual([A, C], self.registrations(fake))
+        self.assertFalse(fake.lock)
 
     def test_main_advanced_during_preflight_does_not_drain_or_deploy(self):
         fake = FakeAWS()
@@ -253,6 +254,7 @@ class RollingTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.run_roll(fake)
         self.assertEqual([], self.registrations(fake))
+        self.assertTrue(fake.lock)
 
     def test_draining_timeout_stops_before_host_mutation(self):
         fake = FakeAWS()
@@ -430,6 +432,14 @@ class SettingsAndEnvTest(unittest.TestCase):
                         {'TARGET_GROUP_ARN': values()['TARGET_GROUP_ARN'].replace('123456789012', '999999999999')}):
             with self.assertRaises(ValueError):
                 deploy.settings(dict(values(), **changes))
+
+    def test_initial_c_rejects_unapproved_baseline(self):
+        base = values('initial-c')
+        for changes in ({'APPROVED_BASELINE_SHA': 'b' * 40},
+                        {'APPROVED_BASELINE_IMAGE_ID': 'sha256:short'},
+                        {'APP_SOURCE_DIR': ''}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                deploy.settings(dict(base, **changes))
 
     def test_single_default_does_not_require_two_host_config(self):
         data = values('single')

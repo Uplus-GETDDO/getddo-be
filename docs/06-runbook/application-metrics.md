@@ -4,18 +4,9 @@
 
 Spring Boot 4.1.1 Actuator와 Boot 관리 Micrometer 1.17.1을 사용한다. Boot의 기본 지원 registry에 CloudWatch가 없어 `CloudWatchMetricsConfig`에서 명시적으로 등록한다. AWS SDK는 기존 S3와 같은 BOM 2.56.0이다.
 
-기본값은 비활성화다. 로컬/테스트에서는 AWS 클라이언트와 publisher를 생성하지 않는다. 배포 시 기존 app.env에 다음 비밀 아닌 값을 전달한다. [배포 예제](../../infra/app.env.example)는 기존 DB·Redis·이미지 설정에 추가하는 조각이며 기본 비활성화다. 예제의 빈 리전·서버 값을 활성화 전에 채우고 아래 IAM·전달 조건을 확인한다. 환경·namespace·간격의 중복 예제 할당은 생략하며 앱 기본값과 전송 계약은 유지한다.
+기본값은 비활성화다. 로컬/테스트에서는 AWS 클라이언트와 publisher를 생성하지 않는다. 배포 도구는 `rolling`에서 `GETDDO_METRICS_ENABLED=true`, `initial-c`에서 `false`와 호스트별 서버 식별자를 주입한다. `single`은 지표 값을 추가 주입하지 않는다. 실제 전달·복구 절차는 [호스트별 지표 설정과 복구](container-cd.md#호스트별-지표-설정과-복구)를 따른다. [배포 예제 안내](../../infra/app.env.example)는 참고용이며 운영 env나 Parameter Store에 복사하지 않는다. `AWS_REGION`은 기존 Parameter Store의 필수 값을 사용한다.
 
-```dotenv
-GETDDO_METRICS_ENABLED=true
-GETDDO_METRICS_ENVIRONMENT=dev
-GETDDO_METRICS_NAMESPACE=GETDDO/API
-GETDDO_METRICS_STEP=60s
-GETDDO_METRICS_SERVER=a
-AWS_REGION=ap-northeast-2
-```
-
-C에서는 `GETDDO_METRICS_SERVER=c`로 바꾼다. 활성화 시 서버 a/c, 명시적 리전, 환경 dev, namespace GETDDO/API, 간격 60s를 검사한다. 다른 값은 설정 오류다. 서버별 식별자는 공유 Parameter Store 단일 값으로 덮어쓰지 않는다. 기존 설정 조회 도구의 허용 목록·검증, 배포 env 생성, Compose 전달과 롤백 백업/복원에서 이 값을 함께 보존해야 한다. 이 런북의 코드만 추가했다고 배포 도구 연동이나 AWS 수신 완료로 판단하지 않는다.
+활성화 시 서버 a/c, 명시적 리전, 환경 dev, namespace GETDDO/API, 간격 60s를 검사한다. 다른 값은 설정 오류다. 서버별 식별자는 공유 Parameter Store 단일 값으로 덮어쓰지 않는다. 배포 코드에는 허용 목록 검증, 호스트별 env 생성, Compose 전달과 롤백 시 env 백업·복원이 구현돼 있다. 이 구현과 대역 테스트는 실제 A/C 배포 후 CloudWatch 수신 확인과 구분한다. 앱 지표의 실제 AWS 수신은 아직 확인 전이다.
 
 EC2 인스턴스 역할과 SDK 기본 자격 증명 체인을 사용한다. 정적 키를 app.env에 넣지 않는다. 컨테이너의 IMDSv2 접근과 인스턴스 metadata hop limit을 확인한다. 앱 역할은 `cloudwatch:PutMetricData`와 `cloudwatch:namespace=GETDDO/API` 조건을 허용해야 한다. CWAgent 권한과 앱 전송 권한은 각각 확인한다.
 
