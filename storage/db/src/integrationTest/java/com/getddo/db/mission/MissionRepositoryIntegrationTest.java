@@ -156,6 +156,26 @@ class MissionRepositoryIntegrationTest extends MissionIntegrationTestSupport {
 		assertThat(found.getItems()).extracting(Mission::getId).containsExactly(island);
 	}
 
+	@Test
+	@DisplayName("종료 시각이 지났거나 정각인 운영 중 미션만 종료로 바꾸고 수정 시각을 기준 시각으로 쓰며 다시 실행하면 바꾸는 것이 없다")
+	void endsOnlyMissionsWhoseEndHasPassed() {
+		// given
+		Instant startsAt = Instant.parse("2026-10-01T00:00:00Z");
+		UUID endedAtBoundary = saveMission("정각에 끝나는 미션", MissionType.QUIZ, startsAt);
+		UUID stillOpen = saveMission("아직 열린 미션", MissionType.SURVEY, startsAt.plusSeconds(3600));
+		Instant now = startsAt.plusSeconds(86400);
+		// when
+		int first = transaction.execute(status -> missionRepository.endExpired(now));
+		int second = transaction.execute(status -> missionRepository.endExpired(now));
+		// then
+		assertThat(first).isEqualTo(1);
+		assertThat(second).isZero();
+		assertThat(missionRepository.findById(endedAtBoundary).orElseThrow().getStatus()).isEqualTo(MissionStatus.ENDED);
+		assertThat(missionRepository.findById(endedAtBoundary).orElseThrow().getUpdatedAt()).isEqualTo(now);
+		assertThat(missionRepository.findById(stillOpen).orElseThrow().getStatus()).isEqualTo(MissionStatus.ACTIVE);
+		assertThat(missionRepository.findById(stillOpen).orElseThrow().getUpdatedAt()).isEqualTo(clock.instant());
+	}
+
 	private UUID saveMission(String title, MissionType type, Instant startsAt) {
 		Mission mission = Mission.register(rewardPolicyId, adminId, title, "설명", type, startsAt, startsAt.plusSeconds(86400), null);
 		MissionDetail detail = type == MissionType.QUIZ

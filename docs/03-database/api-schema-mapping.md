@@ -115,7 +115,7 @@ DB 컬럼 추가 없이 기존 `events.status`·`updated_at`과 `audit_logs`를 
 | D07 | `game_reward_claims`는 사용자·source_key 및 사용자·게임·보상일 UNIQUE를 모두 가짐 | 현재 원격 `dev`에 추가된 사용자·게임·보상일 UNIQUE를 기준으로 중복 지급을 검증 |
 | D08 | `reward_policies`에 게임별 보상 조건 JSON 또는 검증 버전 필드는 없음. `games.rules`는 현재 게임 규칙 | 다음 일일 기준일 적용이 필요한 게임 보상 조건의 버전·예약 저장 구조 설계 필요 |
 | D09 | 업무 Controller·DTO와 사용자 문맥 필터가 기능별로 구현되어 있다(출석, 응모, 응모권 조회, 이벤트 조회·등록, 알림, 추첨 등). 미션은 제출(M03), 목록·상세 조회(M01·M02), 내 제출 조회(M04)가 구현되어 있고 관리자(AM01~AM03) API는 없다 | 본 문서의 API 중 구현되지 않은 것은 호출할 수 없다. 구현된 API는 Swagger와 공용 계약을 대조한다 |
-| D10 | `missions.status`는 `ACTIVE`/`ENDED` 두 값뿐이다(API 초안의 `DRAFT`는 스키마에 없음). 문항별 `quiz_question_progress` 존재 | 시작 전 초안 상태를 쓰려면 새 마이그레이션이 필요하다. 상태 전환·다문항 누적 달성 정책은 테이블에서 역으로 확정하지 않음 |
+| D10 | `missions.status`는 `ACTIVE`/`ENDED` 두 값뿐이다(API 초안의 `DRAFT`는 스키마에 없음). 문항별 `quiz_question_progress` 존재 | 시작 전 초안 상태를 쓰려면 새 마이그레이션이 필요하다. 운영 종료 시각이 지나면 [미션 종료 워커](../06-runbook/mission-end-worker.md)가 `ENDED`로 바꾼다. 다문항 누적 달성 정책은 테이블에서 역으로 확정하지 않음 |
 | D11 | 응모권 지급 원장은 `tickets`·`ticket_histories`이며 지급 수량은 1 이상이다. 출석 단계 정책은 보상 0을 허용 | 보상 정책의 수량과 실제 지급을 구분. 지급량 0 허용 범위와 응답 계약 확인 필요 |
 
 위 항목은 최신 SQL의 정적 검토 결과이며 런타임 검증 결과가 아니다. D01·D07은 기존 초안과 달리 현재 `dev`에 반영된 상태를 기록했다.
