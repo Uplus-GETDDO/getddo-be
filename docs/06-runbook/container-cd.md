@@ -40,7 +40,7 @@ main의 CD는 한 번에 하나씩 실행하며 진행 중인 작업은 자동 �
 
 ## 자동 배포 연결 설정
 
-GitHub **Settings → Environments → production → Variables**에 다음 네 값을 등록한다. 파일과 설정이 공유된 뒤 main CI 성공을 기점으로 자동 실행한다. 환경에 필수 승인자를 설정하면 그 승인도 기다리므로 완전 자동 실행 여부는 환경 규칙과 함께 확인한다.
+GitHub **Settings → Environments → production → Variables**에 기본 단일 배포용 다음 네 값을 등록한다. 순차 배포를 선택할 때 추가하는 `DEPLOY_MODE`, `ROLLING_DEPLOY_ENABLED`, `EC2_INSTANCE_ID_A`/`EC2_INSTANCE_ID_C`, `TARGET_GROUP_ARN`은 [GD-278 모드와 활성화 조건](#모드와-활성화-조건)을 따른다. 파일과 설정이 공유된 뒤 main CI 성공을 기점으로 자동 실행한다. 환경에 필수 승인자를 설정하면 그 승인도 기다리므로 완전 자동 실행 여부는 환경 규칙과 함께 확인한다.
 
 | 변수 | 값 |
 | --- | --- |
@@ -97,7 +97,7 @@ GitHub **Settings → Environments → production → Variables**에 다음 네 
 
 CI 성공은 테스트·이미지 빌드·파일 보관 성공을 뜻한다. CD 성공은 원격 교체 스크립트가 상태 확인까지 성공하고 SSM 결과도 성공했을 때만 표시한다. 실제 서버 배포는 미검증이다.
 
-2026-10-14 로컬에서 전체 테스트·빌드를 캐시 없이 실행해 단위 테스트 898개와 MySQL 통합 테스트 808개가 모두 통과했다. Docker 이미지 빌드·저장·복원·이미지 ID/커밋 라벨 확인 및 별도 MySQL과 앱 컨테이너의 `/v3/api-docs` HTTP 200도 확인했다. 이는 로컬 검증이며 실제 GitHub Actions·OIDC·S3 전달·SSM·RDS 배포 성공을 뜻하지 않는다. 배포 회귀 테스트 코드는 이번 공유 대상에서 제외하며 CI에서도 해당 테스트를 실행하지 않는다.
+2026-10-14 로컬에서 전체 테스트·빌드를 캐시 없이 실행해 단위 테스트 898개와 MySQL 통합 테스트 808개가 모두 통과했다. Docker 이미지 빌드·저장·복원·이미지 ID/커밋 라벨 확인 및 별도 MySQL과 앱 컨테이너의 `/v3/api-docs` HTTP 200도 확인했다. 이는 로컬 검증이며 실제 GitHub Actions·OIDC·S3 전달·SSM·RDS 배포 성공을 뜻하지 않는다. 현재 배포 회귀 테스트는 `Build`와 `Container CD`에서 `python3 -m unittest discover -s .github/tests`로 실행한다.
 
 참고: [GitHub workflow_run 실행 조건과 기본 브랜치·커밋 기준](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run).
 
@@ -117,7 +117,7 @@ publish 작업 실패는 이미 성공한 서버 배포를 롤백하지 않는�
 
 ### 모드와 활성화 조건
 
-기존 `EC2_INSTANCE_ID`와 `DEPLOY_MODE=single`(미설정 기본값)은 단일 서버 배포를 유지한다. 두 JVM 워커 안전성, DB 연결 예산, 구/신 앱·Flyway 호환성, 한 서버의 요청 처리 여유를 확인하고 C를 Terraform으로 등록해 **A/C 둘 다 healthy**가 된 뒤에만 Environment Variables를 다음과 같이 설정한다. 이 코드는 변수를 등록하거나 Terraform attachment를 변경하지 않는다.
+기존 `EC2_INSTANCE_ID`와 `DEPLOY_MODE=single`(미설정 기본값)은 단일 서버 배포를 유지한다. 두 JVM 워커 안전성, DB 연결 예산, 구/신 앱·Flyway 호환성, 한 서버의 요청 처리 여유, GD-276 앱 지표 구현과 `GETDDO/API` namespace로 제한한 A/C EC2 역할의 `cloudwatch:PutMetricData` 권한을 확인하고 C를 Terraform으로 등록해 **A/C 둘 다 healthy**가 된 뒤에만 Environment Variables를 다음과 같이 설정한다. rolling은 지표를 함께 활성화한다. 이 코드는 변수를 등록하거나 Terraform attachment를 변경하지 않는다.
 
 | 변수 | 값 |
 | --- | --- |
@@ -156,7 +156,8 @@ Compose와 Parameter Store 조회 스크립트는 `APP_SOURCE_DIR`에서 고정�
 | `GETDDO_METRICS_ENVIRONMENT` | `dev` |
 | `GETDDO_METRICS_NAMESPACE` | `GETDDO/API` |
 | `GETDDO_METRICS_STEP` | `60s` |
-| `AWS_REGION` | 기존 필수 조회 값 `ap-northeast-2` |
+
+`AWS_REGION`은 Parameter Store에서 조회·검증한 기존 필수 값을 사용하며 호스트별 주입 대상에 포함하지 않는다.
 
 단일 기본 모드에서는 새 지표 값을 주입하지 않는다. 새 env 전체가 기존 엔진의 검증·백업·원자적 교체 대상이므로 실패 시 서버 식별자·활성 플래그도 이전 env와 함께 복원된다. 전송 활성화 자체는 GD-276 구현과 namespace 제한 EC2 IAM 준비 뒤 적용한다.
 
@@ -176,6 +177,6 @@ GitHub concurrency는 진행 중 실행을 취소하지 않는다. single/rollin
 
 업로드·사전 검사 중 main이 바뀔 수 있어 운영 잠금 안의 첫 서버 제외 직전(단일 모드는 SSM 전송 직전)에도 최신 main을 확인한다. 이때 불일치하면 아직 정상인 서버를 변경하지 않고 잠금을 해제한다. A를 이미 변경한 뒤에는 C도 같은 승인 산출물로 완료하며, 두 서버 사이 장애는 부분 배포 복구 상태로 잠금을 보존한다. 최초 C의 승인된 기준 버전은 이 최신 main 검사에서 제외한다.
 
-OIDC 역할에 정확한 `releases/*` 쓰기 외 **해당 버킷의 `locks/container-deploy.json` 한 객체**에 `s3:PutObject`·`s3:DeleteObject`가 필요하다. 정상 단일 모드도 이 잠금 권한을 먼저 준비한다. 대상 조회용 `ec2:DescribeInstances`·`ssm:DescribeInstanceInformation`, 대상 그룹 조회/health 조회, 해당 TG만의 `elasticloadbalancing:RegisterTargets`·`DeregisterTargets`, 정확한 A/C 인스턴스·AWS-RunShellScript에 한정한 기존 SSM 권한을 준비한다. 조회 API의 리소스 범위 제한 가능 여부는 IAM 정책에서 구분한다. EC2 런타임 역할과 GitHub 역할을 혼동하거나 관리자 권한을 추가하지 않는다. 정상 attachment는 Terraform이 계속 관리한다. CloudFormation/RDS 자원 변경은 없다.
+OIDC 역할에 정확한 `releases/*` 쓰기 외 **해당 버킷의 `locks/container-deploy.json` 한 객체**에 `s3:PutObject`·`s3:DeleteObject`가 필요하다. 정상 단일 모드도 이 잠금 권한을 먼저 준비한다. 대상 조회용 `ec2:DescribeInstances`·`ssm:DescribeInstanceInformation`, 대상 그룹 조회/health 조회와 `elasticloadbalancing:DescribeTargetGroupAttributes`, 해당 TG만의 `elasticloadbalancing:RegisterTargets`·`DeregisterTargets`, 정확한 A/C 인스턴스·AWS-RunShellScript에 한정한 기존 SSM 권한을 준비한다. draining은 조회한 `deregistration_delay.timeout_seconds`에 관측 여유 60초를 더하고 최소 300초까지 기다린다. 조회 API의 리소스 범위 제한 가능 여부는 IAM 정책에서 구분한다. EC2 런타임 역할과 GitHub 역할을 혼동하거나 관리자 권한을 추가하지 않는다. 정상 attachment는 Terraform이 계속 관리한다. CloudFormation/RDS 자원 변경은 없다.
 
-오프라인 회귀 검증은 `python3 -m unittest discover -s .github/tests`로 수행한다. 이 검증은 AWS 모의 응답·배포 엔진 테스트 대역이며 실제 SSM/ALB/DB/Redis/CloudWatch 운영 검증과 구분한다. CI에서 Container CD도 인증 전에 이 회귀 검증을 실행한다.
+오프라인 회귀 검증은 `python3 -m unittest discover -s .github/tests`로 수행한다. 이 검증은 AWS 모의 응답·배포 엔진 테스트 대역이며 실제 SSM/ALB/DB/Redis/CloudWatch 운영 검증과 구분한다. PR의 Build와 Container CD 모두 이 회귀 검증을 실행하며 CD에서는 AWS 인증 전에 수행한다.

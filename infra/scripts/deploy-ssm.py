@@ -62,8 +62,9 @@ def command(arguments, timeout=70):
 
 
 def aws(*arguments, timeout=70):
-    return json.loads(command(["aws", *arguments, "--region", os.environ["AWS_REGION"],
-                               "--output", "json", "--no-cli-pager"], timeout))
+    output = command(["aws", *arguments, "--region", os.environ["AWS_REGION"],
+                      "--output", "json", "--no-cli-pager"], timeout)
+    return json.loads(output) if output.strip() else {}
 
 
 def verify_main(values):
@@ -164,7 +165,7 @@ def main(check_only=False):
         spec.loader.exec_module(rolling)
         rolling.run(values, key, checksum, aws, parameters, lambda: verify_main(values))
         return
-    # 단일 모드와 C 수동 초기화도 같은 운영 잠금을 사용한다. 미확인 SSM은 자동 해제하지 않는다.
+    # 단일 모드도 rolling.run과 같은 운영 잠금을 사용한다. 미확인 SSM은 자동 해제하지 않는다.
     lock_key = "locks/container-deploy.json"
     aws("s3api", "put-object", "--bucket", values["DEPLOY_BUCKET"], "--key", lock_key,
         "--expected-bucket-owner", values["ACCOUNT_ID"], "--server-side-encryption", "AES256",
@@ -175,8 +176,11 @@ def main(check_only=False):
         verify_main(values)
     except Exception:
         # 아직 원격 배포 명령을 보내지 않았으므로 안전하게 이 실행의 잠금만 해제한다.
-        aws("s3api", "delete-object", "--bucket", values["DEPLOY_BUCKET"], "--key", lock_key,
-            "--expected-bucket-owner", values["ACCOUNT_ID"])
+        try:
+            aws("s3api", "delete-object", "--bucket", values["DEPLOY_BUCKET"], "--key", lock_key,
+                "--expected-bucket-owner", values["ACCOUNT_ID"])
+        except Exception:
+            print("Deployment lock cleanup failed; inspect the lock before retrying.", file=sys.stderr)
         raise
     result = aws("ssm", "send-command", "--instance-ids", values["EC2_INSTANCE_ID"],
                  "--document-name", "AWS-RunShellScript", "--timeout-seconds", "120",

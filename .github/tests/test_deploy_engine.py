@@ -71,14 +71,14 @@ raise SystemExit(2)
             curl.write_text('#!/bin/sh\nprintf 200\n')
             curl.chmod(0o700)
             sync = mock_bin / 'sync'
-            sync.write_text('#!/bin/sh\n' + ('exit 1\n' if fail_cleanup else 'exit 0\n'))
+            sync.write_text('#!/bin/sh\nexit 0\n')
             sync.chmod(0o700)
-            # cleanup-only failure must occur after transaction syncs, so fail on third sync call.
+            # clear_marker syncs the config directory only after rollback restored the app.
             if fail_cleanup:
-                sync.write_text('#!/usr/bin/env python3\nimport os,pathlib,sys\np=pathlib.Path(os.environ["SYNC_COUNTER"])\nn=int(p.read_text())+1 if p.exists() else 1\np.write_text(str(n))\nsys.exit(1 if n>=3 else 0)\n')
+                sync.write_text('#!/usr/bin/env python3\nimport os,sys\nsys.exit(1 if sys.argv[-1] == os.environ["CONFIG_DIR"] else 0)\n')
             environment = dict(os.environ, PATH=str(mock_bin) + ':' + os.environ['PATH'],
                                FAIL_NEW=str(int(fail_new)), FAIL_STOP=str(int(fail_stop)),
-                               STATE_FILE=str(base/'state'), SYNC_COUNTER=str(base/'sync-count'),
+                               STATE_FILE=str(base/'state'), CONFIG_DIR=str(config),
                                NEW_IMAGE=NEW, SOURCE_SHA=SHA, GETDDO_DEPLOY_SERVER='c',
                                GETDDO_DEPLOY_METRICS_ENABLED='true')
             result = subprocess.run(['bash', str(release/'deploy-container.sh'), SHA, 'ap-northeast-2'],
@@ -105,6 +105,7 @@ raise SystemExit(2)
     def test_cleanup_failure_never_emits_confirmation_and_preserves_marker(self):
         result, env, marker, current = self.execute(fail_new=True, fail_cleanup=True)
         self.assertNotEqual(0, result.returncode)
+        self.assertIn('ROLLBACK_OK:', result.stdout)
         self.assertNotIn('ROLLBACK_CONFIRMED_HEALTHY:', result.stdout)
         self.assertTrue(marker)
         self.assertIn('DEPLOY_INCOMPLETE:', result.stderr)

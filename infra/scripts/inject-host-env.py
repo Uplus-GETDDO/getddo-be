@@ -21,6 +21,8 @@ def inject(path, server, enabled):
     if any(line.split("=", 1)[0] in settings for line in content.splitlines()):
         raise ValueError("per-host metrics settings must not come from shared parameters")
     with path.open("a") as output:
+        if content and not content.endswith("\n"):
+            output.write("\n")
         for name, value in settings.items():
             output.write(name + "=" + value + "\n")
         output.flush()

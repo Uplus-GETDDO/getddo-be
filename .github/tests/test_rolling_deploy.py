@@ -1,5 +1,6 @@
 """격리된 AWS 응답으로 배포 순서·실패 격리·미확인 명령 차단을 검증한다."""
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -44,6 +45,7 @@ class FakeAWS:
         self.command_count = 0
         self.lock = False
         self.drain_timeout = False
+        self.deregistration_delay = 300
         self.other_fails = False
         self.stale = False
         self.incomplete = False
@@ -68,6 +70,9 @@ class FakeAWS:
             return {'InstanceInformationList': [dict(InstanceId=i, PingStatus='Online') for i in (A, C)]}
         if operation == 'describe-target-groups':
             return {'TargetGroups': [dict(TargetType='instance', Port=8080, VpcId='vpc-1')]}
+        if operation == 'describe-target-group-attributes':
+            return {'Attributes': [dict(Key='deregistration_delay.timeout_seconds',
+                                        Value=str(self.deregistration_delay))]}
         if service == 'elbv2':
             instance = value('--targets').split(',')[0][3:]
             self.events.append((operation, instance))
@@ -228,11 +233,38 @@ class RollingTest(unittest.TestCase):
     def test_draining_timeout_stops_before_host_mutation(self):
         fake = FakeAWS()
         fake.drain_timeout = True
-        with patch.object(rolling.time, 'monotonic', side_effect=[0, 0, 0, 0, 0, 301]):
+        with patch.object(rolling.time, 'monotonic', side_effect=[0, 0, 0, 0, 0, 361]):
             with self.assertRaisesRegex(RuntimeError, 'transition timed out'):
                 self.run_roll(fake)
         self.assertEqual([], self.deployments(fake))
         self.assertEqual([], self.registrations(fake))
+
+    def test_drain_observes_unused_after_configured_delay(self):
+        for delay in (300, 600):
+            with self.subTest(delay=delay):
+                fake = FakeAWS()
+                fake.drain_timeout = True
+                fake.deregistration_delay = delay
+                clock = [0]
+                drained_at = {}
+                def advance(seconds):
+                    clock[0] += seconds
+                def delayed(service, operation, *args, **kwargs):
+                    if operation == 'describe-target-health':
+                        instance = args[args.index('--targets') + 1].split(',')[0][3:]
+                        if instance in drained_at and clock[0] >= drained_at[instance] + delay + 10:
+                            fake.states[instance] = 'unused'
+                            del drained_at[instance]
+                    result = fake(service, operation, *args, **kwargs)
+                    if operation == 'deregister-targets':
+                        instance = args[args.index('--targets') + 1].split(',')[0][3:]
+                        drained_at[instance] = clock[0]
+                    return result
+                with patch.object(rolling.time, 'monotonic', side_effect=lambda: clock[0]), \
+                     patch.object(rolling.time, 'sleep', side_effect=advance):
+                    self.run_roll(delayed, verify_current=lambda: None)
+                self.assertEqual([A, C], self.deployments(fake))
+                self.assertFalse(fake.lock)
 
     def test_other_unhealthy_during_drain_stops_update(self):
         fake = FakeAWS()
@@ -325,6 +357,44 @@ class RollingTest(unittest.TestCase):
 
 
 class SettingsAndEnvTest(unittest.TestCase):
+    def test_aws_accepts_empty_success_output_but_rejects_malformed_json(self):
+        with patch.dict(deploy.os.environ, AWS_REGION='ap-northeast-2'):
+            for output in ('', ' \n', '{"ETag": "test"}'):
+                with self.subTest(output=output), patch.object(deploy, 'command', return_value=output):
+                    self.assertEqual(json.loads(output) if output.strip() else {},
+                                     deploy.aws('elbv2', 'register-targets'))
+            with patch.object(deploy, 'command', return_value='invalid'):
+                with self.assertRaises(json.JSONDecodeError):
+                    deploy.aws('elbv2', 'register-targets')
+
+    def test_main_advance_remains_cause_when_lock_cleanup_fails(self):
+        calls = []
+        def aws_call(service, operation, *args, **kwargs):
+            calls.append(operation)
+            if operation == 'delete-object':
+                raise RuntimeError('cleanup unavailable')
+            return {}
+        with tempfile.TemporaryDirectory() as temporary:
+            configuration = dict(values('single'), RUNNER_TEMP=temporary)
+            with patch.dict(deploy.os.environ, configuration, clear=True), \
+                 patch.object(deploy, 'verify_main', side_effect=[None, RuntimeError('main advanced')]), \
+                 patch.object(deploy, 'bundle', return_value='a'*64), \
+                 patch.object(deploy, 'aws', side_effect=aws_call), \
+                 patch.object(deploy.sys, 'stderr') as stderr:
+                with self.assertRaisesRegex(RuntimeError, 'main advanced'):
+                    deploy.main()
+                self.assertIn('lock cleanup failed', ''.join(call.args[0] for call in stderr.write.call_args_list))
+        self.assertNotIn('send-command', calls)
+
+    def test_host_injection_preserves_last_value_without_newline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'env'
+            original = 'SPRING_DATASOURCE_PASSWORD=a$quoted"'
+            path.write_text(original)
+            path.chmod(0o600)
+            env.inject(path, 'c', 'false')
+            self.assertTrue(path.read_text().startswith(original + '\nGETDDO_METRICS_SERVER=c\n'))
+
     def test_duplicate_instance_ids_and_gate_rejected(self):
         for changes in ({'EC2_INSTANCE_ID_C': A}, {'ROLLING_DEPLOY_ENABLED': ''},
                         {'TARGET_GROUP_ARN': values()['TARGET_GROUP_ARN'].replace('123456789012', '999999999999')}):

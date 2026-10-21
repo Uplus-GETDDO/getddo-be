@@ -60,6 +60,7 @@ def baseline_script(values):
 def run(values, key, checksum, aws, parameters, verify_current):
     a, c = values["EC2_INSTANCE_ID_A"], values["EC2_INSTANCE_ID_C"]
     group = values["TARGET_GROUP_ARN"]
+    drain_timeout = 300
 
     def target_health(instance):
         result = aws("elbv2", "describe-target-health", "--target-group-arn", group,
@@ -77,7 +78,7 @@ def run(values, key, checksum, aws, parameters, verify_current):
             raise RuntimeError("Other/required target is not healthy: " + instance)
 
     def wait(instance, expected, other):
-        deadline = time.monotonic() + 300
+        deadline = time.monotonic() + (drain_timeout if expected == "unused" else 300)
         while time.monotonic() < deadline:
             healthy(other)
             if state(instance) == expected:
@@ -117,6 +118,13 @@ def run(values, key, checksum, aws, parameters, verify_current):
         tg = aws("elbv2", "describe-target-groups", "--target-group-arns", group)["TargetGroups"]
         if len(tg) != 1 or tg[0]["TargetType"] != "instance" or tg[0]["Port"] != 8080:
             raise RuntimeError("Expected instance target group on port 8080")
+        if values["DEPLOY_MODE"] != "initial-c":
+            attributes = aws("elbv2", "describe-target-group-attributes", "--target-group-arn", group)["Attributes"]
+            delay = int(next(item["Value"] for item in attributes
+                             if item["Key"] == "deregistration_delay.timeout_seconds"))
+            if not 0 <= delay <= 3600:
+                raise ValueError("Unexpected deregistration delay")
+            drain_timeout = max(300, delay + 60)
         hosts = aws("ec2", "describe-instances", "--instance-ids", a, c)["Reservations"]
         instances = [i for reservation in hosts for i in reservation["Instances"]]
         if ({i["InstanceId"] for i in instances} != {a, c} or len(instances) != 2 or
