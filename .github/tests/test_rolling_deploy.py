@@ -110,8 +110,9 @@ class RollingTest(unittest.TestCase):
         self.sleep.start()
         self.addCleanup(self.sleep.stop)
 
-    def run_roll(self, fake, mode='rolling'):
-        rolling.run(values(mode), 'releases/approved', 'c' * 64, fake, deploy.parameters)
+    def run_roll(self, fake, mode='rolling', verify_current=None):
+        verify = verify_current or (lambda: fake.events.append(('verify-main',)))
+        rolling.run(values(mode), 'releases/approved', 'c' * 64, fake, deploy.parameters, verify)
 
     def deployments(self, fake):
         return [e[1] for e in fake.events if e[0] == 'deploy']
@@ -148,6 +149,47 @@ class RollingTest(unittest.TestCase):
             self.run_roll(fake)
         self.assertEqual([A, C], self.deployments(fake))
         self.assertEqual([A, C], self.registrations(fake))
+
+    def test_main_advanced_during_preflight_does_not_drain_or_deploy(self):
+        fake = FakeAWS()
+        def changed_main():
+            raise RuntimeError('main advanced')
+        with self.assertRaisesRegex(RuntimeError, 'main advanced'):
+            self.run_roll(fake, verify_current=changed_main)
+        self.assertEqual([], self.deployments(fake))
+        self.assertFalse(any(e[0] == 'deregister-targets' for e in fake.events))
+        self.assertFalse(fake.lock)
+
+    def test_main_checked_once_after_preflight_before_first_drain(self):
+        fake = FakeAWS()
+        self.run_roll(fake)
+        boundary = fake.events.index(('verify-main',))
+        preflights = [i for i, e in enumerate(fake.events) if e[0] == 'preflight']
+        first_drain = next(i for i, e in enumerate(fake.events) if e[0] == 'deregister-targets')
+        self.assertLess(max(preflights), boundary)
+        self.assertLess(boundary, first_drain)
+        self.assertEqual(1, fake.events.count(('verify-main',)))
+
+    def test_a_becomes_unhealthy_between_hosts_preserves_recovery_lock(self):
+        fake = FakeAWS()
+        reads_after_registration = 0
+        def failing_between_hosts(service, operation, *args, **kwargs):
+            nonlocal reads_after_registration
+            if (service == 'elbv2' and operation == 'describe-target-health'
+                    and args[args.index('--targets') + 1].startswith('Id=' + A)
+                    and ('register-targets', A) in fake.events):
+                reads_after_registration += 1
+                # 등록 대기 1회·안정 확인 12회 다음, C를 제외하기 전의 A 확인에서 장애가 난다.
+                if reads_after_registration == 14:
+                    fake.states[A] = 'unhealthy'
+            return fake(service, operation, *args, **kwargs)
+        with self.assertRaisesRegex(RuntimeError, 'not healthy'):
+            rolling.run(values(), 'releases/approved', 'c' * 64,
+                        failing_between_hosts, deploy.parameters, lambda: None)
+        self.assertEqual([A], self.deployments(fake))
+        self.assertEqual('healthy', fake.states[C])
+        self.assertFalse(any(e[:2] == ('deregister-targets', C) for e in fake.events))
+        self.assertTrue(fake.lock)
 
     def test_rollback_failure_retains_exclusion_and_lock(self):
         fake = FakeAWS(fail=A, rollback=False)
@@ -213,6 +255,7 @@ class RollingTest(unittest.TestCase):
         self.assertEqual([C], self.deployments(fake))
         self.assertEqual([], self.registrations(fake))
         self.assertFalse(any(e[0] == 'deregister-targets' for e in fake.events))
+        self.assertNotIn(('verify-main',), fake.events)
         for e in fake.events:
             if e[0] == 'preflight' and e[1] == A:
                 self.assertNotIn('exec 8>', e[2])
@@ -260,7 +303,7 @@ class RollingTest(unittest.TestCase):
                 raise OSError('response lost after send')
             return fake(service, operation, *args, **kwargs)
         with self.assertRaises(rolling.UnknownOutcome):
-            rolling.run(values(), 'releases/approved', 'c' * 64, lost, deploy.parameters)
+            rolling.run(values(), 'releases/approved', 'c' * 64, lost, deploy.parameters, lambda: None)
         self.assertTrue(fake.lock)
         self.assertEqual(1, len([e for e in fake.events if e[0] == 'send-lost']))
         self.assertEqual([], self.registrations(fake))
@@ -315,6 +358,23 @@ class SettingsAndEnvTest(unittest.TestCase):
             sent = [i for i, call in enumerate(calls) if call[1] == 'send-command']
             self.assertLess(locks[0], sent[0])
             self.assertEqual(0 if fail else 1, len([call for call in calls if call[1] == 'delete-object']))
+
+    def test_single_main_advance_after_upload_unlocks_without_sending(self):
+        calls = []
+        def aws_call(service, operation, *args, **kwargs):
+            calls.append(operation)
+            return {}
+        with tempfile.TemporaryDirectory() as temporary:
+            configuration = values('single')
+            configuration['RUNNER_TEMP'] = temporary
+            with patch.dict(deploy.os.environ, configuration, clear=True), \
+                 patch.object(deploy, 'verify_main', side_effect=[None, RuntimeError('main advanced')]), \
+                 patch.object(deploy, 'bundle', return_value='a'*64), \
+                 patch.object(deploy, 'aws', side_effect=aws_call):
+                with self.assertRaisesRegex(RuntimeError, 'main advanced'):
+                    deploy.main()
+        self.assertNotIn('send-command', calls)
+        self.assertEqual('delete-object', calls[-1])
 
     def test_host_injection_preserves_required_and_raw_values(self):
         with tempfile.TemporaryDirectory() as directory:

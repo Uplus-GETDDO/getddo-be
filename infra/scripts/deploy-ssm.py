@@ -162,7 +162,7 @@ def main(check_only=False):
         spec = importlib.util.spec_from_file_location("rolling", source / "infra/scripts/rolling-deploy.py")
         rolling = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(rolling)
-        rolling.run(values, key, checksum, aws, parameters)
+        rolling.run(values, key, checksum, aws, parameters, lambda: verify_main(values))
         return
     # 단일 모드와 C 수동 초기화도 같은 운영 잠금을 사용한다. 미확인 SSM은 자동 해제하지 않는다.
     lock_key = "locks/container-deploy.json"
@@ -170,6 +170,14 @@ def main(check_only=False):
         "--expected-bucket-owner", values["ACCOUNT_ID"], "--server-side-encryption", "AES256",
         "--if-none-match", "*", "--metadata",
         "run=" + values["GITHUB_RUN_ID"] + ",attempt=" + values["GITHUB_RUN_ATTEMPT"])
+    try:
+        # 산출물 업로드 뒤 운영 잠금을 확보한 시점에도 최신 main인지 확인한다.
+        verify_main(values)
+    except Exception:
+        # 아직 원격 배포 명령을 보내지 않았으므로 안전하게 이 실행의 잠금만 해제한다.
+        aws("s3api", "delete-object", "--bucket", values["DEPLOY_BUCKET"], "--key", lock_key,
+            "--expected-bucket-owner", values["ACCOUNT_ID"])
+        raise
     result = aws("ssm", "send-command", "--instance-ids", values["EC2_INSTANCE_ID"],
                  "--document-name", "AWS-RunShellScript", "--timeout-seconds", "120",
                  "--parameters", json.dumps(parameters(values, key, checksum)),

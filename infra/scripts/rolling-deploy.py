@@ -57,7 +57,7 @@ def baseline_script(values):
     ])
 
 
-def run(values, key, checksum, aws, parameters):
+def run(values, key, checksum, aws, parameters, verify_current):
     a, c = values["EC2_INSTANCE_ID_A"], values["EC2_INSTANCE_ID_C"]
     group = values["TARGET_GROUP_ARN"]
 
@@ -152,11 +152,19 @@ flock -n 9
             # A는 읽기 전용 확인만 한다. C의 첫 앱은 실제 A의 승인 이미지와 동일해야 한다.
             checked(aws, a, baseline_script(values))
             checked(aws, c, "set -eu\ntest ! -e /opt/getddo/current\ntest ! -L /opt/getddo/current")
-        for server, target, other in (("c", c, a),) if initial else (("a", a, c), ("c", c, a)):
+        hosts_to_update = (("c", c, a),) if initial else (("a", a, c), ("c", c, a))
+        for index, (server, target, other) in enumerate(hosts_to_update):
+            # 첫 서버를 변경한 뒤에는 상대 health 확인 실패도 부분 배포 복구 대상으로 남긴다.
+            if index > 0:
+                safe_to_unlock = False
             healthy(other)
             if not initial:
                 healthy(target)
                 healthy(other)
+                if index == 0:
+                    # 업로드·원격 사전 검사 사이 main이 바뀌면 아직 정상인 두 서버를 건드리지 않는다.
+                    # A를 바꾼 이후에는 같은 산출물로 C까지 마쳐 불필요한 버전 혼재를 피한다.
+                    verify_current()
                 safe_to_unlock = False
                 aws("elbv2", "deregister-targets", "--target-group-arn", group,
                     "--targets", "Id=" + target + ",Port=8080")
