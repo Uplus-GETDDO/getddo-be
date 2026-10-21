@@ -1,7 +1,13 @@
 package com.getddo.api.mission.config;
 
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.DisplayName;
@@ -51,8 +57,77 @@ class MissionEndWorkerTest {
 	@Test
 	@DisplayName("폴링 간격이 1ms 미만이면 워커를 만들 수 없다")
 	void rejectsNonPositivePollDelay() {
+		// given
+		// when
+		// then
 		assertThatThrownBy(() -> new MissionEndWorker(service, 0)).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> new MissionEndWorker(service, -1)).isInstanceOf(IllegalArgumentException.class);
+		assertThatCode(() -> new MissionEndWorker(service, 1)).doesNotThrowAnyException();
+	}
+
+	@Test
+	@DisplayName("컨텍스트가 모두 만들어진 뒤 전용 스레드가 폴링을 시작하고 컨텍스트가 닫히면 멈춘다")
+	void startsAfterContextRefresh() throws InterruptedException {
+		// given
+		CountDownLatch polled = new CountDownLatch(1);
+		AtomicReference<String> threadName = new AtomicReference<>();
+		MissionEndService recording = mock(MissionEndService.class);
+		when(recording.endDue()).thenAnswer(invocation -> {
+			threadName.set(Thread.currentThread().getName());
+			polled.countDown();
+			return 0;
+		});
+		// when
+		new ApplicationContextRunner()
+				.withUserConfiguration(MissionEndWorker.class)
+				.withBean(MissionEndService.class, () -> recording)
+				.run(context -> {
+					// then
+					assertThat(polled.await(10, TimeUnit.SECONDS)).isTrue();
+					assertThat(threadName.get()).startsWith(MissionEndWorker.THREAD_NAME_PREFIX);
+				});
+	}
+
+	@Test
+	@DisplayName("종료는 진행 중인 갱신을 interrupt하지 않고 끝나기를 기다리며 종료한 뒤에는 더 폴링하지 않는다")
+	void stopWaitsForInFlightPollAndStopsPolling() throws Exception {
+		// given
+		CountDownLatch entered = new CountDownLatch(1);
+		CountDownLatch release = new CountDownLatch(1);
+		AtomicInteger calls = new AtomicInteger();
+		AtomicBoolean interrupted = new AtomicBoolean();
+		when(service.endDue()).thenAnswer(invocation -> {
+			calls.incrementAndGet();
+			entered.countDown();
+			try {
+				release.await(10, TimeUnit.SECONDS);
+			} catch (InterruptedException e) {
+				interrupted.set(true);
+			}
+			return 0;
+		});
+		MissionEndWorker worker = new MissionEndWorker(service, 10);
+		ExecutorService stopper = Executors.newSingleThreadExecutor();
+		try {
+			worker.start();
+			assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+
+			// when: 갱신이 진행 중인 동안 종료한다
+			Future<?> stopping = stopper.submit(worker::stop);
+
+			// then: 갱신이 끝나기 전에는 종료가 끝나지 않는다
+			assertThatThrownBy(() -> stopping.get(300, TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class);
+			release.countDown();
+			stopping.get(10, TimeUnit.SECONDS);
+			int callsAtStop = calls.get();
+			Thread.sleep(100);
+			assertThat(interrupted).isFalse();
+			assertThat(calls.get()).isEqualTo(callsAtStop);
+		} finally {
+			release.countDown();
+			worker.stop();
+			stopper.shutdownNow();
+		}
 	}
 
 	@Test

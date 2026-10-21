@@ -2,12 +2,13 @@ package com.getddo.api.mission.config;
 
 import java.time.Duration;
 
-import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.event.ContextRefreshedEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 import com.getddo.core.mission.service.MissionEndService;
@@ -48,9 +49,15 @@ public class MissionEndWorker {
 		this.pollDelay = Duration.ofMillis(pollDelayMillis);
 	}
 
-	/** 전용 스레드 하나로 이전 실행이 끝난 뒤 폴링 간격만큼 쉬고 다시 실행하도록 등록한다. */
-	@PostConstruct
-	void start() {
+	/**
+	 * 컨텍스트가 모두 만들어진 뒤(다른 워커의 {@code @Scheduled} 등록 시점과 같다) 전용 스레드 하나로 이전 실행이 끝난 뒤 폴링
+	 * 간격만큼 쉬고 다시 실행하도록 등록한다. 이미 시작했으면 다시 시작하지 않는다.
+	 */
+	@EventListener(ContextRefreshedEvent.class)
+	synchronized void start() {
+		if (scheduler != null) {
+			return;
+		}
 		ThreadPoolTaskScheduler created = new ThreadPoolTaskScheduler();
 		created.setPoolSize(1);
 		created.setThreadNamePrefix(THREAD_NAME_PREFIX);
@@ -63,7 +70,7 @@ public class MissionEndWorker {
 
 	/** 새 실행을 멈추고 진행 중인 갱신이 끝나기를 최대 {@value #SHUTDOWN_WAIT_SECONDS}초 기다린다. 여러 번 불러도 안전하다. */
 	@PreDestroy
-	void stop() {
+	synchronized void stop() {
 		if (scheduler != null) {
 			scheduler.shutdown();
 		}
