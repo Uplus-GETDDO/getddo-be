@@ -31,7 +31,7 @@
 - `DrawRunEntity`, `DrawCandidateEntity`는 공통 `BaseEntity`의 UUID v7와 생성 시각 Auditing을 사용한다. 실행의 확정·시작·결과 확정 시각은 별도 `Instant` 필드다. `updated_at`이 없는 실제 테이블에 맞춰 `BaseUpdatableEntity`를 상속하지 않는다.
 - 실행 종류·상태는 문자열 enum, UUID는 `BINARY(16)`, 스냅샷 문자열은 Hibernate JSON 타입으로 매핑한다. DB에는 문자열로 감싼 JSON이 아니라 JSON 객체를 저장하며 core 모델 변환은 `DrawSnapshotMapper`에서 수행한다.
 - `DrawRunCandidateId`의 `(draw_run_id, candidate_id)` 복합 식별자와 `@MapsId` 연관관계로 실행·후보 FK를 매핑한다. 실행별 차수와 최초 실행별 참가자 UNIQUE는 Flyway 스키마와 같은 이름·컬럼으로 선언한다. 이벤트·참가자 등 다른 담당 영역의 참조는 기존 관례에 따라 UUID 값으로 두고 FK 검증은 실제 DB 제약이 담당한다.
-- `DrawSnapshotRepositoryImpl`은 JPA 저장소를 통해 실행·최초 후보·실행별 연결을 저장하고 연결된 후보만 조회한다. PREPARING → 후보 → 연결 → 입력 확정 순서로 flush하며 같은 서비스 트랜잭션에서 커밋·롤백한다. 후보와 연결은 불변 엔티티이며, 실행 입력은 PREPARING에서 한 번만 확정한다.
+- `DrawSnapshotRepositoryImpl`은 JPA 저장소를 통해 실행·최초 후보·실행별 연결을 저장하고 연결된 후보만 조회한다. 최초 후보·연결 저장에만 세션 배치 100을 적용하고 성공·실패 시 이전 설정으로 복원한다. 드라이버 옵션 활성화와 측정 한계는 [최초 추첨 명단 저장 배치](drawing-snapshot-batching.md)를 따른다. PREPARING → 후보 → 연결 → 입력 확정 순서로 flush하며 같은 서비스 트랜잭션에서 커밋·롤백한다. 후보와 연결은 불변 엔티티이며, 실행 입력은 PREPARING에서 한 번만 확정한다.
 - `DrawSnapshotSourceReader`는 기존 이벤트 `FOR UPDATE`와 응모자·응모·USE 이력 조회 SQL만 재사용한다. JDBC로 추첨 테이블을 저장하거나 조회하는 중복 경로는 없다. 다른 담당자의 엔티티·원본 데이터 모델·잠금 순서를 변경하지 않는다.
 - GD-84의 JPA 매핑은 기존 V007·V016 구조를 재사용하며 매핑 자체를 위한 마이그레이션은 추가하지 않는다. GD-87 실행 제어 필드의 별도 V019는 아래 공통 실행 절을 따른다. `draw_results` 엔티티는 GD-85 기반을 재사용한다.
 
