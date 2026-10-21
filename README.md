@@ -1189,6 +1189,8 @@ DB 이름이나 계정을 바꿨다면 환경변수도 `.env`와 맞춥니다.
 
 ### 테스트와 CI
 
+검증 결과는 [작성·보관 안내](docs/07-verification/README.md)와 [결과 양식](docs/templates/verification-report.md)을 사용해 실행 조건·실제 결과·근거 파일을 정리합니다.
+
 DB가 필요한 테스트는 Testcontainers가 실행하는 임시 MySQL 8.4를 사용합니다. 개발용 DB·`.env` 설정 없이 실행하며, 임의의 호스트 포트로 연결하고 테스트 종료 시 컨테이너를 정리합니다. H2는 사용하지 않습니다.
 
 공통 설정은 `storage/db/src/testFixtures/java/com/getddo/db/support`에 있습니다. `MySqlTestContainers`는 호출마다 새 컨테이너를 만들고, `MySqlTestConfiguration`은 `@ServiceConnection`으로 Spring의 JDBC·Flyway 연결을 자동 설정합니다. Spring 테스트는 `test` 프로필을 사용하며 컨테이너 시작·종료는 Spring이 관리합니다. 이 설정은 통합 테스트에서만 사용하고 운영 실행 JAR에는 포함하지 않습니다.
