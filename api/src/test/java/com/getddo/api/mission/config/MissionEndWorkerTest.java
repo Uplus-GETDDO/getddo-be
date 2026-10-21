@@ -15,7 +15,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
@@ -86,6 +89,85 @@ class MissionEndWorkerTest {
 					assertThat(polled.await(10, TimeUnit.SECONDS)).isTrue();
 					assertThat(threadName.get()).startsWith(MissionEndWorker.THREAD_NAME_PREFIX);
 				});
+	}
+
+	/** 싱글톤 초기화가 끝난 시점(ContextRefreshedEvent 직전)에 워커가 이미 시작했는지 기록한다. */
+	static final AtomicReference<Boolean> RUNNING_BEFORE_REFRESH = new AtomicReference<>();
+
+	@Configuration(proxyBeanMethods = false)
+	static class StartProbeConfig {
+
+		@Bean
+		SmartInitializingSingleton startProbe(MissionEndWorker worker) {
+			return () -> RUNNING_BEFORE_REFRESH.set(worker.isRunning());
+		}
+	}
+
+	@Test
+	@DisplayName("빈 초기화가 끝나는 시점에는 폴링을 시작하지 않고 컨텍스트 refresh 이벤트 뒤에 시작하며, 컨텍스트가 닫히면 멈춘다")
+	void startsOnlyAfterContextRefreshAndStopsOnClose() {
+		// given
+		RUNNING_BEFORE_REFRESH.set(null);
+		AtomicReference<MissionEndWorker> workerRef = new AtomicReference<>();
+		// when
+		new ApplicationContextRunner()
+				.withUserConfiguration(MissionEndWorker.class, StartProbeConfig.class)
+				.withBean(MissionEndService.class, () -> mock(MissionEndService.class))
+				.run(context -> {
+					// then: refresh 이벤트 뒤에는 시작했다
+					workerRef.set(context.getBean(MissionEndWorker.class));
+					assertThat(workerRef.get().isRunning()).isTrue();
+				});
+		// then: 싱글톤 초기화가 끝난 시점에는 아직 시작하지 않았고, 컨텍스트가 닫힌 뒤에는 멈췄다
+		assertThat(RUNNING_BEFORE_REFRESH.get()).isFalse();
+		assertThat(workerRef.get().isRunning()).isFalse();
+	}
+
+	@Test
+	@DisplayName("컨텍스트를 닫으면 @PreDestroy로 진행 중인 갱신이 끝나기를 기다린 뒤 종료하고 이후에는 폴링하지 않는다")
+	void contextCloseWaitsForInFlightPoll() throws Exception {
+		// given
+		CountDownLatch entered = new CountDownLatch(1);
+		CountDownLatch release = new CountDownLatch(1);
+		AtomicInteger calls = new AtomicInteger();
+		AtomicBoolean interrupted = new AtomicBoolean();
+		MissionEndService blocking = mock(MissionEndService.class);
+		when(blocking.endDue()).thenAnswer(invocation -> {
+			calls.incrementAndGet();
+			entered.countDown();
+			try {
+				release.await(10, TimeUnit.SECONDS);
+			} catch (InterruptedException e) {
+				interrupted.set(true);
+			}
+			return 0;
+		});
+		ExecutorService closer = Executors.newSingleThreadExecutor();
+		try {
+			new ApplicationContextRunner()
+					.withUserConfiguration(MissionEndWorker.class)
+					.withPropertyValues("getddo.mission.end-worker.poll-delay=10")
+					.withBean(MissionEndService.class, () -> blocking)
+					.run(context -> {
+						assertThat(entered.await(10, TimeUnit.SECONDS)).isTrue();
+
+						// when: 갱신이 진행 중인 동안 컨텍스트를 닫는다
+						Future<?> closing = closer.submit(context::close);
+
+						// then: 갱신이 끝나기 전에는 닫기가 끝나지 않는다
+						assertThatThrownBy(() -> closing.get(300, TimeUnit.MILLISECONDS))
+								.isInstanceOf(TimeoutException.class);
+						release.countDown();
+						closing.get(10, TimeUnit.SECONDS);
+						int callsAtClose = calls.get();
+						Thread.sleep(100);
+						assertThat(interrupted).isFalse();
+						assertThat(calls.get()).isEqualTo(callsAtClose);
+					});
+		} finally {
+			release.countDown();
+			closer.shutdownNow();
+		}
 	}
 
 	@Test

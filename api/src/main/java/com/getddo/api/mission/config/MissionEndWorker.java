@@ -68,11 +68,17 @@ public class MissionEndWorker {
 		scheduler = created;
 	}
 
+	/** 폴링을 시작했고 아직 종료하지 않았으면 참이다. */
+	synchronized boolean isRunning() {
+		return scheduler != null;
+	}
+
 	/** 새 실행을 멈추고 진행 중인 갱신이 끝나기를 최대 {@value #SHUTDOWN_WAIT_SECONDS}초 기다린다. 여러 번 불러도 안전하다. */
 	@PreDestroy
 	synchronized void stop() {
 		if (scheduler != null) {
 			scheduler.shutdown();
+			scheduler = null;
 		}
 	}
 
