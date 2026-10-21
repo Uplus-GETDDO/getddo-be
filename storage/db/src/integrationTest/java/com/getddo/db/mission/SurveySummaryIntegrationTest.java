@@ -224,6 +224,48 @@ class SurveySummaryIntegrationTest extends MissionIntegrationTestSupport {
 	}
 
 	@Test
+	@DisplayName("제출 시각이 같은 답변은 답변 ID 내림차순으로 페이지 경계에서도 겹치지 않고, 서술 답변이 없거나 answer_text가 빈 완료 제출은 담지 않는다")
+	void ordersTiesByAnswerIdAndSkipsEmptyAnswers() {
+		// given
+		MissionDetail survey = saveSurveyMission("동률 설문");
+		UUID missionId = survey.getMission().getId();
+		UUID freeId = survey.getSurveyQuestions().get(1).getId();
+		Instant sameInstant = KST_FIRST_SECOND_OF_12TH.plusSeconds(10);
+		submitChoiceAndText(seeds.user(), survey, "동시 답변 A", sameInstant);
+		submitChoiceAndText(seeds.user(), survey, "동시 답변 B", sameInstant);
+		submitChoice(seeds.user(), survey, 0, sameInstant);
+		submitChoice(seeds.user(), survey, 1, sameInstant);
+		// 선택 문항이라 서술 답변 행이 없는 완료 제출에, answer_text가 null인 행을 직접 만들어 SQL 조건을 보호한다.
+		byte[] withoutText = jdbc.queryForObject("""
+				select s.id from mission_submissions s
+				where s.mission_id = ? and not exists (
+				  select 1 from survey_answers a where a.submission_id = s.id and a.survey_question_id = ?)
+				limit 1
+				""", byte[].class, bytes(missionId), bytes(freeId));
+		jdbc.update("""
+				insert into survey_answers (id, submission_id, mission_id, survey_question_id, answer_text, created_at)
+				values (?, ?, ?, ?, null, ?)
+				""", bytes(UUID.randomUUID()), withoutText, bytes(missionId), bytes(freeId),
+				LocalDateTime.ofInstant(sameInstant, ZoneOffset.UTC));
+		List<String> byIdDescending = jdbc.queryForList("""
+				select answer_text from survey_answers
+				where survey_question_id = ? and answer_text is not null order by id desc
+				""", String.class, bytes(freeId));
+		// when
+		PageResult<SurveyFreeTextAnswer> first = summaryService.findFreeTextAnswers(admin(), missionId, freeId, DAY_12,
+				DAY_12, new PageQuery(1, 1));
+		PageResult<SurveyFreeTextAnswer> second = summaryService.findFreeTextAnswers(admin(), missionId, freeId, DAY_12,
+				DAY_12, new PageQuery(2, 1));
+		// then
+		assertThat(byIdDescending).containsExactlyInAnyOrder("동시 답변 A", "동시 답변 B");
+		assertThat(first.getTotalElements()).isEqualTo(2L);
+		assertThat(second.getTotalElements()).isEqualTo(2L);
+		assertThat(first.getItems()).extracting(SurveyFreeTextAnswer::answerText).containsExactly(byIdDescending.get(0));
+		assertThat(second.getItems()).extracting(SurveyFreeTextAnswer::answerText)
+				.containsExactly(byIdDescending.get(1));
+	}
+
+	@Test
 	@DisplayName("미완료 제출의 서술 답변과 다른 설문의 답변은 섞이지 않고, 선택형 문항은 거절한다")
 	void excludesIncompleteAndOtherMissionAnswers() {
 		// given
