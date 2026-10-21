@@ -37,4 +37,9 @@ public final class DailyAttendancePolicy {
 		this.createdBy = Objects.requireNonNull(createdBy, "createdBy");
 		this.createdAt = Objects.requireNonNull(createdAt, "createdAt");
 	}
+
+	/** 적용 시작 시각 정각부터 시작한 것으로 본다. 시작한 정책은 수정할 수 없다. */
+	public boolean hasStartedAt(Instant now) {
+		return !now.isBefore(effectiveFrom);
+	}
 }

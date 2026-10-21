@@ -40,4 +40,16 @@ public interface AttendancePolicyAdminRepository {
 	 * 정책 묶음과 단계를 저장하고 즉시 DB에 반영한다. 같은 적용월의 묶음이 동시에 만들어지면 UNIQUE 위반 예외가 난다.
 	 */
 	StreakPolicyRecord saveStreakPolicy(LocalDate effectiveMonth, List<MilestoneDraft> milestones, UUID createdBy);
+
+	/** 일일 출석 정책 한 건을 잠가({@code FOR UPDATE}) 읽는다. 없거나 출석 정책이 아니면 비어 있다. */
+	Optional<DailyAttendancePolicy> findDailyPolicyForUpdate(UUID policyId);
+
+	/** 일일 정책의 보상 수량만 바꾸고 즉시 DB에 반영한다. 적용 시점과 종료 시각은 바꾸지 않는다. 호출 전에 잠가야 한다. */
+	DailyAttendancePolicy updateDailyRewardTicketCount(UUID policyId, int rewardTicketCount);
+
+	/** 연속 출석 정책 묶음 한 건을 잠가({@code FOR UPDATE}) 단계와 함께 읽는다. 없으면 비어 있다. */
+	Optional<StreakPolicyRecord> findStreakPolicyForUpdate(UUID policySetId);
+
+	/** 묶음의 단계를 모두 지우고 새 단계로 바꿔 즉시 DB에 반영한다. 적용월은 바꾸지 않는다. 호출 전에 잠가야 한다. */
+	StreakPolicyRecord replaceStreakMilestones(UUID policySetId, List<MilestoneDraft> milestones);
 }

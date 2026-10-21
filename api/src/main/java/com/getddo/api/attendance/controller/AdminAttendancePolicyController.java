@@ -1,5 +1,7 @@
 package com.getddo.api.attendance.controller;
 
+import java.util.UUID;
+
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -7,7 +9,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -25,8 +29,8 @@ import com.getddo.core.common.pagination.PageResult;
 import com.getddo.core.user.domain.User;
 
 /**
- * AP01~AP04 관리자 출석 정책 API다. 일일 정책은 다음 KST 자정, 연속 출석 정책은 다음 KST 기준월 1일부터 적용하며
- * 적용 시점은 입력받지 않는다.
+ * AP01~AP06 관리자 출석 정책 API다. 일일 정책은 다음 KST 자정, 연속 출석 정책은 다음 KST 기준월 1일부터 적용하며
+ * 적용 시점은 입력받지 않는다. 아직 시작하지 않은 예약 정책만 수정할 수 있다.
  */
 @RestController
 @RequestMapping("/api/v1/admin/policies/attendance")
@@ -89,5 +93,33 @@ public class AdminAttendancePolicyController {
 		StreakPolicySetResponse response = StreakPolicySetResponse
 				.from(service.createStreakPolicy(user, request.toDrafts()));
 		return ResponseEntity.status(HttpStatus.CREATED).body(ResponseEnvelope.success(response));
+	}
+
+	/**
+	 * AP05 아직 시작하지 않은 예약 일일 출석 정책의 보상 수량을 바꾼다. 적용 중이거나 지난 정책은 409
+	 * {@code ATTENDANCE-007}, 없는 정책은 404 {@code ATTENDANCE-006}이다.
+	 *
+	 * @param user 공통 MVC에서 확인한 요청 사용자. 활성 관리자여야 한다
+	 */
+	@PutMapping("/daily/{policyId}")
+	public ResponseEnvelope<DailyAttendancePolicyResponse> updateDailyPolicy(
+			@CurrentUser(membershipRequired = false) User user, @PathVariable UUID policyId,
+			@Valid @RequestBody DailyAttendancePolicyRequest request) {
+		return ResponseEnvelope.success(DailyAttendancePolicyResponse
+				.from(service.updateDailyPolicy(user, policyId, request.rewardTicketCount())));
+	}
+
+	/**
+	 * AP06 아직 시작하지 않은 예약 연속 출석 정책 묶음의 단계를 모두 바꾼다. 적용월이 시작됐으면 409
+	 * {@code ATTENDANCE-007}, 없는 묶음은 404 {@code ATTENDANCE-006}이다.
+	 *
+	 * @param user 공통 MVC에서 확인한 요청 사용자. 활성 관리자여야 한다
+	 */
+	@PutMapping("/streak/{policySetId}")
+	public ResponseEnvelope<StreakPolicySetResponse> updateStreakPolicy(
+			@CurrentUser(membershipRequired = false) User user, @PathVariable UUID policySetId,
+			@Valid @RequestBody StreakPolicyRequest request) {
+		return ResponseEnvelope.success(StreakPolicySetResponse
+				.from(service.updateStreakPolicy(user, policySetId, request.toDrafts())));
 	}
 }
