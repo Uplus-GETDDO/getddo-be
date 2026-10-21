@@ -85,7 +85,8 @@ public class AttendanceRecorder {
 			return existingReceipt(existing.get());
 		}
 
-		DailyRewardPolicy dailyPolicy = policyRepository.findDailyPolicy(requestedAt).orElseThrow(AttendanceRecorder::noPolicy);
+		DailyRewardPolicy dailyPolicy = policyRepository.findDailyPolicyForShare(requestedAt)
+				.orElseThrow(AttendanceRecorder::noPolicy);
 		Attendance attendance = attendanceRepository.insert(Attendance.create(userId, today));
 		StreakUpdate update = updateStreak(userId, today);
 
@@ -116,7 +117,8 @@ public class AttendanceRecorder {
 		LocalDate month = today.withDayOfMonth(1);
 		Optional<AttendanceStreak> locked = streakRepository.findForUpdate(userId, month);
 		StreakPolicySet policySet = locked.isPresent()
-				? policyRepository.findStreakPolicySetById(locked.get().getPolicySetId()).orElseThrow(AttendanceRecorder::noPolicy)
+				? policyRepository.findStreakPolicySetByIdForShare(locked.get().getPolicySetId())
+						.orElseThrow(AttendanceRecorder::noPolicy)
 				: streakPolicySetFor(month);
 		List<LocalDate> dates = attendanceRepository.findAttendanceDates(userId, YearMonth.from(today));
 		List<LocalDate> datesBeforeToday = dates.stream().filter(date -> !date.equals(today)).toList();
@@ -134,7 +136,7 @@ public class AttendanceRecorder {
 	}
 
 	private StreakPolicySet streakPolicySetFor(LocalDate month) {
-		return policyRepository.findStreakPolicySet(month).orElseThrow(AttendanceRecorder::noPolicy);
+		return policyRepository.findStreakPolicySetForShare(month).orElseThrow(AttendanceRecorder::noPolicy);
 	}
 
 	/** 연속 현황을 다시 계산한 결과와 이번 출석으로 새로 도달한 단계. */
