@@ -13,7 +13,7 @@ import lombok.RequiredArgsConstructor;
 @Getter
 @EqualsAndHashCode
 public final class RegisteredEvent {
-	private static final Duration DRAW_DELAY = Duration.ofMinutes(5);
+	private static final Duration DRAW_DELAY = Duration.ofMinutes(1);
 
 	private final UUID id;
 	private final String title;
@@ -60,7 +60,7 @@ public final class RegisteredEvent {
 		this.prizes = List.copyOf(prizes);
 	}
 
-	/** 마감 5분 후의 최초 자동 추첨 기준이다. 실제 실행·관리자 확인·수동 공개 시각은 별도다. */
+	/** 마감 1분 후의 최초 자동 추첨 기준이다. 실제 실행·관리자 확인·수동 공개 시각은 별도다. */
 	public Instant getDrawScheduledAt() {
 		return endsAt.plus(DRAW_DELAY);
 	}

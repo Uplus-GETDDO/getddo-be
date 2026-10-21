@@ -55,16 +55,16 @@ class DrawSnapshotServiceTest {
 		repository = mock(DrawSnapshotRepository.class);
 		eventStatuses = mock(EventStatusChangeService.class);
 		service = new DrawSnapshotService(repository, new TimeProvider(Clock.fixed(NOW, ZoneOffset.UTC)), eventStatuses);
-		when(repository.lockEvent(eventId)).thenReturn(Optional.of(event(EventType.TICKET, true, NOW.minusSeconds(300))));
+		when(repository.lockEvent(eventId)).thenReturn(Optional.of(event(EventType.TICKET, true, NOW.minusSeconds(60))));
 		when(repository.findInitial(eventId)).thenReturn(Optional.empty());
 		when(repository.saveInitial(any())).thenAnswer(call -> call.getArgument(0));
 	}
 
 	@Test
-	@DisplayName("폴링 조회는 현재 시각에서 5분을 뺀 경계와 최대 20건을 사용한다")
+	@DisplayName("폴링 조회는 현재 시각에서 1분을 뺀 경계와 최대 20건을 사용한다")
 	void queriesBoundedClosingBoundary() {
 		// given
-		when(repository.findInitialDue(NOW.minusSeconds(300), 20)).thenReturn(List.of(eventId));
+		when(repository.findInitialDue(NOW.minusSeconds(60), 20)).thenReturn(List.of(eventId));
 		// when / then
 		assertThat(service.findInitialDue()).containsExactly(eventId);
 	}
@@ -124,10 +124,10 @@ class DrawSnapshotServiceTest {
 	/** 응모권 미사용·가중치 미적용 이벤트는 후보 가중치를 1로 고정하는지 검증한다. */
 	@Test
 	void noTicketAndUnweightedUseHaveWeightOne() {
-		when(repository.lockEvent(eventId)).thenReturn(Optional.of(event(EventType.NO_TICKET, false, NOW.minusSeconds(300))));
+		when(repository.lockEvent(eventId)).thenReturn(Optional.of(event(EventType.NO_TICKET, false, NOW.minusSeconds(60))));
 		when(repository.findParticipants(eventId)).thenReturn(List.of(participant(0, entry(0))));
 		assertThat(service.prepareInitial(eventId).candidates().getFirst().weight()).isEqualTo(1);
-		when(repository.lockEvent(eventId)).thenReturn(Optional.of(event(EventType.TICKET, false, NOW.minusSeconds(300))));
+		when(repository.lockEvent(eventId)).thenReturn(Optional.of(event(EventType.TICKET, false, NOW.minusSeconds(60))));
 		when(repository.findParticipants(eventId)).thenReturn(List.of(participant(1, entry(1, TicketGrade.BRONZE))));
 		assertThat(service.prepareInitial(eventId).candidates().getFirst().weight()).isEqualTo(1);
 	}
@@ -138,7 +138,7 @@ class DrawSnapshotServiceTest {
 	@DisplayName("비가중치 입력은 브론즈만 생성·검증하고 다른 등급은 저장 전에 거절한다")
 	void unweightedCreationMatchesStoredVerification(TicketGrade grade) {
 		// given
-		when(repository.lockEvent(eventId)).thenReturn(Optional.of(event(EventType.TICKET, false, NOW.minusSeconds(300))));
+		when(repository.lockEvent(eventId)).thenReturn(Optional.of(event(EventType.TICKET, false, NOW.minusSeconds(60))));
 		when(repository.findParticipants(eventId)).thenReturn(List.of(participant(1, entry(1, grade))));
 		// when / then
 		if (grade != TicketGrade.BRONZE) {
@@ -166,7 +166,7 @@ class DrawSnapshotServiceTest {
 	@DisplayName("최초 추첨 허용 상태에서 응모자가 없으면 NO_ENTRIES로 종료한다")
 	void terminatesWithoutCandidatesOnlyWhenThereAreNoEntries(EventStatus initialStatus) {
 		// given
-		Event source = event(EventType.NO_TICKET, false, NOW.minusSeconds(300));
+		Event source = event(EventType.NO_TICKET, false, NOW.minusSeconds(60));
 		when(repository.lockEvent(eventId)).thenReturn(Optional.of(new Event(eventId, source.type(),
 				source.weightingEnabled(), source.endsAt(), initialStatus, false, source.membershipRule(), source.prizes())));
 		when(repository.findParticipants(eventId)).thenReturn(List.of());
@@ -217,17 +217,17 @@ class DrawSnapshotServiceTest {
 		verify(repository, never()).saveInitial(any());
 	}
 
-	/** 마감 후 5분 전·취소·삭제 이벤트의 최초 준비를 거절하는지 검증한다. */
+	/** 마감 후 1분 전·취소·삭제 이벤트의 최초 준비를 거절하는지 검증한다. */
 	@Test
-	void waitsUntilFiveMinuteBoundaryAndRejectsCanceledDeletedEvents() {
-		Event early = event(EventType.TICKET, true, NOW.minusSeconds(299));
+	void waitsUntilOneMinuteBoundaryAndRejectsCanceledDeletedEvents() {
+		Event early = event(EventType.TICKET, true, NOW.minusSeconds(59));
 		when(repository.lockEvent(eventId)).thenReturn(Optional.of(early));
 		assertError(NOT_EXECUTABLE);
 		when(repository.lockEvent(eventId)).thenReturn(Optional.of(new Event(eventId, early.type(), true,
-				NOW.minusSeconds(300), EventStatus.CANCELED, false, "vip", early.prizes())));
+				NOW.minusSeconds(60), EventStatus.CANCELED, false, "vip", early.prizes())));
 		assertError(NOT_EXECUTABLE);
 		when(repository.lockEvent(eventId)).thenReturn(Optional.of(new Event(eventId, early.type(), true,
-				NOW.minusSeconds(300), EventStatus.CLOSED, true, "vip", early.prizes())));
+				NOW.minusSeconds(60), EventStatus.CLOSED, true, "vip", early.prizes())));
 		assertError(NOT_EXECUTABLE);
 	}
 
@@ -242,7 +242,7 @@ class DrawSnapshotServiceTest {
 				new Entry(UUID.randomUUID(), 1, NOW, entry(1, TicketGrade.GOLD).uses()))));
 		assertError(INVALID_EVIDENCE);
 		when(repository.findParticipants(eventId)).thenReturn(List.of(participant(1,
-				new Entry(UUID.randomUUID(), 1, NOW.minusSeconds(300), entry(1, TicketGrade.GOLD).uses()))));
+				new Entry(UUID.randomUUID(), 1, NOW.minusSeconds(60), entry(1, TicketGrade.GOLD).uses()))));
 		assertError(INVALID_EVIDENCE);
 	}
 
@@ -291,7 +291,7 @@ class DrawSnapshotServiceTest {
 	@DisplayName("단일 응모 이벤트에 추가 응모가 있으면 준비를 거절하고 저장하지 않는다")
 	void rejectsAdditionalEntriesForSingleEntryEvents() {
 		// given
-		when(repository.lockEvent(eventId)).thenReturn(Optional.of(event(EventType.NO_TICKET, false, NOW.minusSeconds(300))));
+		when(repository.lockEvent(eventId)).thenReturn(Optional.of(event(EventType.NO_TICKET, false, NOW.minusSeconds(60))));
 		when(repository.findParticipants(eventId)).thenReturn(List.of(participant(0, entry(0), entry(0))));
 
 		// when

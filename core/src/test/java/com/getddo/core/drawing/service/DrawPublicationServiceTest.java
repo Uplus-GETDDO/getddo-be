@@ -77,16 +77,16 @@ class DrawPublicationServiceTest {
 				candidateId, userId, DrawSelectionResultType.SELECTED), NOW);
 		unfilled = new DrawResult(UUID.randomUUID(), new DrawSelection(prizeId, 1, 2, null,
 				null, null, DrawSelectionResultType.UNFILLED), NOW);
-		when(snapshots.lockEvent(eventId)).thenReturn(Optional.of(event(NOW.minusSeconds(300), EventStatus.CLOSED)));
+		when(snapshots.lockEvent(eventId)).thenReturn(Optional.of(event(NOW.minusSeconds(60), EventStatus.CLOSED)));
 		when(snapshots.findInitial(eventId)).thenReturn(Optional.of(snapshot));
 		when(results.lockSnapshot(runId)).thenReturn(Optional.of(snapshot));
 		when(results.findConfirmed(snapshot)).thenReturn(new DrawConfirmation(runId, eventId, NOW, List.of(selected, unfilled)));
 		when(publications.saveInitial(eventId, runId, List.of(resultId), NOW)).thenReturn(publication());
 	}
 
-	/** 마감 +5분 경계에 승인 없이 SELECTED 결과 ID만 저장소 대역에 전달하고 반환된 명단을 검증한다. */
+	/** 마감 +1분 경계에 승인 없이 SELECTED 결과 ID만 저장소 대역에 전달하고 반환된 명단을 검증한다. */
 	@Test
-	@DisplayName("마감 +5분 경계에 승인 없이 SELECTED만 실제 공개 목록에 저장한다")
+	@DisplayName("마감 +1분 경계에 승인 없이 SELECTED만 실제 공개 목록에 저장한다")
 	void publishesAtBoundaryWithUnfilledSlot() {
 		// when
 		DrawPublication published = service.publishInitial(eventId).orElseThrow();
@@ -103,12 +103,12 @@ class DrawPublicationServiceTest {
 		verify(publications).saveInitial(eventId, runId, List.of(resultId), NOW);
 	}
 
-	/** 마감 +5분 직전에는 내부 확정 결과도 읽거나 공개하지 않는다는 시나리오를 검증한다. */
+	/** 마감 +1분 직전에는 내부 확정 결과도 읽거나 공개하지 않는다는 시나리오를 검증한다. */
 	@Test
-	@DisplayName("마감 +5분 직전에는 내부 확정 결과도 읽거나 공개하지 않는다")
+	@DisplayName("마감 +1분 직전에는 내부 확정 결과도 읽거나 공개하지 않는다")
 	void blocksBeforeBoundary() {
 		// given
-		when(snapshots.lockEvent(eventId)).thenReturn(Optional.of(event(NOW.minusSeconds(300).plusNanos(1), EventStatus.CLOSED)));
+		when(snapshots.lockEvent(eventId)).thenReturn(Optional.of(event(NOW.minusSeconds(60).plusNanos(1), EventStatus.CLOSED)));
 		// when / then
 		assertThat(service.publishInitial(eventId)).isEmpty();
 		verifyNoInteractions(results);
@@ -200,7 +200,7 @@ class DrawPublicationServiceTest {
 	@DisplayName("취소 이벤트에는 최초 공개 버전을 만들지 않는다")
 	void blocksCanceledEvent() {
 		// given
-		when(snapshots.lockEvent(eventId)).thenReturn(Optional.of(event(NOW.minusSeconds(300), EventStatus.CANCELED)));
+		when(snapshots.lockEvent(eventId)).thenReturn(Optional.of(event(NOW.minusSeconds(60), EventStatus.CANCELED)));
 		// when / then
 		assertThat(service.publishInitial(eventId)).isEmpty();
 		verifyNoInteractions(results);

@@ -33,13 +33,13 @@ class DrawExecutionEligibilityTest {
 		assertThat(DrawExecutionEligibility.isExecutable(event, DrawType.REPLACEMENT, NOW)).isEqualTo(replacementAllowed);
 	}
 
-	/** 두 종류 모두 마감 후 5분 경계를 지킨다. */
+	/** 두 종류 모두 마감 후 1분 경계를 지킨다. */
 	@ParameterizedTest
 	@CsvSource({"-1, false", "0, true", "1, true"})
-	@DisplayName("두 종류 모두 마감 후 5분 경계를 지킨다")
-	void preservesExecutionBoundary(long offsetSeconds, boolean expected) {
+	@DisplayName("두 종류 모두 마감 후 1분 경계를 지킨다")
+	void preservesExecutionBoundary(long offsetNanos, boolean expected) {
 		// given
-		Instant now = NOW.plusSeconds(offsetSeconds);
+		Instant now = NOW.plusNanos(offsetNanos);
 		// when / then
 		assertThat(DrawExecutionEligibility.isExecutable(event(EventStatus.SCHEDULED, false), DrawType.INITIAL, now))
 				.isEqualTo(expected);
@@ -59,9 +59,9 @@ class DrawExecutionEligibilityTest {
 		assertThat(DrawExecutionEligibility.isExecutable(event(EventStatus.REDRAWING, true), DrawType.REPLACEMENT, NOW)).isFalse();
 	}
 
-	/** 삭제 여부와 상태가 다른 이벤트를 동일한 마감 후 5분 경계에 맞춰 구성한다. */
+	/** 삭제 여부와 상태가 다른 이벤트를 동일한 마감 후 1분 경계에 맞춰 구성한다. */
 	private static DrawSnapshotSource.Event event(EventStatus status, boolean deleted) {
 		return new DrawSnapshotSource.Event(UUID.randomUUID(), EventType.NO_TICKET, false,
-				NOW.minusSeconds(300), status, deleted, null, List.of());
+				NOW.minusSeconds(60), status, deleted, null, List.of());
 	}
 }

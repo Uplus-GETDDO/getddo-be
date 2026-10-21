@@ -70,7 +70,7 @@ class DrawConfirmationServiceTest {
 				List.of(new DrawSnapshotSource.Prize(prizeId, 1, 2)));
 		when(repository.findEventId(runId)).thenReturn(Optional.of(eventId));
 		when(snapshots.lockEvent(eventId)).thenReturn(Optional.of(new DrawSnapshotSource.Event(eventId,
-				EventType.NO_TICKET, false, NOW.minusSeconds(300), EventStatus.CLOSED, false, "vip", List.of())));
+				EventType.NO_TICKET, false, NOW.minusSeconds(60), EventStatus.CLOSED, false, "vip", List.of())));
 		when(repository.lockSnapshot(runId)).thenReturn(Optional.of(snapshot));
 		when(repository.findCurrentAwards(eventId)).thenReturn(List.of());
 		when(random.nextBelow(any())).thenReturn(BigInteger.ZERO);
@@ -233,20 +233,20 @@ class DrawConfirmationServiceTest {
 	void refusesCanceledEvent() {
 		// given
 		when(snapshots.lockEvent(eventId)).thenReturn(Optional.of(new DrawSnapshotSource.Event(eventId,
-				EventType.NO_TICKET, false, NOW.minusSeconds(300), EventStatus.CANCELED, false, "vip", List.of())));
+				EventType.NO_TICKET, false, NOW.minusSeconds(60), EventStatus.CANCELED, false, "vip", List.of())));
 		// when / then
 		assertThatThrownBy(() -> service.confirm(runId)).isInstanceOf(BusinessException.class)
 				.extracting(error -> ((BusinessException) error).getErrorCode()).isEqualTo(NOT_EXECUTABLE);
 		verifyNoInteractions(selection);
 	}
 
-	/** 마감 후 5분 직전의 요청이 난수·결과 저장에 도달하지 않는지 나노초 경계로 검증한다. */
+	/** 마감 후 1분 직전의 요청이 난수·결과 저장에 도달하지 않는지 나노초 경계로 검증한다. */
 	@Test
-	@DisplayName("마감 후 5분보다 1ns 이르면 확정하지 않는다")
-	void rejectsBeforeFiveMinuteBoundary() {
+	@DisplayName("마감 후 1분보다 1ns 이르면 확정하지 않는다")
+	void rejectsBeforeOneMinuteBoundary() {
 		// given
 		when(snapshots.lockEvent(eventId)).thenReturn(Optional.of(new DrawSnapshotSource.Event(eventId,
-				EventType.NO_TICKET, false, NOW.minusSeconds(300).plusNanos(1), EventStatus.CLOSED,
+				EventType.NO_TICKET, false, NOW.minusSeconds(60).plusNanos(1), EventStatus.CLOSED,
 				false, "vip", List.of())));
 		// when / then
 		assertThatThrownBy(() -> service.confirm(runId)).isInstanceOf(BusinessException.class)
@@ -255,11 +255,11 @@ class DrawConfirmationServiceTest {
 		verify(repository, never()).saveConfirmed(any(), anyList(), any());
 	}
 
-	/** SCHEDULED를 포함한 최초 추첨 상태의 5분 경계 이후 실행을 고정 시각으로 검증한다. */
+	/** SCHEDULED를 포함한 최초 추첨 상태의 1분 경계 이후 실행을 고정 시각으로 검증한다. */
 	@ParameterizedTest
-	@CsvSource({"SCHEDULED,300000000000", "CLOSED,300000000000", "OPEN,300000000001"})
-	@DisplayName("마감 5분 이후에는 SCHEDULED·OPEN·CLOSED 이벤트를 확정할 수 있다")
-	void confirmsAtAndAfterFiveMinutes(EventStatus status, long elapsedNanos) {
+	@CsvSource({"SCHEDULED,60000000000", "CLOSED,60000000000", "OPEN,60000000001"})
+	@DisplayName("마감 1분 이후에는 SCHEDULED·OPEN·CLOSED 이벤트를 확정할 수 있다")
+	void confirmsAtAndAfterOneMinute(EventStatus status, long elapsedNanos) {
 		// given
 		when(snapshots.lockEvent(eventId)).thenReturn(Optional.of(new DrawSnapshotSource.Event(eventId,
 				EventType.NO_TICKET, false, NOW.minusNanos(elapsedNanos), status, false, "vip", List.of())));
@@ -280,7 +280,7 @@ class DrawConfirmationServiceTest {
 	void rejectsDeletedEvent() {
 		// given
 		when(snapshots.lockEvent(eventId)).thenReturn(Optional.of(new DrawSnapshotSource.Event(eventId,
-				EventType.NO_TICKET, false, NOW.minusSeconds(300), EventStatus.CLOSED, true, "vip", List.of())));
+				EventType.NO_TICKET, false, NOW.minusSeconds(60), EventStatus.CLOSED, true, "vip", List.of())));
 		// when / then
 		assertThatThrownBy(() -> service.confirm(runId)).isInstanceOf(BusinessException.class)
 				.extracting(error -> ((BusinessException) error).getErrorCode()).isEqualTo(NOT_EXECUTABLE);
