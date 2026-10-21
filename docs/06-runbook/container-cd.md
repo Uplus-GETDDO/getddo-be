@@ -117,7 +117,7 @@ publish 작업 실패는 이미 성공한 서버 배포를 롤백하지 않는�
 
 ### 모드와 활성화 조건
 
-기존 `EC2_INSTANCE_ID`와 `DEPLOY_MODE=single`(미설정 기본값)은 단일 서버 배포를 유지한다. 두 JVM 워커 안전성, DB 연결 예산, 구/신 앱·Flyway 호환성, 한 서버의 요청 처리 여유, GD-276 앱 지표 구현과 `GETDDO/API` namespace로 제한한 A/C EC2 역할의 `cloudwatch:PutMetricData` 권한을 확인하고 C를 Terraform으로 등록해 **A/C 둘 다 healthy**가 된 뒤에만 Environment Variables를 다음과 같이 설정한다. rolling은 지표를 함께 활성화한다. 이 코드는 변수를 등록하거나 Terraform attachment를 변경하지 않는다.
+기존 `EC2_INSTANCE_ID`와 `DEPLOY_MODE=single`(미설정 기본값)은 단일 서버 배포를 유지한다. 자동 `workflow_run` 진입점은 `single`과 `rolling`만 허용하며, `initial-c`나 다른 값은 AWS 인증 전에 거부한다. 초기 C는 아래 수동 CLI 절차만 사용한다. 두 JVM 워커 안전성, DB 연결 예산, 구/신 앱·Flyway 호환성, 한 서버의 요청 처리 여유, GD-276 앱 지표 구현과 `GETDDO/API` namespace로 제한한 A/C EC2 역할의 `cloudwatch:PutMetricData` 권한을 확인하고 C를 Terraform으로 등록해 **A/C 둘 다 healthy**가 된 뒤에만 Environment Variables를 다음과 같이 설정한다. rolling은 지표를 함께 활성화한다. 이 코드는 변수를 등록하거나 Terraform attachment를 변경하지 않는다.
 
 | 변수 | 값 |
 | --- | --- |
@@ -126,7 +126,7 @@ publish 작업 실패는 이미 성공한 서버 배포를 롤백하지 않는�
 | `EC2_INSTANCE_ID_A` / `EC2_INSTANCE_ID_C` | 서로 다른 정확한 EC2 ID. 태그 검색·와일드카드 사용 안 함 |
 | `TARGET_GROUP_ARN` | 동일 계정·리전, instance 유형, 포트 8080 대상 그룹 ARN |
 
-한 번 검증한 이미지·체크섬·Compose를 한 S3 객체로 올리고 양쪽에 동일 키·체크섬을 전달한다. 계정·VPC·실행 상태·SSM Online·두 대상 healthy와 미완료 배포 기록을 확인한다. C healthy → A 제외 → draining 종료(`unused`) → 기존 단일 호스트 엔진 교체·로컬 HTTP 및 이미지 확인 → A 재등록·healthy → 2분간 연속 정상 확인을 거친 뒤 C에 같은 순서를 적용한다. draining/healthy 전이는 각각 최대 300초, SSM 명령 실행은 1800초, 결과 대기는 2040초다. 상대 대상은 각 전이·교체·등록 직전과 대기 중 확인한다. 두 호스트 전체 성공 뒤에만 기존 publish 작업이 버전을 발행한다.
+한 번 검증한 이미지·체크섬·Compose를 한 S3 객체로 올리고 양쪽에 동일 키·체크섬을 전달한다. 계정·VPC·실행 상태·SSM Online·두 대상 healthy와 미완료 배포 기록을 확인한다. C healthy → A 제외 → draining 종료(`unused`) → 기존 단일 호스트 엔진 교체·로컬 HTTP 및 이미지 확인 → A 재등록·healthy → 2분간 연속 정상 확인을 거친 뒤 C에 같은 순서를 적용한다. draining 전이는 최대 `max(300초, deregistration_delay.timeout_seconds + 60초)`, healthy 전이는 최대 300초이며, SSM 명령 실행은 1800초, 결과 대기는 2040초다. 상대 대상은 각 전이·교체·등록 직전과 대기 중 확인한다. 두 호스트 전체 성공 뒤에만 기존 publish 작업이 버전을 발행한다.
 
 ### 초기 C: 실제 정상 A의 승인 산출물만 사용
 
@@ -173,7 +173,7 @@ GitHub concurrency는 진행 중 실행을 취소하지 않는다. single/rollin
 
 ### 최소 IAM 변경과 검증 범위
 
-두 서버 순차 배포의 SSM 대기·복구와 초기 C 배포의 직렬 SSM 사전 검사·배포는 한 시간을 넘을 수 있다. Terraform의 GitHub CD 역할 상한은 7200초, 워크플로가 rolling·initial-c 모드에서 요청하는 세션도 7200초로 맞춘다. 기본 single은 기존 3600초를 유지한다. 역할 상한만 올리면 발급 세션의 기본 시간은 늘어나지 않는다. 120분 작업 제한·시간 초과에서의 미확인 명령 복구 절차도 유지한다.
+두 서버 순차 배포의 SSM 대기·복구와 초기 C 배포의 직렬 SSM 사전 검사·배포는 한 시간을 넘을 수 있다. Terraform의 GitHub CD 역할 상한은 7200초, 자동 워크플로의 rolling 세션도 7200초로 맞춘다. initial-c 수동 CLI는 같은 상한 내에서 충분한 유효기간의 세션을 운영자가 준비한다. 기본 single은 기존 3600초를 유지한다. 역할 상한만 올리면 발급 세션의 기본 시간은 늘어나지 않는다. 120분 작업 제한·시간 초과에서의 미확인 명령 복구 절차도 유지한다.
 
 업로드·사전 검사 중 main이 바뀔 수 있어 운영 잠금 안의 첫 서버 제외 직전(단일 모드는 SSM 전송 직전)에도 최신 main을 확인한다. 이때 불일치하면 아직 정상인 서버를 변경하지 않고 잠금을 해제한다. A를 이미 변경한 뒤에는 C도 같은 승인 산출물로 완료하며, 두 서버 사이 장애는 부분 배포 복구 상태로 잠금을 보존한다. 최초 C의 승인된 기준 버전은 이 최신 main 검사에서 제외한다.
 

@@ -53,6 +53,14 @@ jobs:
       AWS_PAGER: ''
 
     steps:
+      - name: 자동 배포 모드 확인
+        shell: bash
+        run: |
+          case "$DEPLOY_MODE" in
+            single|rolling) ;;
+            *) echo '자동 CD는 single 또는 rolling만 허용합니다. initial-c는 승인된 기준 산출물을 지정해 수동 CLI로 실행하세요.' >&2; exit 1 ;;
+          esac
+
       - name: CI가 검사한 배포 코드 가져오기
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -97,7 +105,7 @@ jobs:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: getddo-cd-${{ github.run_id }}
-          # 순차 배포와 초기 C의 직렬 SSM 검사·배포 대기를 포함한다. Terraform 역할 상한도 7200으로 맞춘다.
+          # 순차 배포의 직렬 SSM 검사·배포 대기를 포함한다. Terraform 역할 상한도 7200으로 맞춘다.
           role-duration-seconds: ${{ env.DEPLOY_MODE == 'single' && 3600 || 7200 }}
 
       - name: 서버 앱 교체 및 상태 확인

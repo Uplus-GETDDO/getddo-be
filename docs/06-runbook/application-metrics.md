@@ -4,7 +4,7 @@
 
 Spring Boot 4.1.1 Actuator와 Boot 관리 Micrometer 1.17.1을 사용한다. Boot의 기본 지원 registry에 CloudWatch가 없어 `CloudWatchMetricsConfig`에서 명시적으로 등록한다. AWS SDK는 기존 S3와 같은 BOM 2.56.0이다.
 
-기본값은 비활성화다. 로컬/테스트에서는 AWS 클라이언트와 publisher를 생성하지 않는다. 배포 시 기존 app.env에 다음 비밀 아닌 값을 전달한다. [배포 예제](../../infra/app.env.example)는 기존 DB·Redis·이미지 설정에 추가하는 조각이다.
+기본값은 비활성화다. 로컬/테스트에서는 AWS 클라이언트와 publisher를 생성하지 않는다. 배포 시 기존 app.env에 다음 비밀 아닌 값을 전달한다. [배포 예제](../../infra/app.env.example)는 기존 DB·Redis·이미지 설정에 추가하는 조각이며 기본 비활성화다. 예제의 빈 리전·서버 값을 활성화 전에 채우고 아래 IAM·전달 조건을 확인한다. 환경·namespace·간격의 중복 예제 할당은 생략하며 앱 기본값과 전송 계약은 유지한다.
 
 ```dotenv
 GETDDO_METRICS_ENABLED=true

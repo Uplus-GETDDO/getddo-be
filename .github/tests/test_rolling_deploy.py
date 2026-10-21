@@ -2,7 +2,9 @@
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import tempfile
+import textwrap
 import unittest
 from unittest.mock import patch
 
@@ -34,6 +36,28 @@ def values(mode='rolling'):
                   APP_SOURCE_DIR='/tmp/baseline', APPROVED_BASELINE_SHA=SHA,
                   APPROVED_BASELINE_IMAGE_ID=IMAGE)
     return deploy.settings(result)
+
+
+class AutomaticDeployModeTests(unittest.TestCase):
+    def run_gate(self, mode):
+        workflow = (ROOT / '.github/workflows/cd.yml').read_text()
+        first_step = workflow.split('    steps:\n', 1)[1].split('\n      - name:', 1)[0]
+        self.assertIn('자동 배포 모드 확인', first_step)
+        script = textwrap.dedent(first_step.split('        run: |\n', 1)[1])
+        return subprocess.run(['bash', '-eu', '-c', script], env={'DEPLOY_MODE': mode},
+                              capture_output=True, text=True)
+
+    def test_automatic_cd_accepts_single_and_rolling(self):
+        for mode in ('single', 'rolling'):
+            with self.subTest(mode=mode):
+                self.assertEqual(0, self.run_gate(mode).returncode)
+
+    def test_automatic_cd_rejects_initial_c_and_unknown_modes(self):
+        for mode in ('initial-c', '', 'unknown', 'ROLLING', 'single\nrolling'):
+            with self.subTest(mode=mode):
+                result = self.run_gate(mode)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn('수동 CLI', result.stderr)
 
 
 class FakeAWS:
@@ -241,6 +265,7 @@ class RollingTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'transition timed out'):
                 self.run_roll(fake)
         self.assertEqual(360, clock[0])
+        self.assertTrue(fake.lock)
         self.assertEqual([], self.deployments(fake))
         self.assertEqual([], self.registrations(fake))
 
