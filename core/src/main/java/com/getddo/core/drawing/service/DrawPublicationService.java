@@ -173,7 +173,7 @@ public class DrawPublicationService {
 	}
 
 	/**
-	 * 마감 +5분 이후 저장된 최초 확정 결과만 공개한다. 승인·선정을 수행하지 않고 알림 작업 등록만 연결한다.
+	 * 마감 +1분 이후 저장된 최초 확정 결과만 공개한다. 승인·선정을 수행하지 않고 알림 작업 등록만 연결한다.
 	 * 이벤트 → 실행 순서로 잠그며 목록 저장 실패 시 버전도 롤백한다.
 	 * 공개 시각 전·미준비·정상 종료·취소·재추첨 대기는 빈 Optional을 반환한다.
 	 * GD-86 스케줄러 연결은 별도 계약이며 이 메서드는 스케줄러를 등록하지 않는다.
@@ -200,8 +200,8 @@ public class DrawPublicationService {
 
 		Instant now = time.now();
 
-		// 공개 업무가 허용되지 않거나 마감 후 5분 전이면 기존 공개 상태를 유지한다.
-		if (!canPublish(event) || now.isBefore(event.endsAt().plusSeconds(300))) return existing;
+		// 공개 업무가 허용되지 않거나 마감 후 1분 전이면 기존 공개 상태를 유지한다.
+		if (!canPublish(event) || now.isBefore(event.endsAt().plusSeconds(60))) return existing;
 
 		boolean replacement = publications.hasCancellationOrReplacement(eventId);
 		Optional<DrawSnapshot> initial = snapshots.findInitial(eventId);

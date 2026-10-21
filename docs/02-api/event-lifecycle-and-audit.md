@@ -13,7 +13,7 @@
 | SCHEDULED, 서버 중단 등으로 시작·마감 모두 경과 | CLOSED |
 | OPEN, 마감 시각 도달 | CLOSED |
 
-미래 이벤트·삭제 이벤트와 취소·추첨·공개 상태는 변경하지 않는다. GD-86의 자동 추첨은 상태 반영이 늦어져도 마감 +5분이 지난 SCHEDULED/OPEN/CLOSED를 대상으로 한다. 모집 상태 전환 자체는 추첨을 직접 실행하거나 결과를 공개하지 않는다. 실제 공개 후 `PUBLISHED` 연결은 GD-199의 추첨 담당 범위다.
+미래 이벤트·삭제 이벤트와 취소·추첨·공개 상태는 변경하지 않는다. GD-86의 자동 추첨은 상태 반영이 늦어져도 마감 +1분이 지난 SCHEDULED/OPEN/CLOSED를 대상으로 한다. 모집 상태 전환 자체는 추첨을 직접 실행하거나 결과를 공개하지 않는다. 실제 공개 후 `PUBLISHED` 연결은 GD-199의 추첨 담당 범위다.
 
 `EventLifecycleService.advanceDue`는 외부 트랜잭션을 거절하는 `NEVER` 메서드다. 후보 ID는 잠금 없이 읽고, 별도 Spring Bean인 `EventLifecycleTransitionService.advance`가 이벤트 한 건마다 `READ COMMITTED` 트랜잭션을 연다. JDBC `FOR UPDATE SKIP LOCKED`로 해당 이벤트만 선점하고 최신 상태·시각을 다시 읽는다. 다른 워커·취소·수정·추첨이 잠근 이벤트는 즉시 건너뛴다. 상태와 `EVENT_STATUS_CHANGE` 감사 기록은 이벤트별로 함께 커밋하며 시스템 작업의 처리자 ID는 null이다.
 
@@ -24,7 +24,7 @@
 ## 응답 필드 변경
 
 - 사용자 목록·상세: `publicationScheduledAt` 제거. 추첨·발표 예정 시각을 제공하지 않는다.
-- 관리자 등록·수정·목록·상세: 기존 필드를 `drawScheduledAt`으로 교체한다. 값은 `endsAt +5분`의 최초 자동 추첨 기준이며 실제 실행·승인·발표 완료 시각이 아니다.
+- 관리자 등록·수정·목록·상세: 기존 필드를 `drawScheduledAt`으로 교체한다. 값은 `endsAt +1분`의 최초 자동 추첨 기준이며 실제 실행·승인·발표 완료 시각이 아니다.
 - 실제 공개 여부·`publishedAt`은 기존 추첨 결과 조회 계약을 사용한다. 관리자 확인과 수동 공개는 별도 동작이다.
 
 프론트는 기존 필드 참조와 발표 카운트다운을 제거하고 관리자에서만 새 필드를 사용해야 한다. DB 컬럼이나 새로운 HTTP API는 추가하지 않는다.
