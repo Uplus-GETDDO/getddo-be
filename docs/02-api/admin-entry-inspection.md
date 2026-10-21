@@ -28,4 +28,4 @@
 
 - 단위: `AdminEntryQueryServiceTest`(권한·이벤트 확인·저장소 위임·이름 결합), `AdminEntryControllerTest`(응답 필드·파라미터·400/403/404).
 - 실제 MySQL: `AdminEntryNamesIntegrationTest`(`userName`이 `users.name`과 같고 이름을 바꾸면 다음 조회에 반영).
-- 실제 MySQL 통합 테스트는 이번 작업에 포함하지 않았다. 저장소 SQL(필터 조합·기간 경계·정렬·페이지·응모자 조회)은 작업 중 로컬 MySQL로 한 번 확인했지만 저장소에는 남기지 않았다.
+- 저장소 SQL 통합 테스트는 포함하지 않았다(이름 결합만 위 `AdminEntryNamesIntegrationTest`가 검증한다). 저장소 SQL(필터 조합·기간 경계·정렬·페이지·응모자 조회)은 작업 중 로컬 MySQL로 한 번 확인했지만 저장소에는 남기지 않았다.

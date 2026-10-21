@@ -288,6 +288,38 @@ class AdminAttendancePolicyServiceTest {
 	}
 
 	@Test
+	@DisplayName("작성자 사용자가 없으면 정책 목록의 작성자 이름은 null이다")
+	void returnsNullCreatorNameInListWhenCreatorIsMissing() {
+		// given
+		UUID creator = UUID.randomUUID();
+		DailyAttendancePolicy daily = new DailyAttendancePolicy(UUID.randomUUID(), 2, NEXT_MIDNIGHT, null, creator, NOW);
+		when(repository.findDailyPolicies(FIRST_PAGE)).thenReturn(new PageResult<>(List.of(daily), 1, 20, 1));
+		when(userNames.findNamesByIds(Set.of(creator))).thenReturn(Map.of());
+		// when
+		PageResult<NamedValue<DailyAttendancePolicy>> result = service(NOW).findDailyPolicies(ADMIN, FIRST_PAGE);
+		// then: 정책은 그대로 나가고 이름만 null이다
+		assertThat(result.getItems()).extracting(NamedValue::getValue).containsExactly(daily);
+		assertThat(result.getItems()).extracting(NamedValue::getName).containsExactly((String) null);
+	}
+
+	@Test
+	@DisplayName("작성자 사용자가 없으면 정책 수정 응답의 작성자 이름은 null이다")
+	void returnsNullCreatorNameOnUpdateWhenCreatorIsMissing() {
+		// given
+		DailyAttendancePolicy scheduled = daily(1, NEXT_MIDNIGHT, null);
+		DailyAttendancePolicy updated = new DailyAttendancePolicy(scheduled.getId(), 3, NEXT_MIDNIGHT, null,
+				scheduled.getCreatedBy(), NOW);
+		when(repository.findDailyPolicyForUpdate(scheduled.getId())).thenReturn(Optional.of(scheduled));
+		when(repository.updateDailyRewardTicketCount(scheduled.getId(), 3)).thenReturn(updated);
+		when(userNames.findNamesByIds(Set.of(scheduled.getCreatedBy()))).thenReturn(Map.of());
+		// when
+		NamedValue<DailyAttendancePolicy> named = service(NOW).updateDailyPolicy(ADMIN, scheduled.getId(), 3);
+		// then
+		assertThat(named.getValue()).isSameAs(updated);
+		assertThat(named.getName()).isNull();
+	}
+
+	@Test
 	@DisplayName("아직 시작하지 않은 예약 일일 정책의 보상 수량을 바꾸고 수정 전·후 값을 감사 기록에 남긴다")
 	void updatesScheduledDailyPolicy() {
 		// given
