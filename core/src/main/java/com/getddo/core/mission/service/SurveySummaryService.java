@@ -13,9 +13,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.getddo.core.common.pagination.PageQuery;
+import com.getddo.core.common.pagination.PageResult;
 import com.getddo.core.common.time.TimeProvider;
 import com.getddo.core.mission.domain.MissionDetail;
 import com.getddo.core.mission.domain.MissionType;
+import com.getddo.core.mission.domain.SurveyFreeTextAnswer;
 import com.getddo.core.mission.domain.SurveyQuestion;
 import com.getddo.core.mission.domain.SurveyQuestionType;
 import com.getddo.core.mission.domain.SurveySummary;
@@ -69,6 +72,35 @@ public class SurveySummaryService {
 		Map<LocalDate, Long> perDay = summaryRepository.countCompletedSubmissionsByDay(missionId, start, end);
 		Map<UUID, Long> perOption = summaryRepository.countSelectionsByOption(missionId, start, end);
 		return new SurveySummary(dailyCounts(from, to, perDay), questionSummaries(detail, perOption));
+	}
+
+	/**
+	 * 설문 미션의 자유 서술 문항에 남은 답변을 제출 시각 최신순으로 조회한다. 익명이라 답변 원문과 제출 시각만 돌려준다.
+	 * 완료된 제출의 답변만 담고, 기간은 {@link #summarize}와 같은 KST 날짜 규칙이다.
+	 *
+	 * @param questionId 자유 서술 문항 ID. 이 미션의 자유 서술 문항이어야 한다
+	 * @throws MissionException 관리자가 아니거나({@code MISSION-006}), 미션이 없거나({@code MISSION-003}), 설문 미션이
+	 *         아니거나 문항이 이 미션의 자유 서술 문항이 아니거나 기간이 올바르지 않은 경우({@code MISSION-001})
+	 */
+	@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+	public PageResult<SurveyFreeTextAnswer> findFreeTextAnswers(User admin, UUID missionId, UUID questionId,
+			LocalDate from, LocalDate to, PageQuery page) {
+		requireActiveAdmin(admin);
+		requireValidPeriod(from, to);
+		MissionDetail detail = missionRepository.findDetailById(missionId)
+				.orElseThrow(() -> new MissionException(MissionErrorCode.MISSION_NOT_FOUND));
+		if (detail.getMission().getMissionType() != MissionType.SURVEY) {
+			throw new MissionException(MissionErrorCode.INVALID_MISSION_DEFINITION);
+		}
+		boolean freeTextQuestion = questionId != null && detail.getSurveyQuestions().stream()
+				.anyMatch(question -> question.getId().equals(questionId)
+						&& question.getQuestionType() == SurveyQuestionType.FREE_TEXT);
+		if (!freeTextQuestion) {
+			throw new MissionException(MissionErrorCode.INVALID_MISSION_DEFINITION);
+		}
+		Instant start = timeProvider.toUtc(from.atStartOfDay());
+		Instant end = timeProvider.toUtc(to.plusDays(1).atStartOfDay());
+		return summaryRepository.findFreeTextAnswers(questionId, start, end, page);
 	}
 
 	private static List<DailyCount> dailyCounts(LocalDate from, LocalDate to, Map<LocalDate, Long> perDay) {

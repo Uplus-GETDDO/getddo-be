@@ -17,7 +17,7 @@
 | --- | --- | --- |
 | [V001](../../storage/db/src/main/resources/db/migration/user/V001__create_user_tables.sql) | `users` | 헤더 문맥, U01, AO01~AO02, 응모 자격 |
 | [V002](../../storage/db/src/main/resources/db/migration/reward/V002__create_reward_tables.sql) | `reward_policies` | AP01~AP02, AM03, 게임 보상 정책 적용 |
-| [V003](../../storage/db/src/main/resources/db/migration/mission/V003__create_mission_tables.sql) | `missions`, `mission_submissions`, `mission_reward_claims`, `mission_quiz_questions`, `quiz_question_options`, `quiz_answers`, `quiz_question_progress`, `survey_questions`, `survey_question_options`, `survey_answers` | M01~M04, AM01~AM03 |
+| [V003](../../storage/db/src/main/resources/db/migration/mission/V003__create_mission_tables.sql) | `missions`, `mission_submissions`, `mission_reward_claims`, `mission_quiz_questions`, `quiz_question_options`, `quiz_answers`, `quiz_question_progress`, `survey_questions`, `survey_question_options`, `survey_answers` | M01~M04, AM01~AM05 |
 | [V004](../../storage/db/src/main/resources/db/migration/attendance/V004__create_attendance_tables.sql) | `attendances`, `attendance_streaks`, `attendance_streak_policy_sets`, `attendance_streak_policies`, `attendance_reward_claims` | AT01~AT03, AP01~AP04 |
 | [V005](../../storage/db/src/main/resources/db/migration/game/V005__create_game_tables.sql) | `games`, `game_plays`, `user_game_stats`, `game_reward_claims` | G01~G05, AG01~AG03, AR07 |
 | [V006](../../storage/db/src/main/resources/db/migration/event/V006__create_event_tables.sql) | `events`, `event_prizes`, `event_participants`, `event_entries`, `banners` | E01~E09, B01, AE01~AE08, AB01~AB05, AO06~AO07 |

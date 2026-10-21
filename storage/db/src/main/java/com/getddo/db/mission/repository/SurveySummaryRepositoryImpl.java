@@ -8,10 +8,16 @@ import java.util.Map;
 import java.util.UUID;
 
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.Tuple;
 import lombok.RequiredArgsConstructor;
+import org.hibernate.query.NativeQuery;
 import org.springframework.stereotype.Repository;
 
+import com.getddo.core.common.pagination.PageQuery;
+import com.getddo.core.common.pagination.PageResult;
+import com.getddo.core.mission.domain.SurveyFreeTextAnswer;
 import com.getddo.core.mission.repository.SurveySummaryRepository;
+import com.getddo.db.common.pagination.PageOffsets;
 import com.getddo.db.common.util.UuidBinary;
 
 /**
@@ -36,6 +42,22 @@ public class SurveySummaryRepositoryImpl implements SurveySummaryRepository {
 			where a.mission_id = :missionId and s.is_completed = true and a.selected_option_id is not null
 			  and s.created_at >= :from and s.created_at < :to
 			group by a.selected_option_id
+			""";
+
+	private static final String FREE_TEXT_SQL = """
+			select a.answer_text as answer_text, s.created_at as created_at
+			from survey_answers a
+			join mission_submissions s on s.id = a.submission_id
+			where a.survey_question_id = :questionId and s.is_completed = true and a.answer_text is not null
+			  and s.created_at >= :from and s.created_at < :to
+			order by s.created_at desc, a.id desc
+			""";
+	private static final String FREE_TEXT_COUNT_SQL = """
+			select count(*)
+			from survey_answers a
+			join mission_submissions s on s.id = a.submission_id
+			where a.survey_question_id = :questionId and s.is_completed = true and a.answer_text is not null
+			  and s.created_at >= :from and s.created_at < :to
 			""";
 
 	private final EntityManager entityManager;
@@ -68,5 +90,35 @@ public class SurveySummaryRepositoryImpl implements SurveySummaryRepository {
 			counts.put(UuidBinary.fromBytes((byte[]) row[0]), ((Number) row[1]).longValue());
 		}
 		return counts;
+	}
+
+	@Override
+	public PageResult<SurveyFreeTextAnswer> findFreeTextAnswers(UUID questionId, Instant from, Instant to,
+			PageQuery page) {
+		byte[] question = UuidBinary.toBytes(questionId);
+		long total = ((Number) entityManager.createNativeQuery(FREE_TEXT_COUNT_SQL)
+				.setParameter("questionId", question)
+				.setParameter("from", from)
+				.setParameter("to", to)
+				.getSingleResult()).longValue();
+		// 시작 위치가 전체 건수를 넘으면 항목이 없다. JPA가 int로 바꿀 수 없는 위치도 같은 경우다.
+		if (page.offset() >= total || PageOffsets.exceedsIntRange(page)) {
+			return new PageResult<>(List.of(), page.getPage(), page.getSize(), total);
+		}
+		@SuppressWarnings("unchecked")
+		NativeQuery<Tuple> select = entityManager.createNativeQuery(FREE_TEXT_SQL, Tuple.class)
+				.unwrap(NativeQuery.class)
+				.addScalar("answer_text", String.class)
+				.addScalar("created_at", Instant.class);
+		select.setParameter("questionId", question);
+		select.setParameter("from", from);
+		select.setParameter("to", to);
+		select.setFirstResult((int) page.offset());
+		select.setMaxResults(page.getSize());
+		List<SurveyFreeTextAnswer> items = select.getResultList().stream()
+				.map(row -> new SurveyFreeTextAnswer(row.get("answer_text", String.class),
+						row.get("created_at", Instant.class)))
+				.toList();
+		return new PageResult<>(items, page.getPage(), page.getSize(), total);
 	}
 }
