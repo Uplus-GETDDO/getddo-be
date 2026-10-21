@@ -6,10 +6,18 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import com.getddo.core.common.pagination.PageQuery;
 import com.getddo.core.common.pagination.PageResult;
@@ -25,6 +33,7 @@ import com.getddo.core.mission.service.SurveySummaryService;
 import com.getddo.core.user.domain.User;
 import com.getddo.core.user.domain.UserRole;
 import com.getddo.core.user.domain.UserStatus;
+import com.getddo.db.ticket.ConcurrentTasks;
 
 import static com.getddo.db.ticket.TicketGrantSeeds.bytes;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -44,6 +53,8 @@ class SurveySummaryIntegrationTest extends MissionIntegrationTestSupport {
 	private MissionSubmissionService submissionService;
 	@Autowired
 	private SurveySummaryService summaryService;
+	@Autowired
+	private PlatformTransactionManager transactionManager;
 
 	private User admin() {
 		return new User(adminId, "관리자", UserRole.ADMIN, UserStatus.ACTIVE, null, null, null, null, null, null, null);
@@ -297,5 +308,58 @@ class SurveySummaryIntegrationTest extends MissionIntegrationTestSupport {
 		assertThatThrownBy(() -> summaryService.findFreeTextAnswers(admin(), missionId, other.getSurveyQuestions().get(1)
 				.getId(), DAY_12, DAY_12, new PageQuery(1, 10)))
 				.hasFieldOrPropertyWithValue("errorCode", MissionErrorCode.INVALID_MISSION_DEFINITION);
+	}
+
+	@Test
+	@DisplayName("REPEATABLE READ 트랜잭션 안에서는 다른 트랜잭션이 답변을 확정해도 전체 건수와 항목이 같은 스냅샷을 유지하고 새 트랜잭션은 새 답변을 본다")
+	void keepsSameSnapshotWhileAnotherTransactionCommitsAnswer() {
+		// given
+		MissionDetail survey = saveSurveyMission("스냅샷 설문");
+		UUID missionId = survey.getMission().getId();
+		UUID freeId = survey.getSurveyQuestions().get(1).getId();
+		submitChoiceAndText(seeds.user(), survey, "기존 답변 A", KST_FIRST_SECOND_OF_12TH);
+		submitChoiceAndText(seeds.user(), survey, "기존 답변 B", KST_FIRST_SECOND_OF_12TH.plusSeconds(60));
+		TransactionTemplate repeatableRead = new TransactionTemplate(transactionManager);
+		repeatableRead.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+		ExecutorService other = Executors.newSingleThreadExecutor();
+		try {
+			// when: 같은 REPEATABLE READ 트랜잭션의 첫 조회 뒤에 다른 트랜잭션이 답변을 확정하고 다시 조회한다
+			List<PageResult<SurveyFreeTextAnswer>> inTransaction = repeatableRead.execute(status -> {
+				PageResult<SurveyFreeTextAnswer> before = summaryService.findFreeTextAnswers(admin(), missionId, freeId,
+						DAY_12, DAY_12, new PageQuery(1, 10));
+				commitInOtherTransaction(other, () -> submitChoiceAndText(seeds.user(), survey, "스냅샷 이후 답변",
+						KST_FIRST_SECOND_OF_12TH.plusSeconds(120)));
+				PageResult<SurveyFreeTextAnswer> after = summaryService.findFreeTextAnswers(admin(), missionId, freeId,
+						DAY_12, DAY_12, new PageQuery(1, 10));
+				return List.of(before, after);
+			});
+			PageResult<SurveyFreeTextAnswer> fresh = summaryService.findFreeTextAnswers(admin(), missionId, freeId,
+					DAY_12, DAY_12, new PageQuery(1, 10));
+
+			// then: 같은 트랜잭션에서는 건수와 항목이 모두 그대로이고, 새 트랜잭션에서는 건수와 항목에 함께 반영된다
+			PageResult<SurveyFreeTextAnswer> before = inTransaction.get(0);
+			PageResult<SurveyFreeTextAnswer> after = inTransaction.get(1);
+			assertThat(before.getTotalElements()).isEqualTo(2L);
+			assertThat(after.getTotalElements()).isEqualTo(before.getTotalElements());
+			assertThat(after.getItems()).extracting(SurveyFreeTextAnswer::getAnswerText)
+					.containsExactlyElementsOf(before.getItems().stream().map(SurveyFreeTextAnswer::getAnswerText).toList());
+			assertThat(fresh.getTotalElements()).isEqualTo(3L);
+			assertThat(fresh.getItems()).extracting(SurveyFreeTextAnswer::getAnswerText)
+					.containsExactly("스냅샷 이후 답변", "기존 답변 B", "기존 답변 A");
+		} finally {
+			ConcurrentTasks.shutdownAndAwait(other);
+		}
+	}
+
+	/** 다른 스레드의 독립 트랜잭션에서 작업을 커밋하고 끝나기를 기다린다. 인터럽트되면 상태를 복원한다. */
+	private static void commitInOtherTransaction(ExecutorService executor, Runnable work) {
+		try {
+			executor.submit(work).get(30, TimeUnit.SECONDS);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException(e);
+		} catch (ExecutionException | TimeoutException e) {
+			throw new IllegalStateException(e);
+		}
 	}
 }
