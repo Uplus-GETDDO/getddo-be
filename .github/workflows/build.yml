@@ -40,6 +40,9 @@ jobs:
           python3 .github/tests/test_daily_release.py
           python3 .github/tests/test_publish_release.py
 
+      - name: 배포 스크립트 회귀 검증
+        run: python3 -m unittest discover -s .github/tests
+
       # build.gradle의 Java toolchain 버전과 일치시킨다.
       - name: Java 21 설정
         uses: actions/setup-java@v5

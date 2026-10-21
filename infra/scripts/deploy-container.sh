@@ -83,7 +83,7 @@ record_current() {
 rollback() {
   # 첫 배포에는 복구할 앱이 없다. env 파일을 제거하기 전에 Compose가 설정을 읽고 중지한다.
   if [[ -z $previous ]]; then
-    compose 60 "$release" "$image" "$app_env" stop app || true
+    compose 60 "$release" "$image" "$app_env" stop app || return 1
   fi
   # 이미지보다 설정을 먼저 복원한다. 복원 실패 시 새 설정으로 이전 앱을 실행하지 않는다.
   if ((had_env)); then
@@ -120,7 +120,9 @@ finish() {
   # 설정 교체 이후의 오류·중단도 복구한다. 조회·검증 실패는 기존 앱을 건드리지 않는다.
   if ((env_changed && !committed)); then
     if rollback; then
-      clear_marker || true
+      if clear_marker && [[ -n $previous ]]; then
+        echo "ROLLBACK_CONFIRMED_HEALTHY: $source_sha $old_image"
+      fi
     fi
     ((status != 0)) || status=1
   fi
@@ -164,6 +166,9 @@ image=$(cat image-id.txt)
 # 파라미터가 없거나 타입·형식·복호화가 틀리면 이 단계에서 실패하고 기존 앱은 유지된다.
 env_tmp=$(mktemp -d /etc/getddo/.deploy-env.XXXXXX)
 python3 "$release/fetch-app-env.py" --region "$region" --output "$env_tmp/next.env"
+if [[ -n ${GETDDO_DEPLOY_SERVER:-} ]]; then
+  python3 "$release/inject-host-env.py" --file "$env_tmp/next.env" --server "$GETDDO_DEPLOY_SERVER" --enabled "${GETDDO_DEPLOY_METRICS_ENABLED:?}"
+fi
 compose 20 "$release" "$image" "$env_tmp/next.env" config --quiet
 if [[ -z $previous && -n $(compose 10 "$release" "$image" "$env_tmp/next.env" ps --all --quiet app) ]]; then
   echo '복구 기록이 없는 기존 앱이 있습니다. 기존 배포를 먼저 확인하세요.' >&2
