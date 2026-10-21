@@ -29,7 +29,7 @@
 | 계약 | 제공·보장 내용 |
 | --- | --- |
 | WindowSnapshot | 각 논리 키의 startedAt·endsAt. 구간 길이는 입력 policy.window()이며 1분 상수를 쓰지 않음 |
-| EntryLimitDecision | allowed·retryAfterSeconds, 결과 구분(ALLOWED / RATE_LIMITED / BLOCKED), userWindow·eventWindow?, 거절 횟수 스냅샷과 차단 결과. BLOCKED는 기존 ACTIVE이면 구간 없이 최초 blockId·blockedUntil을 반환하며 허용·일반 제한 결과에는 구간 시각 제공 |
+| EntryLimitDecision | allowed·retryAfterSeconds, 결과 구분(ALLOWED / RATE_LIMITED / BLOCKED), 별도 recordingStatus(NOT_APPLICABLE / RECORDED / DENY_RECORDING_FAILED), userWindow·eventWindow?, 거절 횟수 스냅샷과 차단 결과. BLOCKED는 기존 ACTIVE이면 구간 없이 최초 blockId·blockedUntil을 반환하며 허용·일반 제한 결과에는 구간 시각 제공 |
 | evaluateEntry | ACTIVE 재확인부터 구간 준비·일반 제한 판정·거절 기록·임계값 도달 시 최초 ACTIVE 확정까지 하나의 원자 경계에서 수행. recordDenied와 차단 생성은 평가 내부 책임이며 반환 뒤 별도 후처리로 실행하지 않음 |
 
 사용자·이벤트 구간은 각각 처음 관측한 응모 요청에서 시작한다. 전체 제한이 먼저 거절되는 요청에서도 이벤트 구간 상태를 준비하되 이벤트의 일반 요청 카운터는 기존 단축 판정과 같이 증가시키지 않는다. 메타데이터 준비는 일반 카운터를 0회 증가시키고, 실제 일반 제한 평가만 해당 카운터를 1회 증가시킨다. 이벤트 일반 평가가 나중에 처음 실행돼도 이미 준비된 구간의 만료를 갱신하지 않는다.
@@ -38,7 +38,7 @@ Redis 구현은 저장된 startedAt·endsAt·요청 수·거절 수를 같은 �
 
 각 논리 키의 일반 요청·거절 카운터·구간 메타데이터는 같은 endsAt에 만료한다. 메타데이터 준비와 판정 사이에 구간이 바뀌어 서로 다른 창의 시각·카운터를 섞지 않도록 위 복합 평가 안에서 스냅샷을 확정한다. 차단 판단·evidence는 이 반환값만 사용하고 HTTP 계층 현재 시각·반올림된 Retry-After로 구간을 재구성하지 않는다.
 
-entry 분기의 HTTP 변환은 평가 결과를 받은 뒤 Redis 예외 처리 구간 밖에서 수행한다. ALLOWED는 통과, RATE_LIMITED 및 신뢰 가능한 DENY_RECORDING_FAILED는 기존 RateLimitExceededException으로 변환해 429·COMMON-006과 판정의 retryAfterSeconds를 반환한다. BLOCKED도 같은 예외·오류 코드·ResponseEnvelope를 재사용하되 저널의 blockedUntil과 평가 시 Redis now로 계산한 남은 초를 사용한다. 새 공개 오류나 별도 차단 예외는 필요하지 않다. BLOCKED를 allowed로 해석하지 않으며, 결과 수신 뒤 파생 캐시 갱신 실패가 확정된 429를 통과로 바꾸지 않게 한다.
+entry 분기의 HTTP 변환은 평가 결과를 받은 뒤 Redis 예외 처리 구간 밖에서 수행한다. ALLOWED는 통과, RATE_LIMITED(recordingStatus=RECORDED 또는 DENY_RECORDING_FAILED)는 기존 RateLimitExceededException으로 변환해 429·COMMON-006과 판정의 retryAfterSeconds를 반환한다. BLOCKED도 같은 예외·오류 코드·ResponseEnvelope를 재사용하되 저널의 blockedUntil과 평가 시 Redis now로 계산한 남은 초를 사용한다. 새 공개 오류나 별도 차단 예외는 필요하지 않다. BLOCKED를 allowed로 해석하지 않으며, 결과 수신 뒤 파생 캐시 갱신 실패가 확정된 429를 통과로 바꾸지 않게 한다.
 
 ### 기존 Redis 상태 전환 — 배포 전제
 
@@ -48,15 +48,15 @@ entry 분기의 HTTP 변환은 평가 결과를 받은 뒤 Redis 예외 처리 �
 
 ### 사용자 확인과 영구 상태 생성 경계
 
-entry 분기는 Redis 빠른 차단 조회·evaluateEntry보다 먼저 기존 CurrentUserArgumentResolver와 같은 헤더 형식·UserService.findById·DB 역할/멤버십 대조를 완료한다. 해당 handler의 @CurrentUser 조건을 그대로 사용하며 새 인증·권한 정책을 만들지 않는다. 현재 MVC에서는 preHandle이 argument resolver보다 앞서므로, 후속 구현은 기존 검증을 재사용 가능한 요청 단위 경계로 연결하고 검증된 User만 요청에 보관해 resolver의 재조회·중복 검증을 피한다. 공통 문맥 담당과 이 호출 순서·재사용 경계를 확인한 뒤 구현하며 이번 PR은 공통 코드를 변경하지 않는다.
+entry 분기는 헤더 형식 검증 뒤 기존 검증된 사용자에 대해 생성된 ACTIVE 저널의 읽기 전용 조회만 먼저 허용한다. 이 조회는 키·인덱스·양성/음성 캐시를 만들거나 TTL을 갱신하지 않으며, 해당 ID의 기존 저널이 없으면 아무 상태도 만들지 않는다. ACTIVE와 blockedUntil이 유효하면 기존 429를 즉시 반환하고 DB를 조회하지 않는다. 이 경로는 허용·권한 부여에 사용하지 않는 deny-only 조회다. 그 외 요청은 상태 변경을 하는 evaluateEntry보다 먼저 기존 CurrentUserArgumentResolver와 같은 헤더 형식·UserService.findById·DB 역할/멤버십 대조를 완료한다. 해당 handler의 @CurrentUser 조건을 그대로 사용하며 새 인증·권한 정책을 만들지 않는다. 현재 MVC에서는 preHandle이 argument resolver보다 앞서므로, 후속 구현은 기존 검증을 재사용 가능한 요청 단위 경계로 연결하고 검증된 User만 요청에 보관해 resolver의 재조회·중복 검증을 피한다. 공통 문맥 담당과 이 호출 순서·재사용 경계를 확인한 뒤 구현하며 이번 PR은 공통 코드를 변경하지 않는다.
 
-미등록 UUID·문맥 불일치·형식 오류는 기존 사용자 문맥 예외·오류 코드로 종료하며, 어떤 Redis 일반/거절 카운터·차단 키·저널·사용자 인덱스·대기·격리 항목도 만들거나 조회하지 않는다. 사용자 조회 DB 장애도 기존 공통 오류 처리로 넘기며 Redis 장애 fail-open catch에 포함하지 않는다. 검증되지 않은 ID를 키로 별도 영구 실패 레코드나 양성 캐시를 만들지 않는다. 따라서 임의의 미등록 UUID 반복으로 보존 대상 차단·격리 상태를 쌓는 경로를 차단한다. 검증 후 실제 사용자 삭제와 FK 저장 간 경합은 기존 저장 실패·격리 경계에서 다룬다.
+미등록 UUID·문맥 불일치·형식 오류는 기존 사용자 문맥 예외·오류 코드로 종료하며, 어떤 Redis 일반/거절 카운터·차단 키·저널·사용자 인덱스·대기·격리 항목도 생성·변경하지 않는다. 검증된 사용자만 생성할 수 있는 기존 ACTIVE의 읽기 외에는 미검증 ID 상태를 사용하지 않는다. 빠른 조회의 미차단 결과를 사용자 검증 성공으로 취급하지 않는다. 빠른 Redis 조회가 실패하면 이번 요청에서 모든 제한 평가·상태 쓰기를 생략하는 기존 fail-open을 적용하되 업무 진입 전 기존 사용자 문맥 검증은 수행한다. 사용자 조회 DB 장애도 기존 공통 오류 처리로 넘기며 Redis 장애 fail-open catch에 포함하지 않는다. 검증되지 않은 ID를 키로 별도 영구 실패 레코드나 양성 캐시를 만들지 않는다. 따라서 임의의 미등록 UUID 반복으로 보존 대상 차단·격리 상태를 쌓는 경로를 차단한다. 검증 후 실제 사용자 삭제와 FK 저장 간 경합은 기존 저장 실패·격리 경계에서 다룬다.
 
-이 검증은 등록 사용자와 헤더 문맥의 일치 확인이며 호출자 신원 인증은 아니다. 실재하는 다른 사용자의 ID·역할을 아는 호출자의 사칭까지 해결했다고 주장하지 않는다. 기존 시연용 헤더 정책의 한계이며 인증 방식 변경은 별도 범위다. 사용자 상태·업무별 자격 판정과 비응모 흐름은 기존 Service·resolver 계약을 유지한다.
+이 검증은 등록 사용자와 헤더 문맥의 일치 확인이며 호출자 신원 인증은 아니다. 실재하는 다른 사용자의 ID·역할을 아는 호출자의 사칭까지 해결했다고 주장하지 않는다. 기존 시연용 헤더 정책의 한계이며 인증 방식 변경은 별도 범위다. 빠른 차단 조회는 사용자 정보 캐시가 아니므로 삭제·역할·멤버십 변경에 따른 오래된 검증 결과로 요청을 허용하지 않는다. 차단이 없거나 끝나면 반드시 현재 DB 문맥을 검증한다. 기존 ACTIVE가 있는 삭제·문맥 변경 사용자에게는 종료 전 429가 우선할 수 있으며 권한을 부여하거나 차단을 연장하지 않는다. 사용자 상태·업무별 자격 판정과 비응모 흐름은 기존 Service·resolver 계약을 유지한다.
 
 ## Redis 처리 순서
 
-1. entry guard와 사용자 존재·문맥 검증을 통과한 요청만 빠른 조회에 진입한다. 빠른 조회에서도 저널의 ACTIVE와 blockedUntil을 확인하고, Redis 서버 현재 시각보다 종료가 뒤일 때만 429를 반환한다. Retry-After는 ceil(blockedUntil - now)의 초 값이다. 키 TTL은 최적화·정리 힌트이며 차단 유효성이나 응답 시간의 원본이 아니다. 캐시가 먼저 만료되면 저널로 확인하고, 캐시 TTL이 길어도 blockedUntil이 지났으면 차단하지 않는다. 집계와 이력 생성, TTL 연장은 하지 않는다.
+1. entry guard와 헤더 형식 검증 뒤 위 읽기 전용 빠른 차단 조회를 수행한다. 미차단 요청은 사용자 존재·문맥 검증을 완료한 뒤에만 2번의 쓰기 평가에 진입한다. 빠른 조회에서도 저널의 ACTIVE와 blockedUntil을 확인하고, Redis 서버 현재 시각보다 종료가 뒤일 때만 429를 반환한다. Retry-After는 ceil(blockedUntil - now)의 초 값이다. 키 TTL은 최적화·정리 힌트이며 차단 유효성이나 응답 시간의 원본이 아니다. 캐시가 먼저 만료되면 저널로 확인하고, 캐시 TTL이 길어도 blockedUntil이 지났으면 차단하지 않는다. 집계와 이력 생성, TTL 연장은 하지 않는다.
 2. entry guard 안에서 빠른 조회에 차단이 없더라도 evaluateEntry 내부에서 ACTIVE를 원자적으로 재확인한다. 이미 활성화됐으면 아무 집계·이력 변경 없이 기존 차단 429를 반환한다. 없을 때만 같은 평가 안에서 일반 제한과 거절 횟수를 평가한다. 구간 길이는 policy.window()를 사용하고 각 거절 카운터는 대응하는 일반 요청 구간과 함께 만료한다. 첫 429에서 별도 구간을 만들지 않는다.
 3. 차단 기준 도달 시 2번과 동일한 원자 평가 안에서 차단 생성·DB 저장 대기 등록·최초 ACTIVE 전환을 완료한다. 평가 반환 뒤 별도 명령으로 활성화하지 않는다. 사용자 전체·이벤트 기준이 동시에 충족되어도 차단 한 건만 만든다.
 4. 차단 값과 대기 데이터에 최초 시작·종료 시각과 DB 기록용 식별자·근거를 보존한다. TTL만으로 최초 시작 시각을 재계산하지 않는다.
@@ -74,6 +74,14 @@ Redis 장애 응답은 이미 신뢰할 수 있는 제한 판정이 있는지를
 | 활성 차단 또는 새 차단 결과를 정상 확인 | 429와 확인된 blockedUntil 기준 남은 차단 초 반환 |
 
 응모 평가에서 일반 거절 판정 뒤 후속 Redis 명령이 실패하는 경우에는 이미 확정한 일반 판정·Retry-After를 담은 오류 결과와 '판정 전 실패'를 구분해야 한다. 확정은 API가 신뢰할 수 있는 일반 제한 결과를 수신한 상태를 뜻한다. Redis 평가가 일반 거절 뒤 집계 실패를 감지하면 원래 Retry-After와 함께 DENY_RECORDING_FAILED 같은 내부 결과 태그를 반환하도록 하며, 명령 응답 자체를 잃어 결과를 모르는 경우와 구분한다. 광범위한 RuntimeException catch로 둘 다 통과 처리하지 않는다. 차단 전환 결과가 확정됐는지 알 수 없는 후속 오류에서는 확인된 일반 429를 유지하고, 다음 요청이 아래 저널로 실제 활성 여부를 확인한다. Redis 복구 이후 남은 상태에 따라 제한이 다시 적용될 수 있다.
+
+### 거절 기록 실패의 결과와 재실행 범위
+
+DENY_RECORDING_FAILED는 result=RATE_LIMITED의 recordingStatus 값이며 네 번째 HTTP 판정이 아니다. 일반 제한 판정이 완료되고 해당 판정의 원래 retryAfterSeconds를 포함한 응답을 정상 수신했을 때만 신뢰한다. 응답 전체를 잃었거나 일반 판정 전에 실패하면 이 값을 합성하지 않고 기존 판정 전 fail-open으로 처리한다.
+
+각 HTTP 요청의 evaluateEntry는 한 번만 호출하며 클라이언트의 Redis 명령 자동 재전송·네트워크 재시도 및 예외 처리기 재호출을 금지한다. 거절 카운터는 같은 평가에서 계산한 USER·EVENT 변경값을 한 상태 쓰기 명령으로 함께 확정해 두 범위 사이의 부분 증가를 피한다. 메모리도 사용자 임계 구역에서 같은 상태 스냅샷을 한 번 교체한다. 따라서 동일 요청의 거절 기록을 별도 큐로 재생하지 않으며 재집계용 멱등키도 추가하지 않는다. 일반 429가 확정된 뒤 해당 쓰기 자체가 실패한 요청은 횟수 기록이 누락될 수 있는 Redis 장애 경로로 명시하고 원래 429·경고를 유지한다. 저장소 장애 중 정확한 집계까지 보장한다고 표현하지 않는다.
+
+카운터 반영 뒤 차단 준비·활성화가 실패해도 원래 요청의 일반·거절 카운터를 다시 올리지 않는다. 다음 별도 HTTP 요청은 최초에 ACTIVE를 재확인하고, 없으면 그 요청에 대해서만 현재 구간을 평가한다. USER·EVENT는 ==가 아닌 >=로 임계값을 검사해 직전 실패로 임계값을 넘긴 경우도 재판정한다. 만료된 구간을 되살리거나 과거 실패를 새 구간에 옮기지 않는다. ACTIVE가 확정된 건의 복구만 아래 저널과 같은 blockId로 진행하고 미활성 PREPARED는 기존 규칙대로 정리한다. 이는 실패한 요청 재생에 의한 소급 차단이 아니다. 이 동작은 Redis·메모리에서 동일하며 운영 응답 실패를 이유로 동일 요청을 내부 재집계하지 않는다.
 
 ### 차단·저널·대기 등록의 부분 실패 복구
 
@@ -125,7 +133,7 @@ UUID 형식의 이벤트 경로 값은 집계용 scope일 뿐 실제 이벤트 F
 
 event_id는 현재 V009의 nullable 컬럼이며 `events.id` FK를 유지한다. 차단을 유발한 요청에서 유효한 이벤트를 확인할 수 있으면 그 ID를 저장하고, 확인할 수 없으면 NULL이다. 사용자 전체 차단을 해당 이벤트에만 한정하는 값이나 응모 기록 ID로 사용하지 않는다.
 
-현재 PR 기준 abuse_cases에는 event_entry_id 컬럼·FK가 없다. 이번 목표 스키마에도 추가하지 않는다. 응모 처리 전 차단에는 원본 응모 행이 필요하지 않으며 사용자·관련 이벤트·evidence로 근거를 남긴다. 기존 attendance_id·mission_submission_id·game_play_id의 nullable·FK는 유지하되 신규 ENTRY 차단 행에는 모두 NULL을 저장한다.
+현재 PR 기준 abuse_cases에는 event_entry_id 컬럼·FK가 없다. 이번 목표 스키마에도 추가하지 않는다. 응모 처리 전 차단에는 원본 응모 행이 필요하지 않으며 사용자·관련 이벤트·evidence로 근거를 남긴다. 기존 attendance_id·mission_submission_id·game_play_id의 nullable·FK는 유지하되 신규 ENTRY 차단 행에는 모두 NULL을 저장한다. 새 마이그레이션은 CHECK(source_type <> 'ENTRY' OR (attendance_id IS NULL AND mission_submission_id IS NULL AND game_play_id IS NULL))로 이 조합을 강제하고 core 생성·mapper도 동일한 잘못된 조합을 거절한다.
 
 닉네임·이벤트 제목은 조회에서 조인해 DTO로 제공하며 차단 테이블에 중복 저장하지 않는다. 현재 차단 여부 boolean도 저장하지 않는다. 종료 예정 시각이 지나도 이력 행을 수정하지 않는다. 수동 해제·차단 시간 연장 기능은 이번 범위에 없다.
 
@@ -160,7 +168,7 @@ USER 임계값만 도달하면 triggerScope=USER, EVENT 임계값만 도달하�
 
 ### 시각 기록과 재시도 불변성
 
-서버가 임계값 도달 요청을 받은 시각을 occurred_at으로 전달하고, Redis 원자 처리에서 한 번 읽은 서버 시각을 detected_at과 blocked_at에 동일하게 사용한다. blocked_until은 이 blocked_at과 당시 적용한 차단 기간으로 한 번 계산한다. 최초 차단 생성에 성공한 한 요청의 시각만 차단 값·저장 대기 건에 보존하며, 동시에 기준에 도달한 다른 요청의 수신 시각으로 교체하지 않는다.
+서버가 임계값 도달 요청을 받은 시각을 occurred_at으로 전달하고, Redis 원자 처리에서 한 번 읽은 서버 시각을 detected_at과 blocked_at에 동일하게 사용한다. blocked_until은 이 blocked_at과 당시 적용한 차단 기간으로 한 번 계산한다. 초기 운영 설정은 공용 정책의 10분이므로 blockedUntil=blockedAt+10분이며, 공용 규칙이 명시한 코드 수정 없는 조정을 위해 기간 설정은 유지한다. 설정을 바꾸더라도 이미 생성된 차단의 최초 blockedUntil·TTL·이력은 갱신하지 않는다. 최초 차단 생성에 성공한 한 요청의 시각만 차단 값·저장 대기 건에 보존하며, 동시에 기준에 도달한 다른 요청의 수신 시각으로 교체하지 않는다.
 
 DB 저장 작업자는 대기 건의 occurred_at·detected_at·blocked_at·blocked_until을 그대로 사용한다. 저장 재시도·중복 전달·작업자 재시작 시 현재 시각이나 TTL로 다시 계산하지 않는다. DB에 넣을 시각은 DATETIME(6) 정밀도로 한 번 정규화해 대기 건에도 같은 값으로 저장한다. API는 이 중 blockedAt·blockedUntil만 노출한다.
 
@@ -206,5 +214,6 @@ startedAt·endsAt·occurred_at·detected_at·blocked_at·blocked_until은 모두
 - UTC 시각의 Redis·MySQL·JDBC·API 왕복, TTL과 blockedUntil 불일치, ALLOWED/RATE_LIMITED/BLOCKED 및 결과 수신 뒤 실패의 HTTP 변환을 검증한다.
 - 기존 entry 창의 자연 만료 전·후 전환, 구·신 writer 혼재 차단, 미저장·격리·ACTIVE가 남은 롤백 중단을 검증한다. 후속 요청 없는 성공 건 정리·backoff·영구 실패 격리·같은 payload 재처리와 종료 전 차단 유지도 검증한다.
 - UUID 형식이 맞지만 미존재 이벤트인 요청의 일반 허용 뒤 404와 한도 초과 429를 구분하고, event_id=NULL·EVENT 근거 저장과 이벤트 조회 실패가 제한 판정을 덮지 않는지 검증한다.
-- 미등록 UUID 대량 요청·역할/멤버십 불일치·사용자 조회 장애가 Redis 평가 전에 기존 오류로 종료되고 카운터·저널·대기·격리 상태를 하나도 만들지 않는지 검증한다. 정상 사용자는 DB 조회 결과를 요청 내 재사용하고 사용자 삭제 경합은 보존·격리 경계로 전달되는지 확인한다.
+- 미등록 UUID 대량 요청·역할/멤버십 불일치·사용자 조회 장애가 쓰기 평가 전에 기존 오류로 종료되고 카운터·저널·대기·격리 상태를 하나도 만들지 않는지 검증한다. 기존 검증 사용자 ACTIVE의 읽기 전용 429 경로는 DB 조회 0회·상태 쓰기 0회이며 만료 뒤 DB 문맥을 다시 검증하는지 확인한다. 정상 사용자는 DB 조회 결과를 요청 내 재사용하고 사용자 삭제 경합은 보존·격리 경계로 전달되는지 확인한다.
+- recordingStatus와 HTTP 결과 조합, 명령 응답 유실·카운터 쓰기 전/후 실패, 동일 요청 내부 재호출 금지, 다음 별도 요청의 >= 재판정과 구간 만료 후 과거 거절 미반영을 검증한다. ENTRY에 비응모 원본 FK를 넣으면 core·mapper·DB에서 거절하는지 확인한다.
 - 실제 연동 후 전체 ./gradlew test, ./gradlew build. 일부 테스트나 설계 문서 검증을 구현 완료로 표현하지 않는다.
