@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -343,10 +344,13 @@ class AdminAttendancePolicyServiceTest {
 		verify(auditLogs).record(audit.capture());
 		assertThat(audit.getValue().getAction()).isEqualTo("ATTENDANCE_STREAK_POLICY_UPDATE");
 		assertThat(audit.getValue().getTargetId()).isEqualTo(setId);
-		assertThat(audit.getValue().getBeforeData()).containsKey("milestones")
-				.containsEntry("effectiveMonth", "2026-11-01");
-		assertThat(audit.getValue().getAfterData()).containsKey("milestones")
-				.containsEntry("effectiveMonth", "2026-11-01");
+		assertThat(audit.getValue().getBeforeData())
+				.containsEntry("effectiveMonth", "2026-11-01")
+				.containsEntry("milestones", List.of(Map.of("milestoneDays", 7, "rewardTicketCount", 1)));
+		assertThat(audit.getValue().getAfterData())
+				.containsEntry("effectiveMonth", "2026-11-01")
+				.containsEntry("milestones", List.of(Map.of("milestoneDays", 7, "rewardTicketCount", 2),
+						Map.of("milestoneDays", 28, "rewardTicketCount", 7)));
 	}
 
 	@Test
