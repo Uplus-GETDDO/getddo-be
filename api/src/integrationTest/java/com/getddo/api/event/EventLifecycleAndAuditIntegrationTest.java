@@ -100,7 +100,7 @@ class EventLifecycleAndAuditIntegrationTest {
 		UUID published = seed("PUBLISHED", -7200, -3600);
 		UUID deleted = seed("SCHEDULED", -7200, -3600);
 		jdbc.update("update events set deleted_at=? where id=?", utc(NOW), bytes(deleted));
-		// GD-86은 저장 상태가 늦게 반영돼도 마감 +5분부터 최초 추첨을 허용한다.
+		// GD-86은 저장 상태가 늦게 반영돼도 마감 +1분부터 최초 추첨을 허용한다.
 		assertThat(drawings.findInitialDue()).contains(missed);
 		// when / then
 		assertThat(lifecycle.advanceDue(20)).isEqualTo(3);

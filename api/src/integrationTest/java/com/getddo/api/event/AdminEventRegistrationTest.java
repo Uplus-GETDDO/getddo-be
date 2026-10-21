@@ -50,7 +50,7 @@ class AdminEventRegistrationTest {
 				.andExpect(jsonPath("$.data.status").value("SCHEDULED"))
 				.andExpect(jsonPath("$.data.startsAt").value("2099-09-30T09:00:00Z"))
 				.andExpect(jsonPath("$.data.publicationScheduledAt").doesNotHaveJsonPath())
-				.andExpect(jsonPath("$.data.drawScheduledAt").value("2099-09-30T10:05:00Z"))
+				.andExpect(jsonPath("$.data.drawScheduledAt").value("2099-09-30T10:01:00Z"))
 				.andExpect(jsonPath("$.data.createdBy").doesNotHaveJsonPath())
 				.andExpect(jsonPath("$.data.suspendedFromStatus").doesNotHaveJsonPath())
 				.andExpect(jsonPath("$.data.suspendedAt").doesNotHaveJsonPath())
