@@ -110,3 +110,68 @@ CI 성공은 테스트·이미지 빌드·파일 보관 성공을 뜻한다. CD 
 서버 교체·응답 검증이 성공한 뒤 별도 publish 작업이 실제 배포 SOURCE_SHA에 버전 태그와 GitHub Release를 생성한다. 첫 버전은 v0.1.0이며 이후 패치를 증가시키고 같은 커밋의 재실행은 재사용한다. 이미지 자체는 SHA로 식별한다. 정기·수동 main 배포 모두 적용하며 자세한 정책과 설정은 [정기 릴리스 런북](daily-release.md#배포-성공-후-버전-발행)을 참고한다.
 
 publish 작업 실패는 이미 성공한 서버 배포를 롤백하지 않는다. 이때 CD 전체는 실패로 표시되므로 서버 교체 실패와 버전 발행 실패를 작업별로 구분한다. 서버가 실행하는 SHA와 기존 태그·Release를 확인한 뒤 실패 작업을 재실행한다.
+
+## GD-278: C 최초 배포와 A → C 순차 배포
+
+이 절은 코드 동작과 준비 조건이며 실제 AWS 배포·두 JVM 안전성·서비스 용량 검증 완료를 뜻하지 않는다. 정기 승격과 일반 main push 모두 기존 `Build` 성공 트리거를 사용한다. `production`은 GitHub Environment 이름이며 AWS 환경 차원은 `dev`다.
+
+### 모드와 활성화 조건
+
+기존 `EC2_INSTANCE_ID`와 `DEPLOY_MODE=single`(미설정 기본값)은 단일 서버 배포를 유지한다. 두 JVM 워커 안전성, DB 연결 예산, 구/신 앱·Flyway 호환성, 한 서버의 요청 처리 여유를 확인하고 C를 Terraform으로 등록해 **A/C 둘 다 healthy**가 된 뒤에만 Environment Variables를 다음과 같이 설정한다. 이 코드는 변수를 등록하거나 Terraform attachment를 변경하지 않는다.
+
+| 변수 | 값 |
+| --- | --- |
+| `DEPLOY_MODE` | `rolling` |
+| `ROLLING_DEPLOY_ENABLED` | `true`: 인프라·두 JVM 검증 통과 후 명시적 활성화 |
+| `EC2_INSTANCE_ID_A` / `EC2_INSTANCE_ID_C` | 서로 다른 정확한 EC2 ID. 태그 검색·와일드카드 사용 안 함 |
+| `TARGET_GROUP_ARN` | 동일 계정·리전, instance 유형, 포트 8080 대상 그룹 ARN |
+
+한 번 검증한 이미지·체크섬·Compose를 한 S3 객체로 올리고 양쪽에 동일 키·체크섬을 전달한다. 계정·VPC·실행 상태·SSM Online·두 대상 healthy와 미완료 배포 기록을 확인한다. C healthy → A 제외 → draining 종료(`unused`) → 기존 단일 호스트 엔진 교체·로컬 HTTP 및 이미지 확인 → A 재등록·healthy → 2분간 연속 정상 확인을 거친 뒤 C에 같은 순서를 적용한다. draining/healthy 전이는 각각 최대 300초, SSM 명령 실행은 1800초, 결과 대기는 2040초다. 상대 대상은 각 전이·교체·등록 직전과 대기 중 확인한다. 두 호스트 전체 성공 뒤에만 기존 publish 작업이 버전을 발행한다.
+
+### 초기 C: 실제 정상 A의 승인 산출물만 사용
+
+초기화는 자동 CD의 활성화 모드가 아니다. 검토한 도구 checkout(`TOOL_SHA`)에서 `deploy-ssm.py`를 수동 실행하며 아래 값과 기존 AWS/실행 변수들을 모두 설정한다. `TOOL_SHA`는 실행할 검토된 도구 checkout의 커밋을 뜻하며 환경변수로 코드를 자동 다운로드하지 않는다. 실행 전에 운영자가 checkout HEAD를 검토된 SHA와 대조한다.
+
+| 변수/입력 | 의미 |
+| --- | --- |
+| `DEPLOY_MODE=initial-c` | C만 초기화. A 교체·ALB 등록/제외 없음 |
+| `SOURCE_SHA`, `APPROVED_BASELINE_SHA` | A에서 실제 정상 실행 중이라고 승인한 동일 커밋 |
+| `APPROVED_BASELINE_IMAGE_ID` | 실제 A에서 확인하고 보존한 정확한 `sha256:...` ID |
+| `APP_SOURCE_DIR` | 그 커밋의 별도 checkout. Compose·설정 조회 파일에 미커밋 변경 없어야 함 |
+| `RUNNER_TEMP/container-image/` | 기존 CI의 `image.tar.gz`, 체크섬, `image-id.txt`. 재빌드로 대체하지 않음 |
+| `GITHUB_RUN_ID`, `GITHUB_RUN_ATTEMPT` | 수동 작업에도 충돌하지 않는 숫자 실행·시도 ID |
+
+Compose와 Parameter Store 조회 스크립트는 `APP_SOURCE_DIR`에서 고정한다. 전달·잠금·기존 롤백 엔진과 비밀 아닌 호스트 설정 주입 helper는 검토한 도구 checkout을 사용한다. A의 current 이미지·실제 실행 컨테이너 이미지·revision·HTTP를 읽기 전용 확인하고, C가 미등록이며 current 링크가 없는 상태에서만 진행한다. A의 파일·앱은 변경하지 않는다. 초기 C는 `GETDDO_METRICS_ENABLED=false`로 기존 이미지의 지표 지원을 가정하지 않는다. 성공해도 C를 등록하지 않으며 버전 Release를 발행하지 않는다. C의 DB 사용 읽기·Redis TLS·로그·워커 안전성을 확인한 뒤 정상 연결은 Terraform에서 별도 승인·적용한다.
+
+원본 CI 파일이 만료되었으면 **같은 SHA 재빌드 = 같은 이미지**로 취급하지 않는다. 승인한 실제 이미지와 파일을 확보하거나 별도 릴리스 결정을 먼저 한다. AWS 자격 증명은 기존 인증 체인을 사용하고 비밀값을 쉘 명령·SSM payload에 넣지 않는다.
+
+### 호스트별 지표 설정과 복구
+
+기존 필수 Parameter Store 14개는 그대로 조회·검증한다. 공유 Store에 server 값을 만들지 않는다. 조회 성공 후 root 소유 600 임시 env에 검증된 아래 비밀 아닌 값만 주입한다. 중복 키·서버 값 a/c 이외·활성값 true/false 이외·링크 파일은 거부한다. Compose raw env 파일을 그대로 사용하므로 Compose 변경은 필요 없다.
+
+| 앱 환경변수 | 값 |
+| --- | --- |
+| `GETDDO_METRICS_SERVER` | 해당 대상 `a` 또는 `c` |
+| `GETDDO_METRICS_ENABLED` | rolling은 `true`, initial-c는 `false` |
+| `GETDDO_METRICS_ENVIRONMENT` | `dev` |
+| `GETDDO_METRICS_NAMESPACE` | `GETDDO/API` |
+| `GETDDO_METRICS_STEP` | `60s` |
+| `AWS_REGION` | 기존 필수 조회 값 `ap-northeast-2` |
+
+단일 기본 모드에서는 새 지표 값을 주입하지 않는다. 새 env 전체가 기존 엔진의 검증·백업·원자적 교체 대상이므로 실패 시 서버 식별자·활성 플래그도 이전 env와 함께 복원된다. 전송 활성화 자체는 GD-276 구현과 namespace 제한 EC2 IAM 준비 뒤 적용한다.
+
+### 잠금·실패·재시도
+
+GitHub concurrency는 진행 중 실행을 취소하지 않는다. single/rolling/initial-c 모두 전용 버킷의 `locks/container-deploy.json`을 조건부 생성해 운영 잠금을 공유한다. rolling/initial-c의 호스트 명령은 `/opt/getddo/orchestration.lock`을 다운로드부터 엔진 종료까지 보유하고 기존 `deploy.lock`·미완료 마커 검사를 재사용한다. 최초 C 수동 작업도 자동 CD와 겹치지 않게 한다. 배포 중 Terraform apply를 하지 않는다.
+
+- A 실패는 C를 시작하지 않는다. C 실패는 정상 새 A를 유지한다. 실패한 해당 **명령**에서 이전 앱의 HTTP·이미지·설정 복구와 마커 정리를 모두 확인한 `ROLLBACK_CONFIRMED_HEALTHY`가 있어야만 해당 대상을 재등록한다. 복구 성공이어도 전체 배포는 실패한다. 과거 `ROLLBACK_OK`나 재실행 기록으로 우회하지 않는다.
+- 롤백·기록 정리 실패, draining 시간 초과, 상대 unhealthy, 등록 이후 안정화 실패는 다음 서버를 중단하고 운영 잠금을 보존한다. 정상 상대가 확인되는 경우에만 안정화 실패 대상을 다시 제외한다. 상대도 unhealthy이면 자동으로 등록/제외를 강행하지 않는다.
+- SSM send 응답 유실, 조회 오류, 시간 초과·취소 등은 종료 증거가 아니다. 운영 잠금을 보존하고 새 SSM·자동 재등록·다음 서버를 실행하지 않는다. 단일 모드 실패도 잠금을 보존한다.
+- 재시도 전에 운영자가 잠금 metadata의 run/attempt, Actions에 출력된 Command ID, SSM 최종 상태, 호스트 실행 프로세스·잠금·미완료 기록, current 이미지·env·HTTP 및 ALB 상태를 확인한다. 다른 실행이 진행 중이지 않고 복구가 확인된 뒤에만 지정한 잠금 객체를 수동 해제한다. 마커는 원인을 확인하지 않고 지우지 않는다. S3 잠금을 lifecycle로 자동 만료시키지 않는다.
+- 첫 C 앱 실패는 기존 엔진으로 신규 앱 중지·이전 env 상태 복원을 시도한다. 중지 실패도 미완료 마커를 보존하며 ALB에는 등록하지 않는다.
+
+### 최소 IAM 변경과 검증 범위
+
+OIDC 역할에 정확한 `releases/*` 쓰기 외 **해당 버킷의 `locks/container-deploy.json` 한 객체**에 `s3:PutObject`·`s3:DeleteObject`가 필요하다. 정상 단일 모드도 이 잠금 권한을 먼저 준비한다. 대상 조회용 `ec2:DescribeInstances`·`ssm:DescribeInstanceInformation`, 대상 그룹 조회/health 조회, 해당 TG만의 `elasticloadbalancing:RegisterTargets`·`DeregisterTargets`, 정확한 A/C 인스턴스·AWS-RunShellScript에 한정한 기존 SSM 권한을 준비한다. 조회 API의 리소스 범위 제한 가능 여부는 IAM 정책에서 구분한다. EC2 런타임 역할과 GitHub 역할을 혼동하거나 관리자 권한을 추가하지 않는다. 정상 attachment는 Terraform이 계속 관리한다. CloudFormation/RDS 자원 변경은 없다.
+
+오프라인 회귀 검증은 `python3 -m unittest discover -s .github/tests`로 수행한다. 이 검증은 AWS 모의 응답·배포 엔진 테스트 대역이며 실제 SSM/ALB/DB/Redis/CloudWatch 운영 검증과 구분한다. CI에서 Container CD도 인증 전에 이 회귀 검증을 실행한다.

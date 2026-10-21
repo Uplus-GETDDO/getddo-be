@@ -33,7 +33,7 @@ jobs:
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     environment: production
     env:
       # workflow_run의 기본 GITHUB_SHA는 기본 브랜치의 커밋일 수 있다.
@@ -44,6 +44,12 @@ jobs:
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
       DEPLOY_BUCKET: ${{ vars.DEPLOY_BUCKET }}
       EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+      # 미설정 시 기존 A 단일 서버 동작. 두 JVM/인프라 검증 후 두 값을 명시적으로 활성화한다.
+      DEPLOY_MODE: ${{ vars.DEPLOY_MODE || 'single' }}
+      ROLLING_DEPLOY_ENABLED: ${{ vars.ROLLING_DEPLOY_ENABLED }}
+      EC2_INSTANCE_ID_A: ${{ vars.EC2_INSTANCE_ID_A }}
+      EC2_INSTANCE_ID_C: ${{ vars.EC2_INSTANCE_ID_C }}
+      TARGET_GROUP_ARN: ${{ vars.TARGET_GROUP_ARN }}
       AWS_PAGER: ''
 
     steps:
@@ -52,6 +58,9 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
+
+      - name: 배포 스크립트 회귀 검증
+        run: python3 -m unittest discover -s .github/tests
 
       - name: 배포 설정과 현재 main 확인
         env:
