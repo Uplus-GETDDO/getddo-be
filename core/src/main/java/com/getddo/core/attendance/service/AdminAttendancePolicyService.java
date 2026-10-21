@@ -147,15 +147,15 @@ public class AdminAttendancePolicyService {
 			throw new AttendanceException(AttendanceErrorCode.INVALID_POLICY);
 		}
 		DailyAttendancePolicy current = repository.findDailyPolicyForUpdate(policyId)
-				.orElseThrow(() -> new AttendanceException(AttendanceErrorCode.POLICY_NOT_FOUND));
+				.orElseThrow(() -> new AttendanceException(AttendanceErrorCode.UPDATE_TARGET_POLICY_NOT_FOUND));
 		if (current.hasStartedAt(timeProvider.now())) {
 			throw new AttendanceException(AttendanceErrorCode.POLICY_ALREADY_STARTED);
 		}
 		DailyAttendancePolicy updated = repository.updateDailyRewardTicketCount(policyId, rewardTicketCount);
+		String effectiveFrom = current.getEffectiveFrom().toString();
 		auditLogs.record(new AuditLogCommand(admin.getId(), DAILY_UPDATE, TARGET_DAILY, policyId, null,
-				Map.of("rewardTicketCount", current.getRewardTicketCount()),
-				Map.of("rewardTicketCount", rewardTicketCount, "effectiveFrom", current.getEffectiveFrom().toString()),
-				null));
+				Map.of("rewardTicketCount", current.getRewardTicketCount(), "effectiveFrom", effectiveFrom),
+				Map.of("rewardTicketCount", rewardTicketCount, "effectiveFrom", effectiveFrom), null));
 		return updated;
 	}
 
@@ -173,22 +173,26 @@ public class AdminAttendancePolicyService {
 		requireActiveAdmin(admin);
 		requireValidMilestones(milestones);
 		StreakPolicyRecord current = repository.findStreakPolicyForUpdate(policySetId)
-				.orElseThrow(() -> new AttendanceException(AttendanceErrorCode.POLICY_NOT_FOUND));
+				.orElseThrow(() -> new AttendanceException(AttendanceErrorCode.UPDATE_TARGET_POLICY_NOT_FOUND));
 		if (current.hasStartedOn(timeProvider.toKst(timeProvider.now()).toLocalDate())) {
 			throw new AttendanceException(AttendanceErrorCode.POLICY_ALREADY_STARTED);
 		}
 		StreakPolicyRecord updated = repository.replaceStreakMilestones(policySetId, milestones);
+		String effectiveMonth = current.getEffectiveMonth().toString();
 		auditLogs.record(new AuditLogCommand(admin.getId(), STREAK_UPDATE, TARGET_STREAK, policySetId, null,
-				Map.of("milestones", current.getMilestones().stream()
-						.map(m -> Map.of("milestoneDays", m.getMilestoneDays(), "rewardTicketCount",
-								m.getRewardTicketCount()))
+				Map.of("effectiveMonth", effectiveMonth, "milestones", current.getMilestones().stream()
+						.map(m -> milestoneAudit(m.getMilestoneDays(), m.getRewardTicketCount()))
 						.toList()),
-				Map.of("effectiveMonth", current.getEffectiveMonth().toString(), "milestones", milestones.stream()
-						.map(m -> Map.of("milestoneDays", m.getMilestoneDays(), "rewardTicketCount",
-								m.getRewardTicketCount()))
+				Map.of("effectiveMonth", effectiveMonth, "milestones", milestones.stream()
+						.map(m -> milestoneAudit(m.getMilestoneDays(), m.getRewardTicketCount()))
 						.toList()),
 				null));
 		return updated;
+	}
+
+	/** 감사 기록에 담을 연속 출석 단계 한 건. 수정 전·후가 같은 모양이 되도록 한 곳에서 만든다. */
+	private static Map<String, Integer> milestoneAudit(int milestoneDays, int rewardTicketCount) {
+		return Map.of("milestoneDays", milestoneDays, "rewardTicketCount", rewardTicketCount);
 	}
 
 	private static void requireValidMilestones(List<MilestoneDraft> milestones) {

@@ -23,7 +23,7 @@ public enum AttendanceErrorCode implements ErrorCode {
 	/** 다음 기준월에 적용할 연속 출석 정책이 이미 예약돼 있다. */
 	STREAK_POLICY_ALREADY_SCHEDULED(409, "ATTENDANCE-005", "다음 적용월에 이미 예약된 연속 출석 정책이 있습니다."),
 	/** 수정하려는 일일·연속 출석 정책이 없다. */
-	POLICY_NOT_FOUND(404, "ATTENDANCE-006", "출석 정책을 찾을 수 없습니다."),
+	UPDATE_TARGET_POLICY_NOT_FOUND(404, "ATTENDANCE-006", "출석 정책을 찾을 수 없습니다."),
 	/** 수정하려는 정책이 이미 적용을 시작했거나 끝났다. 아직 시작하지 않은 예약 정책만 수정할 수 있다. */
 	POLICY_ALREADY_STARTED(409, "ATTENDANCE-007", "이미 적용을 시작한 출석 정책은 수정할 수 없습니다.");
 

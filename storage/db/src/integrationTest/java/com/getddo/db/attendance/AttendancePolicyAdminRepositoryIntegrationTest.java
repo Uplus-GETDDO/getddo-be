@@ -52,10 +52,11 @@ class AttendancePolicyAdminRepositoryIntegrationTest extends AttendanceIntegrati
 	}
 
 	@Test
-	@DisplayName("연속 출석 정책의 단계를 같은 일수를 포함해 통째로 바꿔도 UNIQUE에 걸리지 않고 적용월·다른 묶음은 그대로다")
+	@DisplayName("연속 출석 정책의 단계를 같은 일수를 포함해 통째로 바꿔도 UNIQUE에 걸리지 않고 적용월과 다른 달 묶음의 단계는 그대로다")
 	void replacesStreakMilestonesWithSameDays() {
 		// given
 		UUID setId = policies.streakPolicySet(adminId, NOVEMBER, Map.of(7, 1, 14, 2));
+		UUID otherSetId = policies.streakPolicySet(adminId, LocalDate.parse("2026-12-01"), Map.of(7, 1, 14, 2, 21, 3));
 		// when
 		StreakPolicyRecord found = transaction.execute(status -> repository.findStreakPolicyForUpdate(setId))
 				.orElseThrow();
@@ -74,6 +75,23 @@ class AttendancePolicyAdminRepositoryIntegrationTest extends AttendanceIntegrati
 		assertThat(count("select count(*) from attendance_streak_policies where policy_set_id = ?",
 				(Object) bytes(setId))).isEqualTo(2);
 		assertThat(count("select count(*) from attendance_streak_policy_sets where id = ?", (Object) bytes(setId)))
+				.isEqualTo(1);
+		assertThat(count("select count(*) from attendance_streak_policies where policy_set_id = ?",
+				(Object) bytes(otherSetId))).isEqualTo(3);
+	}
+
+	@Test
+	@DisplayName("출석이 아닌 보상 정책은 잠가 읽지도 수량을 바꾸지도 않는다")
+	void ignoresNonAttendancePolicies() {
+		// given
+		UUID missionPolicyId = seeds.missionRewardPolicy(adminId);
+		// when
+		Optional<DailyAttendancePolicy> found = transaction
+				.execute(status -> repository.findDailyPolicyForUpdate(missionPolicyId));
+		transaction.execute(status -> repository.updateDailyRewardTicketCount(missionPolicyId, 4));
+		// then
+		assertThat(found).isEmpty();
+		assertThat(count("select reward_ticket_count from reward_policies where id = ?", (Object) bytes(missionPolicyId)))
 				.isEqualTo(1);
 	}
 }

@@ -1,7 +1,7 @@
 # GD-219·GD-270 관리자 출석 정책 조회·등록·예약 수정
 
 - 작업 브랜치: `feat/GD-219`
-- 공용 계약 원본: [출석 API](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/05-api/attendance.md)의 AP01~AP04, 정책 규칙은 [출석 도메인 규칙](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/02-domain/attendance.md)의 정책 변경. 이 문서는 백엔드 구현 범위와 판단만 설명한다.
+- 공용 계약 원본: [출석 API](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/05-api/attendance.md)의 AP01~AP06, 정책 규칙은 [출석 도메인 규칙](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/02-domain/attendance.md)의 정책 변경. 이 문서는 백엔드 구현 범위와 판단만 설명한다.
 
 ## 구현된 경로
 
@@ -26,6 +26,7 @@
 - 연속 정책의 단계는 삭제 뒤 같은 트랜잭션에서 다시 저장한다. `(policy_set_id, milestone_days)` UNIQUE와 부딪히지 않도록 삭제를 먼저 DB에 반영한다.
 - 수정은 감사 기록을 남긴다(`ATTENDANCE_DAILY_POLICY_UPDATE`, `ATTENDANCE_STREAK_POLICY_UPDATE`). 수정 전·후 보상 수량(일일) 또는 단계 목록(연속)을 담는다.
 - 예약 취소(삭제)와 적용 시점 변경은 제공하지 않는다.
+- **적용 시작 순간의 한계**: 출석 처리의 정책 조회는 잠금 없이 읽는다. 수정 트랜잭션이 적용 시작 시각 전에 시작해 시작 이후에 커밋되면, 그 몇 밀리초 동안 들어온 출석이 이전 보상 수량을 읽을 수 있다. 연속 정책은 단계를 삭제 뒤 다시 저장하므로 같은 순간에 출석이 그 단계를 지급 근거로 저장하려 하면 외래 키 오류로 그 요청 하나가 실패할 수 있고 사용자가 다시 요청하면 된다. 출석 청구는 지급 시점의 정책 ID와 수량을 그대로 저장하고 중복 지급은 UNIQUE가 막으므로 데이터가 어긋나지는 않는다. 출석 조회에 `FOR SHARE`를 두면 모든 출석 요청이 정책 행을 공유 잠금하는 비용이 생겨 두지 않았다. 필요하면 적용 시작 직전 일정 시간 동안 수정을 막는 방식을 검토한다.
 
 ## 저장과 적용 시점
 
@@ -48,5 +49,5 @@
 
 - 단위: `AdminAttendancePolicyServiceTest`(권한, KST 자정·월 경계의 적용 시점, 중복·동시 등록 변환, 단계 규칙, 감사 기록, 예약 정책 수정의 시작 여부·오류 코드), `AdminAttendancePolicyControllerTest`(응답 필드·본문 검증·오류 코드, AP05·AP06 경로).
 - 통합: `AttendancePolicyAdminRepositoryIntegrationTest`가 일일 정책의 수량만 바뀌는지와 연속 정책 단계를 같은 일수를 포함해 통째로 바꿔도 UNIQUE에 걸리지 않는지를 실제 MySQL로 확인한다. 정책 행 잠금이 수정끼리 직렬화하는지는 동시 실행 테스트로 확인하지 않았다.
-- 작업 중 로컬 MySQL로 일일 정책의 종료·저장 순서, 중복 거절, 연속 정책 저장·조회, 감사 기록 저장을 한 번 확인했고 그 테스트는 저장소에 남기지 않았다. 통합 테스트는 이번 작업에 포함하지 않았다.
+- 작업 중 로컬 MySQL로 일일 정책의 종료·저장 순서, 중복 거절, 연속 정책 저장·조회, 감사 기록 저장을 한 번 확인했고 그 테스트는 저장소에 남기지 않았다. 등록·조회(GD-219) 작업에는 통합 테스트를 포함하지 않았고, 예약 정책 수정(GD-270)의 통합 테스트는 위 항목이다. GD-270 통합 테스트는 해당 클래스만 로컬에서 실행했고 전체 `./gradlew build`는 CI로 확인한다.
 - 기존 통합 테스트 컨텍스트(`TicketIntegrationTestApplication`)가 출석 서비스를 함께 올리므로 새 서비스가 쓰는 감사 로그 빈을 그 컨텍스트에 추가했다.

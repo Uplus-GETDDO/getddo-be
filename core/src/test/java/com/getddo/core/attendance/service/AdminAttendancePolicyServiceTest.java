@@ -316,7 +316,7 @@ class AdminAttendancePolicyServiceTest {
 		// when
 		// then
 		assertThatThrownBy(() -> service(NOW).updateDailyPolicy(ADMIN, missing, 2))
-				.satisfies(e -> assertError(e, AttendanceErrorCode.POLICY_NOT_FOUND));
+				.satisfies(e -> assertError(e, AttendanceErrorCode.UPDATE_TARGET_POLICY_NOT_FOUND));
 		assertThatThrownBy(() -> service(NOW).updateDailyPolicy(ADMIN, UUID.randomUUID(), 0))
 				.satisfies(e -> assertError(e, AttendanceErrorCode.INVALID_POLICY));
 		verify(repository, never()).updateDailyRewardTicketCount(any(), anyInt());
@@ -343,8 +343,29 @@ class AdminAttendancePolicyServiceTest {
 		verify(auditLogs).record(audit.capture());
 		assertThat(audit.getValue().getAction()).isEqualTo("ATTENDANCE_STREAK_POLICY_UPDATE");
 		assertThat(audit.getValue().getTargetId()).isEqualTo(setId);
-		assertThat(audit.getValue().getBeforeData()).containsKey("milestones");
-		assertThat(audit.getValue().getAfterData()).containsEntry("effectiveMonth", "2026-11-01");
+		assertThat(audit.getValue().getBeforeData()).containsKey("milestones")
+				.containsEntry("effectiveMonth", "2026-11-01");
+		assertThat(audit.getValue().getAfterData()).containsKey("milestones")
+				.containsEntry("effectiveMonth", "2026-11-01");
+	}
+
+	@Test
+	@DisplayName("적용월 전날 23:59:59(KST)까지는 아직 시작하지 않은 연속 출석 정책으로 보고 수정한다")
+	void updatesStreakPolicyJustBeforeKstMonthStarts() {
+		// given 2026-10-31 23:59:59 KST
+		Instant lastSecondBeforeNovember = Instant.parse("2026-10-31T14:59:59Z");
+		UUID setId = UUID.randomUUID();
+		StreakPolicyRecord november = new StreakPolicyRecord(setId, LocalDate.of(2026, 11, 1), List.of(),
+				ADMIN.getId(), NOW);
+		List<MilestoneDraft> next = List.of(new MilestoneDraft(7, 2));
+		when(repository.findStreakPolicyForUpdate(setId)).thenReturn(Optional.of(november));
+		when(repository.replaceStreakMilestones(setId, next)).thenReturn(november);
+		// when
+		StreakPolicyRecord result = service(lastSecondBeforeNovember).updateStreakPolicy(ADMIN, setId, next);
+		// then
+		assertThat(result).isSameAs(november);
+		verify(repository).replaceStreakMilestones(setId, next);
+		verify(auditLogs).record(any(AuditLogCommand.class));
 	}
 
 	@Test
@@ -374,7 +395,7 @@ class AdminAttendancePolicyServiceTest {
 		// when
 		// then
 		assertThatThrownBy(() -> service(NOW).updateStreakPolicy(ADMIN, missing, List.of(new MilestoneDraft(7, 1))))
-				.satisfies(e -> assertError(e, AttendanceErrorCode.POLICY_NOT_FOUND));
+				.satisfies(e -> assertError(e, AttendanceErrorCode.UPDATE_TARGET_POLICY_NOT_FOUND));
 		assertThatThrownBy(() -> service(NOW).updateStreakPolicy(ADMIN, UUID.randomUUID(),
 				List.of(new MilestoneDraft(14, 1), new MilestoneDraft(7, 1))))
 				.satisfies(e -> assertError(e, AttendanceErrorCode.INVALID_POLICY));

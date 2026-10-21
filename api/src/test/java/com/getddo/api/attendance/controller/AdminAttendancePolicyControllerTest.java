@@ -243,7 +243,7 @@ class AdminAttendancePolicyControllerTest {
 	@DisplayName("AP05의 없는 정책은 404 ATTENDANCE-006, 이미 시작한 정책은 409 ATTENDANCE-007로 내려간다")
 	void mapsDailyUpdateErrors() throws Exception {
 		when(service.updateDailyPolicy(any(), any(), eq(2)))
-				.thenThrow(new AttendanceException(AttendanceErrorCode.POLICY_NOT_FOUND))
+				.thenThrow(new AttendanceException(AttendanceErrorCode.UPDATE_TARGET_POLICY_NOT_FOUND))
 				.thenThrow(new AttendanceException(AttendanceErrorCode.POLICY_ALREADY_STARTED));
 		String url = DAILY + "/" + UUID.randomUUID();
 		mvc.perform(json(put(url), "{\"rewardTicketCount\":2}"))
@@ -289,7 +289,7 @@ class AdminAttendancePolicyControllerTest {
 	@DisplayName("AP06의 없는 묶음은 404 ATTENDANCE-006, 이미 시작한 묶음은 409 ATTENDANCE-007로 내려간다")
 	void mapsStreakUpdateErrors() throws Exception {
 		when(service.updateStreakPolicy(any(), any(), any()))
-				.thenThrow(new AttendanceException(AttendanceErrorCode.POLICY_NOT_FOUND))
+				.thenThrow(new AttendanceException(AttendanceErrorCode.UPDATE_TARGET_POLICY_NOT_FOUND))
 				.thenThrow(new AttendanceException(AttendanceErrorCode.POLICY_ALREADY_STARTED));
 		String url = STREAK + "/" + UUID.randomUUID();
 		String body = "{\"milestones\":[{\"milestoneDays\":7,\"rewardTicketCount\":1}]}";
