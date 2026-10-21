@@ -18,6 +18,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 
 import com.getddo.core.attendance.domain.DailyAttendancePolicy;
 import com.getddo.core.attendance.domain.MilestoneDraft;
+import com.getddo.core.attendance.domain.StreakMilestone;
 import com.getddo.core.attendance.domain.StreakPolicyRecord;
 import com.getddo.core.attendance.exception.AttendanceErrorCode;
 import com.getddo.core.attendance.exception.AttendanceException;
@@ -251,5 +252,133 @@ class AdminAttendancePolicyServiceTest {
 		assertThatThrownBy(() -> service(NOW).createStreakPolicy(ADMIN, null))
 				.satisfies(e -> assertError(e, AttendanceErrorCode.INVALID_POLICY));
 		verifyNoInteractions(repository, auditLogs);
+	}
+
+	@Test
+	@DisplayName("관리자가 아니면 예약 정책 수정을 ATTENDANCE-002로 거절하고 저장소를 읽지 않는다")
+	void rejectsNonAdminUpdates() {
+		for (User caller : new User[] {null, user(UserRole.USER, UserStatus.ACTIVE),
+				user(UserRole.ADMIN, UserStatus.INACTIVE)}) {
+			assertThatThrownBy(() -> service(NOW).updateDailyPolicy(caller, UUID.randomUUID(), 2))
+					.satisfies(e -> assertError(e, AttendanceErrorCode.ADMIN_REQUIRED));
+			assertThatThrownBy(() -> service(NOW).updateStreakPolicy(caller, UUID.randomUUID(),
+					List.of(new MilestoneDraft(7, 1))))
+					.satisfies(e -> assertError(e, AttendanceErrorCode.ADMIN_REQUIRED));
+		}
+		verifyNoInteractions(repository, auditLogs);
+	}
+
+	@Test
+	@DisplayName("아직 시작하지 않은 예약 일일 정책의 보상 수량을 바꾸고 수정 전·후 값을 감사 기록에 남긴다")
+	void updatesScheduledDailyPolicy() {
+		// given
+		DailyAttendancePolicy scheduled = daily(1, NEXT_MIDNIGHT, null);
+		DailyAttendancePolicy updated = new DailyAttendancePolicy(scheduled.getId(), 3, NEXT_MIDNIGHT, null,
+				scheduled.getCreatedBy(), NOW);
+		when(repository.findDailyPolicyForUpdate(scheduled.getId())).thenReturn(Optional.of(scheduled));
+		when(repository.updateDailyRewardTicketCount(scheduled.getId(), 3)).thenReturn(updated);
+		// when
+		DailyAttendancePolicy result = service(NOW).updateDailyPolicy(ADMIN, scheduled.getId(), 3);
+		// then
+		assertThat(result).isSameAs(updated);
+		ArgumentCaptor<AuditLogCommand> audit = ArgumentCaptor.forClass(AuditLogCommand.class);
+		verify(auditLogs).record(audit.capture());
+		assertThat(audit.getValue().getAction()).isEqualTo("ATTENDANCE_DAILY_POLICY_UPDATE");
+		assertThat(audit.getValue().getTargetId()).isEqualTo(scheduled.getId());
+		assertThat(audit.getValue().getBeforeData()).containsEntry("rewardTicketCount", 1);
+		assertThat(audit.getValue().getAfterData()).containsEntry("rewardTicketCount", 3);
+	}
+
+	@Test
+	@DisplayName("적용 시작 시각 정각이거나 이미 시작한 일일 정책은 ATTENDANCE-007로 거절하고 바꾸지 않는다")
+	void rejectsStartedDailyPolicy() {
+		// given
+		DailyAttendancePolicy current = daily(1, Instant.parse("2026-10-16T15:00:00Z"), null);
+		when(repository.findDailyPolicyForUpdate(current.getId())).thenReturn(Optional.of(current));
+		DailyAttendancePolicy atBoundary = daily(1, NOW, null);
+		when(repository.findDailyPolicyForUpdate(atBoundary.getId())).thenReturn(Optional.of(atBoundary));
+		// when
+		// then
+		assertThatThrownBy(() -> service(NOW).updateDailyPolicy(ADMIN, current.getId(), 3))
+				.satisfies(e -> assertError(e, AttendanceErrorCode.POLICY_ALREADY_STARTED));
+		assertThatThrownBy(() -> service(NOW).updateDailyPolicy(ADMIN, atBoundary.getId(), 3))
+				.satisfies(e -> assertError(e, AttendanceErrorCode.POLICY_ALREADY_STARTED));
+		verify(repository, never()).updateDailyRewardTicketCount(any(), anyInt());
+		verifyNoInteractions(auditLogs);
+	}
+
+	@Test
+	@DisplayName("없는 일일 정책은 ATTENDANCE-006, 보상 수량이 1 미만이면 ATTENDANCE-003으로 거절한다")
+	void rejectsMissingOrInvalidDailyUpdate() {
+		// given
+		UUID missing = UUID.randomUUID();
+		when(repository.findDailyPolicyForUpdate(missing)).thenReturn(Optional.empty());
+		// when
+		// then
+		assertThatThrownBy(() -> service(NOW).updateDailyPolicy(ADMIN, missing, 2))
+				.satisfies(e -> assertError(e, AttendanceErrorCode.POLICY_NOT_FOUND));
+		assertThatThrownBy(() -> service(NOW).updateDailyPolicy(ADMIN, UUID.randomUUID(), 0))
+				.satisfies(e -> assertError(e, AttendanceErrorCode.INVALID_POLICY));
+		verify(repository, never()).updateDailyRewardTicketCount(any(), anyInt());
+		verifyNoInteractions(auditLogs);
+	}
+
+	@Test
+	@DisplayName("아직 시작하지 않은 예약 연속 출석 정책의 단계를 모두 바꾸고 수정 전·후 단계를 감사 기록에 남긴다")
+	void updatesScheduledStreakPolicy() {
+		// given
+		UUID setId = UUID.randomUUID();
+		StreakPolicyRecord scheduled = new StreakPolicyRecord(setId, LocalDate.of(2026, 11, 1),
+				List.of(new StreakMilestone(UUID.randomUUID(), 7, 1)), ADMIN.getId(), NOW);
+		List<MilestoneDraft> next = List.of(new MilestoneDraft(7, 2), new MilestoneDraft(28, 7));
+		StreakPolicyRecord updated = new StreakPolicyRecord(setId, LocalDate.of(2026, 11, 1), List.of(),
+				ADMIN.getId(), NOW);
+		when(repository.findStreakPolicyForUpdate(setId)).thenReturn(Optional.of(scheduled));
+		when(repository.replaceStreakMilestones(setId, next)).thenReturn(updated);
+		// when
+		StreakPolicyRecord result = service(NOW).updateStreakPolicy(ADMIN, setId, next);
+		// then
+		assertThat(result).isSameAs(updated);
+		ArgumentCaptor<AuditLogCommand> audit = ArgumentCaptor.forClass(AuditLogCommand.class);
+		verify(auditLogs).record(audit.capture());
+		assertThat(audit.getValue().getAction()).isEqualTo("ATTENDANCE_STREAK_POLICY_UPDATE");
+		assertThat(audit.getValue().getTargetId()).isEqualTo(setId);
+		assertThat(audit.getValue().getBeforeData()).containsKey("milestones");
+		assertThat(audit.getValue().getAfterData()).containsEntry("effectiveMonth", "2026-11-01");
+	}
+
+	@Test
+	@DisplayName("적용월 1일(KST)부터는 이미 시작한 연속 출석 정책으로 보고 ATTENDANCE-007로 거절한다")
+	void rejectsStartedStreakPolicy() {
+		// given 2026-11-01 00:30 KST
+		Instant kstNovember = Instant.parse("2026-10-31T15:30:00Z");
+		UUID setId = UUID.randomUUID();
+		StreakPolicyRecord november = new StreakPolicyRecord(setId, LocalDate.of(2026, 11, 1), List.of(),
+				ADMIN.getId(), NOW);
+		when(repository.findStreakPolicyForUpdate(setId)).thenReturn(Optional.of(november));
+		// when
+		// then
+		assertThatThrownBy(() -> service(kstNovember).updateStreakPolicy(ADMIN, setId,
+				List.of(new MilestoneDraft(7, 2))))
+				.satisfies(e -> assertError(e, AttendanceErrorCode.POLICY_ALREADY_STARTED));
+		verify(repository, never()).replaceStreakMilestones(any(), any());
+		verifyNoInteractions(auditLogs);
+	}
+
+	@Test
+	@DisplayName("없는 연속 출석 정책 묶음은 ATTENDANCE-006, 단계 규칙을 어기면 ATTENDANCE-003으로 거절하고 저장소를 바꾸지 않는다")
+	void rejectsMissingOrInvalidStreakUpdate() {
+		// given
+		UUID missing = UUID.randomUUID();
+		when(repository.findStreakPolicyForUpdate(missing)).thenReturn(Optional.empty());
+		// when
+		// then
+		assertThatThrownBy(() -> service(NOW).updateStreakPolicy(ADMIN, missing, List.of(new MilestoneDraft(7, 1))))
+				.satisfies(e -> assertError(e, AttendanceErrorCode.POLICY_NOT_FOUND));
+		assertThatThrownBy(() -> service(NOW).updateStreakPolicy(ADMIN, UUID.randomUUID(),
+				List.of(new MilestoneDraft(14, 1), new MilestoneDraft(7, 1))))
+				.satisfies(e -> assertError(e, AttendanceErrorCode.INVALID_POLICY));
+		verify(repository, never()).replaceStreakMilestones(any(), any());
+		verifyNoInteractions(auditLogs);
 	}
 }

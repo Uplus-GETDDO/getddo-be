@@ -7,6 +7,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -44,6 +45,8 @@ public class AdminAttendancePolicyService {
 	private static final int MIN_REWARD_TICKET_COUNT = 1;
 	private static final String DAILY_CREATE = "ATTENDANCE_DAILY_POLICY_CREATE";
 	private static final String STREAK_CREATE = "ATTENDANCE_STREAK_POLICY_CREATE";
+	private static final String DAILY_UPDATE = "ATTENDANCE_DAILY_POLICY_UPDATE";
+	private static final String STREAK_UPDATE = "ATTENDANCE_STREAK_POLICY_UPDATE";
 	private static final String TARGET_DAILY = "ATTENDANCE_DAILY_POLICY";
 	private static final String TARGET_STREAK = "ATTENDANCE_STREAK_POLICY";
 
@@ -127,6 +130,65 @@ public class AdminAttendancePolicyService {
 		auditLogs.record(new AuditLogCommand(admin.getId(), STREAK_CREATE, TARGET_STREAK, created.getId(), null, null,
 				Map.of("effectiveMonth", effectiveMonth.toString(), "milestoneCount", milestones.size()), null));
 		return created;
+	}
+
+	/**
+	 * 아직 시작하지 않은 예약 일일 정책의 보상 수량을 바꾼다. 적용 시점은 바뀌지 않는다. 정책 행을 잠근 뒤 시작 여부를
+	 * 다시 확인해 수정과 적용 시작이 겹쳐도 시작한 정책은 바뀌지 않는다.
+	 *
+	 * @throws AttendanceException 관리자가 아니거나({@code ATTENDANCE-002}), 보상 수량이 1 미만이거나
+	 *         ({@code ATTENDANCE-003}), 정책이 없거나({@code ATTENDANCE-006}), 이미 시작한 정책인 경우
+	 *         ({@code ATTENDANCE-007})
+	 */
+	@Transactional
+	public DailyAttendancePolicy updateDailyPolicy(User admin, UUID policyId, int rewardTicketCount) {
+		requireActiveAdmin(admin);
+		if (rewardTicketCount < MIN_REWARD_TICKET_COUNT) {
+			throw new AttendanceException(AttendanceErrorCode.INVALID_POLICY);
+		}
+		DailyAttendancePolicy current = repository.findDailyPolicyForUpdate(policyId)
+				.orElseThrow(() -> new AttendanceException(AttendanceErrorCode.POLICY_NOT_FOUND));
+		if (current.hasStartedAt(timeProvider.now())) {
+			throw new AttendanceException(AttendanceErrorCode.POLICY_ALREADY_STARTED);
+		}
+		DailyAttendancePolicy updated = repository.updateDailyRewardTicketCount(policyId, rewardTicketCount);
+		auditLogs.record(new AuditLogCommand(admin.getId(), DAILY_UPDATE, TARGET_DAILY, policyId, null,
+				Map.of("rewardTicketCount", current.getRewardTicketCount()),
+				Map.of("rewardTicketCount", rewardTicketCount, "effectiveFrom", current.getEffectiveFrom().toString()),
+				null));
+		return updated;
+	}
+
+	/**
+	 * 아직 시작하지 않은 예약 연속 출석 정책 묶음의 단계를 모두 바꾼다. 적용월은 바뀌지 않는다. 묶음 행을 잠근 뒤 시작
+	 * 여부를 다시 확인한다.
+	 *
+	 * @param milestones 단계 일수 오름차순이고 중복이 없는 단계. 일수는 1~28, 보상 수량은 1 이상이다
+	 * @throws AttendanceException 관리자가 아니거나({@code ATTENDANCE-002}), 단계 규칙을 어겼거나
+	 *         ({@code ATTENDANCE-003}), 정책이 없거나({@code ATTENDANCE-006}), 이미 시작한 묶음인 경우
+	 *         ({@code ATTENDANCE-007})
+	 */
+	@Transactional
+	public StreakPolicyRecord updateStreakPolicy(User admin, UUID policySetId, List<MilestoneDraft> milestones) {
+		requireActiveAdmin(admin);
+		requireValidMilestones(milestones);
+		StreakPolicyRecord current = repository.findStreakPolicyForUpdate(policySetId)
+				.orElseThrow(() -> new AttendanceException(AttendanceErrorCode.POLICY_NOT_FOUND));
+		if (current.hasStartedOn(timeProvider.toKst(timeProvider.now()).toLocalDate())) {
+			throw new AttendanceException(AttendanceErrorCode.POLICY_ALREADY_STARTED);
+		}
+		StreakPolicyRecord updated = repository.replaceStreakMilestones(policySetId, milestones);
+		auditLogs.record(new AuditLogCommand(admin.getId(), STREAK_UPDATE, TARGET_STREAK, policySetId, null,
+				Map.of("milestones", current.getMilestones().stream()
+						.map(m -> Map.of("milestoneDays", m.getMilestoneDays(), "rewardTicketCount",
+								m.getRewardTicketCount()))
+						.toList()),
+				Map.of("effectiveMonth", current.getEffectiveMonth().toString(), "milestones", milestones.stream()
+						.map(m -> Map.of("milestoneDays", m.getMilestoneDays(), "rewardTicketCount",
+								m.getRewardTicketCount()))
+						.toList()),
+				null));
+		return updated;
 	}
 
 	private static void requireValidMilestones(List<MilestoneDraft> milestones) {
