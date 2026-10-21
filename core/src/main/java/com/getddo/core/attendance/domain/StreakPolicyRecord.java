@@ -29,4 +29,9 @@ public final class StreakPolicyRecord {
 		this.createdBy = Objects.requireNonNull(createdBy, "createdBy");
 		this.createdAt = Objects.requireNonNull(createdAt, "createdAt");
 	}
+
+	/** 적용월 1일(KST)부터 시작한 것으로 본다. 시작한 묶음은 수정할 수 없다. */
+	public boolean hasStartedOn(LocalDate kstToday) {
+		return !kstToday.isBefore(effectiveMonth);
+	}
 }

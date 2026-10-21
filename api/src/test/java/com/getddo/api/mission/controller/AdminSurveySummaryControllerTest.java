@@ -1,5 +1,6 @@
 package com.getddo.api.mission.controller;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -14,6 +15,9 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import com.getddo.api.common.context.CurrentUserArgumentResolver;
 import com.getddo.api.common.exception.GlobalExceptionHandler;
+import com.getddo.core.common.pagination.PageQuery;
+import com.getddo.core.common.pagination.PageResult;
+import com.getddo.core.mission.domain.SurveyFreeTextAnswer;
 import com.getddo.core.mission.domain.SurveySummary;
 import com.getddo.core.mission.exception.MissionErrorCode;
 import com.getddo.core.mission.exception.MissionException;
@@ -108,6 +112,71 @@ class AdminSurveySummaryControllerTest {
 		mvc.perform(asAdmin(get(URL, MISSION_ID).param("from", from).param("to", to)))
 				.andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("MISSION-003"));
 		mvc.perform(asAdmin(get(URL, MISSION_ID).param("from", from).param("to", to)))
+				.andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("MISSION-001"));
+	}
+
+	private static final String ANSWERS_URL = "/api/v1/admin/missions/{id}/survey-answers";
+
+	@Test
+	@DisplayName("자유 서술 답변을 답변 원문과 제출 시각만 담은 익명 페이지로 돌려준다")
+	void returnsAnonymousAnswers() throws Exception {
+		// given
+		UUID questionId = UUID.randomUUID();
+		when(service.findFreeTextAnswers(any(), eq(MISSION_ID), eq(questionId), eq(LocalDate.of(2026, 10, 11)),
+				eq(LocalDate.of(2026, 10, 12)), eq(new PageQuery(2, 5)))).thenReturn(new PageResult<>(
+						List.of(new SurveyFreeTextAnswer("집에 가고 싶다", Instant.parse("2026-10-12T01:00:00Z")),
+								new SurveyFreeTextAnswer("<b>태그</b>", Instant.parse("2026-10-11T01:00:00Z"))),
+						2, 5, 7));
+		// when
+		// then
+		mvc.perform(asAdmin(get(ANSWERS_URL, MISSION_ID).param("questionId", questionId.toString())
+				.param("from", "2026-10-11").param("to", "2026-10-12").param("page", "2").param("size", "5")))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.totalElements").value(7))
+				.andExpect(jsonPath("$.data.items[0].answerText").value("집에 가고 싶다"))
+				.andExpect(jsonPath("$.data.items[0].submittedAt").value("2026-10-12T01:00:00Z"))
+				.andExpect(jsonPath("$.data.items[1].answerText").value("<b>태그</b>"))
+				.andExpect(jsonPath("$.data.items[0].userId").doesNotExist())
+				.andExpect(jsonPath("$.data.items[0].submissionId").doesNotExist())
+				.andExpect(jsonPath("$.data.items[0].userName").doesNotExist());
+	}
+
+	@Test
+	@DisplayName("자유 서술 답변 조회는 문항·기간이 없거나 형식이 틀리거나 페이지 크기가 범위를 넘으면 400이고 서비스를 부르지 않는다")
+	void answersRejectInvalidParameters() throws Exception {
+		String question = UUID.randomUUID().toString();
+		mvc.perform(asAdmin(get(ANSWERS_URL, MISSION_ID).param("from", "2026-10-11").param("to", "2026-10-12")))
+				.andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-002"));
+		mvc.perform(asAdmin(get(ANSWERS_URL, MISSION_ID).param("questionId", question).param("from", "2026-10-11")))
+				.andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-002"));
+		mvc.perform(asAdmin(get(ANSWERS_URL, MISSION_ID).param("questionId", "not-a-uuid")
+				.param("from", "2026-10-11").param("to", "2026-10-12")))
+				.andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-005"));
+		mvc.perform(asAdmin(get(ANSWERS_URL, MISSION_ID).param("questionId", question)
+				.param("from", "2026-10-11").param("to", "2026-10-12").param("size", "101")))
+				.andExpect(status().isBadRequest());
+		mvc.perform(asAdmin(get(ANSWERS_URL, MISSION_ID).param("questionId", question)
+				.param("from", "2026-10-11").param("to", "2026-10-12").param("page", "0")))
+				.andExpect(status().isBadRequest());
+		verifyNoInteractions(service);
+	}
+
+	@Test
+	@DisplayName("자유 서술 답변 조회의 서비스 거절은 403 MISSION-006, 404 MISSION-003, 400 MISSION-001로 내려간다")
+	void mapsAnswerErrors() throws Exception {
+		when(service.findFreeTextAnswers(any(), any(), any(), any(), any(), any()))
+				.thenThrow(new MissionException(MissionErrorCode.ADMIN_REQUIRED))
+				.thenThrow(new MissionException(MissionErrorCode.MISSION_NOT_FOUND))
+				.thenThrow(new MissionException(MissionErrorCode.INVALID_MISSION_DEFINITION));
+		String question = UUID.randomUUID().toString();
+		mvc.perform(asAdmin(get(ANSWERS_URL, MISSION_ID).param("questionId", question)
+				.param("from", "2026-10-11").param("to", "2026-10-12")))
+				.andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("MISSION-006"));
+		mvc.perform(asAdmin(get(ANSWERS_URL, MISSION_ID).param("questionId", question)
+				.param("from", "2026-10-11").param("to", "2026-10-12")))
+				.andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("MISSION-003"));
+		mvc.perform(asAdmin(get(ANSWERS_URL, MISSION_ID).param("questionId", question)
+				.param("from", "2026-10-11").param("to", "2026-10-12")))
 				.andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("MISSION-001"));
 	}
 }

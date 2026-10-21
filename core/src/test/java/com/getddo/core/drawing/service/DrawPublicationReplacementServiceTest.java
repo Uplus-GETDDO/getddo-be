@@ -89,7 +89,7 @@ class DrawPublicationReplacementServiceTest {
 	private DrawResult resultA, resultB;
 	private DrawSnapshot initial;
 	private EventStatus eventStatus = EventStatus.CLOSED;
-	private Instant endsAt = NOW.minusSeconds(300);
+	private Instant endsAt = NOW.minusSeconds(60);
 
 	/** 각 시나리오에 사용할 공개·확인 서비스와 저장·사용자 대역을 준비한다. */
 	@BeforeEach
@@ -163,12 +163,12 @@ class DrawPublicationReplacementServiceTest {
 		assertThat(latest.getPublishedAt()).isEqualTo(NOW);
 	}
 
-	/** 마감 +5분 전 확인은 기록만 저장하고 예정 시각 경계에 최초 공개한다는 시나리오를 검증한다. */
+	/** 마감 +1분 전 확인은 기록만 저장하고 예정 시각 경계에 최초 공개한다는 시나리오를 검증한다. */
 	@Test
-	@DisplayName("마감 +5분 전 확인은 기록만 저장하고 예정 시각 경계에 최초 공개한다")
+	@DisplayName("마감 +1분 전 확인은 기록만 저장하고 예정 시각 경계에 최초 공개한다")
 	void confirmsBeforeTimeAndPublishesAtBoundary() {
 		// given
-		endsAt = NOW.minusSeconds(299);
+		endsAt = NOW.minusSeconds(59);
 		UUID run = addRun(1, resultA, DrawRunStatus.CONFIRMED, List.of(selected(1, userC)));
 		// when
 		DrawResultConfirmation confirmation = confirmations.confirmReplacement(run, actorId);

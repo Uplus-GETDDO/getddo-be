@@ -46,7 +46,7 @@ class AwardCancellationRegistrationServiceTest {
 		when(replacements.findTarget(win)).thenReturn(Optional.of(new CancellationTarget(win, origin, event,
 				DrawRunStatus.CONFIRMED, DrawSelectionResultType.SELECTED)));
 		when(snapshots.lockEvent(event)).thenReturn(Optional.of(new DrawSnapshotSource.Event(event, EventType.NO_TICKET,
-				false, NOW.minusSeconds(300), EventStatus.CLOSED, false, "vip", List.of())));
+				false, NOW.minusSeconds(60), EventStatus.CLOSED, false, "vip", List.of())));
 		when(results.lockSnapshot(origin)).thenReturn(Optional.of(new DrawSnapshot(origin, event, DrawRunStatus.CONFIRMED,
 				NOW, "v1", null, List.of())));
 		DrawResult result = new DrawResult(win, new DrawSelection(UUID.randomUUID(), 1, 1, 1,
@@ -71,6 +71,18 @@ class AwardCancellationRegistrationServiceTest {
 		assertThat(command.getValue().getActorId()).isEqualTo(actor);
 		assertThat(command.getValue().getTargetId()).isEqualTo(win);
 		assertThat(command.getValue().getReason()).isEqualTo("관리자 사유");
+	}
+
+	@Test @DisplayName("마감 후 1분 직전에는 당첨 취소와 재추첨을 등록하지 않는다")
+	void rejectsCancellationBeforeOneMinuteBoundary() {
+		// given
+		when(snapshots.lockEvent(event)).thenReturn(Optional.of(new DrawSnapshotSource.Event(event, EventType.NO_TICKET,
+				false, NOW.minusSeconds(60).plusNanos(1000), EventStatus.CLOSED, false, "vip", List.of())));
+		// when / then
+		assertCode(() -> service.register(actor, win, key, "사유"), NOT_CANCELABLE);
+		verify(replacements, never()).register(any());
+		verify(cancellations, never()).save(any());
+		verifyNoInteractions(audit);
 	}
 
 	@Test @DisplayName("동일 키·대상·관리자·사유는 기존 취소를 반환하고 새 등록·감사를 하지 않는다")

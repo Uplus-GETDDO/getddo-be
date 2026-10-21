@@ -135,10 +135,10 @@ class AttendanceRecorderTest {
 		when(attendanceRepository.findByUserIdAndDate(USER_ID, TODAY)).thenReturn(Optional.empty());
 		insertReturnsSavedAttendance(TODAY);
 		when(streakRepository.findForUpdate(USER_ID, SEPTEMBER)).thenReturn(Optional.empty());
-		when(policyRepository.findStreakPolicySet(SEPTEMBER)).thenReturn(Optional.of(SET));
+		when(policyRepository.findStreakPolicySetForShare(SEPTEMBER)).thenReturn(Optional.of(SET));
 		attendedDates(YearMonth.of(2026, 9), TODAY);
 		streakSavedAsIs();
-		when(policyRepository.findDailyPolicy(any())).thenReturn(Optional.of(DAILY));
+		when(policyRepository.findDailyPolicyForShare(any())).thenReturn(Optional.of(DAILY));
 		claimInsertAssignsId();
 		grantSucceeds();
 		// when
@@ -164,16 +164,16 @@ class AttendanceRecorderTest {
 		when(attendanceRepository.findByUserIdAndDate(USER_ID, TODAY)).thenReturn(Optional.empty());
 		insertReturnsSavedAttendance(TODAY);
 		when(streakRepository.findForUpdate(USER_ID, SEPTEMBER)).thenReturn(Optional.empty());
-		when(policyRepository.findStreakPolicySet(SEPTEMBER)).thenReturn(Optional.of(SET));
+		when(policyRepository.findStreakPolicySetForShare(SEPTEMBER)).thenReturn(Optional.of(SET));
 		attendedDates(YearMonth.of(2026, 9), TODAY);
 		streakSavedAsIs();
-		when(policyRepository.findDailyPolicy(any())).thenReturn(Optional.of(DAILY));
+		when(policyRepository.findDailyPolicyForShare(any())).thenReturn(Optional.of(DAILY));
 		claimInsertAssignsId();
 		grantSucceeds();
 		// when
 		recorder.record(USER_ID, NOW);
 		// then
-		verify(policyRepository).findDailyPolicy(NOW);
+		verify(policyRepository).findDailyPolicyForShare(NOW);
 	}
 
 	@Test
@@ -187,8 +187,8 @@ class AttendanceRecorderTest {
 		when(streakRepository.findForUpdate(USER_ID, SEPTEMBER)).thenReturn(Optional.of(sixDays));
 		attendedDates(YearMonth.of(2026, 9), septemberDays(1, 7));
 		streakSavedAsIs();
-		when(policyRepository.findDailyPolicy(any())).thenReturn(Optional.of(DAILY));
-		when(policyRepository.findStreakPolicySetById(SET.getId())).thenReturn(Optional.of(SET));
+		when(policyRepository.findDailyPolicyForShare(any())).thenReturn(Optional.of(DAILY));
+		when(policyRepository.findStreakPolicySetByIdForShare(SET.getId())).thenReturn(Optional.of(SET));
 		when(claimRepository.exists(USER_ID, AttendanceRewardType.STREAK, "2026-09:7")).thenReturn(false);
 		claimInsertAssignsId();
 		grantSucceeds();
@@ -207,7 +207,7 @@ class AttendanceRecorderTest {
 		assertThat(commands.getAllValues()).extracting(GrantCommand::getQuantity).containsExactly(1L, 1L);
 		assertThat(commands.getAllValues()).extracting(GrantCommand::getReason)
 				.containsExactly("출석 보상", "연속 출석 7일 보상");
-		verify(policyRepository, never()).findStreakPolicySet(any());
+		verify(policyRepository, never()).findStreakPolicySetForShare(any());
 	}
 
 	@Test
@@ -221,8 +221,8 @@ class AttendanceRecorderTest {
 		when(streakRepository.findForUpdate(USER_ID, SEPTEMBER)).thenReturn(Optional.of(sixDays));
 		attendedDates(YearMonth.of(2026, 9), septemberDays(1, 7));
 		streakSavedAsIs();
-		when(policyRepository.findDailyPolicy(any())).thenReturn(Optional.of(DAILY));
-		when(policyRepository.findStreakPolicySetById(SET.getId())).thenReturn(Optional.of(SET));
+		when(policyRepository.findDailyPolicyForShare(any())).thenReturn(Optional.of(DAILY));
+		when(policyRepository.findStreakPolicySetByIdForShare(SET.getId())).thenReturn(Optional.of(SET));
 		when(claimRepository.exists(USER_ID, AttendanceRewardType.STREAK, "2026-09:7")).thenReturn(true);
 		claimInsertAssignsId();
 		grantSucceeds();
@@ -271,10 +271,10 @@ class AttendanceRecorderTest {
 		when(attendanceRepository.findByUserIdAndDate(USER_ID, october)).thenReturn(Optional.empty());
 		insertReturnsSavedAttendance(october);
 		when(streakRepository.findForUpdate(USER_ID, october)).thenReturn(Optional.empty());
-		when(policyRepository.findStreakPolicySet(october)).thenReturn(Optional.of(SET));
+		when(policyRepository.findStreakPolicySetForShare(october)).thenReturn(Optional.of(SET));
 		attendedDates(YearMonth.of(2026, 10), october);
 		streakSavedAsIs();
-		when(policyRepository.findDailyPolicy(any())).thenReturn(Optional.of(DAILY));
+		when(policyRepository.findDailyPolicyForShare(any())).thenReturn(Optional.of(DAILY));
 		claimInsertAssignsId();
 		grantSucceeds();
 		// when
@@ -289,7 +289,7 @@ class AttendanceRecorderTest {
 	void failsWithoutDailyPolicy() {
 		// given
 		when(attendanceRepository.findByUserIdAndDate(USER_ID, TODAY)).thenReturn(Optional.empty());
-		when(policyRepository.findDailyPolicy(any())).thenReturn(Optional.empty());
+		when(policyRepository.findDailyPolicyForShare(any())).thenReturn(Optional.empty());
 		// when
 		// then
 		assertErrorCode(() -> recorder.record(USER_ID, NOW), AttendanceErrorCode.ATTENDANCE_POLICY_NOT_FOUND);
@@ -302,10 +302,10 @@ class AttendanceRecorderTest {
 	void failsWithoutStreakPolicy() {
 		// given
 		when(attendanceRepository.findByUserIdAndDate(USER_ID, TODAY)).thenReturn(Optional.empty());
-		when(policyRepository.findDailyPolicy(any())).thenReturn(Optional.of(DAILY));
+		when(policyRepository.findDailyPolicyForShare(any())).thenReturn(Optional.of(DAILY));
 		insertReturnsSavedAttendance(TODAY);
 		when(streakRepository.findForUpdate(USER_ID, SEPTEMBER)).thenReturn(Optional.empty());
-		when(policyRepository.findStreakPolicySet(SEPTEMBER)).thenReturn(Optional.empty());
+		when(policyRepository.findStreakPolicySetForShare(SEPTEMBER)).thenReturn(Optional.empty());
 		// when
 		// then
 		assertErrorCode(() -> recorder.record(USER_ID, NOW), AttendanceErrorCode.ATTENDANCE_POLICY_NOT_FOUND);
@@ -324,8 +324,8 @@ class AttendanceRecorderTest {
 		when(streakRepository.findForUpdate(USER_ID, SEPTEMBER)).thenReturn(Optional.of(resetByEighth));
 		attendedDates(YearMonth.of(2026, 9), septemberDays(1, 8));
 		streakSavedAsIs();
-		when(policyRepository.findDailyPolicy(any())).thenReturn(Optional.of(DAILY));
-		when(policyRepository.findStreakPolicySetById(SET.getId())).thenReturn(Optional.of(SET));
+		when(policyRepository.findDailyPolicyForShare(any())).thenReturn(Optional.of(DAILY));
+		when(policyRepository.findStreakPolicySetByIdForShare(SET.getId())).thenReturn(Optional.of(SET));
 		when(claimRepository.exists(USER_ID, AttendanceRewardType.STREAK, "2026-09:7")).thenReturn(false);
 		claimInsertAssignsId();
 		grantSucceeds();
@@ -360,8 +360,8 @@ class AttendanceRecorderTest {
 		attendedDates(YearMonth.of(2026, 9), septemberDays(1, 7));
 		when(attendanceRepository.findByUserIdAndDate(USER_ID, seventh)).thenReturn(Optional.of(seventhAttendance));
 		streakSavedAsIs();
-		when(policyRepository.findDailyPolicy(any())).thenReturn(Optional.of(DAILY));
-		when(policyRepository.findStreakPolicySetById(SET.getId())).thenReturn(Optional.of(SET));
+		when(policyRepository.findDailyPolicyForShare(any())).thenReturn(Optional.of(DAILY));
+		when(policyRepository.findStreakPolicySetByIdForShare(SET.getId())).thenReturn(Optional.of(SET));
 		when(claimRepository.exists(USER_ID, AttendanceRewardType.STREAK, "2026-09:7")).thenReturn(false);
 		claimInsertAssignsId();
 		grantSucceeds();

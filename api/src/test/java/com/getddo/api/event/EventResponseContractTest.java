@@ -153,7 +153,7 @@ class EventResponseContractTest {
 					.andExpect(jsonPath(root + ".suspendedAt").doesNotHaveJsonPath())
 					.andExpect(jsonPath(root + ".canceledAt").value(nullValue()))
 					.andExpect(jsonPath(root + ".publicationScheduledAt").doesNotHaveJsonPath())
-					.andExpect(jsonPath(root + ".drawScheduledAt").value("2026-10-03T09:05:00Z"))
+					.andExpect(jsonPath(root + ".drawScheduledAt").value("2026-10-03T09:01:00Z"))
 					.andExpect(jsonPath(root + ".prizes[0].winnerCount").value(3))
 					.andExpect(jsonPath(root + ".prizeImages[0].prizeId").value(PRIZE_ID.toString()))
 					.andExpect(jsonPath(root + ".prizeImages[0].imageKey").value("prizes/image.png"));

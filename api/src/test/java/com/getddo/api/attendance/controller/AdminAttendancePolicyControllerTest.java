@@ -32,6 +32,7 @@ import com.getddo.core.user.domain.UserStatus;
 import com.getddo.core.user.service.UserService;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -41,6 +42,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -210,5 +212,92 @@ class AdminAttendancePolicyControllerTest {
 		mvc.perform(asAdmin(get(DAILY).param("size", "101"))).andExpect(status().isBadRequest());
 		mvc.perform(asAdmin(get(STREAK).param("page", "0"))).andExpect(status().isBadRequest());
 		verifyNoInteractions(service);
+	}
+
+	@Test
+	@DisplayName("AP05는 경로의 정책 ID와 보상 수량을 서비스에 넘기고 수정된 정책을 200으로 돌려준다")
+	void updatesDailyPolicy() throws Exception {
+		// given
+		DailyAttendancePolicy updated = daily(5, null);
+		when(service.updateDailyPolicy(any(), eq(updated.getId()), eq(5))).thenReturn(updated);
+		// when
+		// then
+		mvc.perform(json(put(DAILY + "/" + updated.getId()), "{\"rewardTicketCount\":5}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.id").value(updated.getId().toString()))
+				.andExpect(jsonPath("$.data.rewardTicketCount").value(5))
+				.andExpect(jsonPath("$.data.effectiveFrom").value("2026-10-17T15:00:00Z"));
+	}
+
+	@Test
+	@DisplayName("AP05는 수량이 없거나 1 미만이거나 정책 ID 형식이 틀리면 400이고 서비스를 부르지 않는다")
+	void rejectsInvalidDailyUpdate() throws Exception {
+		String id = UUID.randomUUID().toString();
+		mvc.perform(json(put(DAILY + "/" + id), "{}")).andExpect(status().isBadRequest());
+		mvc.perform(json(put(DAILY + "/" + id), "{\"rewardTicketCount\":0}")).andExpect(status().isBadRequest());
+		mvc.perform(json(put(DAILY + "/not-a-uuid"), "{\"rewardTicketCount\":2}")).andExpect(status().isBadRequest());
+		verifyNoInteractions(service);
+	}
+
+	@Test
+	@DisplayName("AP05의 없는 정책은 404 ATTENDANCE-006, 이미 시작한 정책은 409 ATTENDANCE-007로 내려간다")
+	void mapsDailyUpdateErrors() throws Exception {
+		when(service.updateDailyPolicy(any(), any(), eq(2)))
+				.thenThrow(new AttendanceException(AttendanceErrorCode.UPDATE_TARGET_POLICY_NOT_FOUND))
+				.thenThrow(new AttendanceException(AttendanceErrorCode.POLICY_ALREADY_STARTED));
+		String url = DAILY + "/" + UUID.randomUUID();
+		mvc.perform(json(put(url), "{\"rewardTicketCount\":2}"))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("ATTENDANCE-006"));
+		mvc.perform(json(put(url), "{\"rewardTicketCount\":2}"))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("ATTENDANCE-007"));
+	}
+
+	@Test
+	@DisplayName("AP06은 경로의 묶음 ID와 단계를 서비스에 넘기고 수정된 묶음을 200으로 돌려준다")
+	void updatesStreakPolicy() throws Exception {
+		// given
+		StreakPolicyRecord updated = streak();
+		when(service.updateStreakPolicy(any(), eq(updated.getId()), any())).thenReturn(updated);
+		// when
+		// then
+		mvc.perform(json(put(STREAK + "/" + updated.getId()),
+				"{\"milestones\":[{\"milestoneDays\":7,\"rewardTicketCount\":1},"
+						+ "{\"milestoneDays\":14,\"rewardTicketCount\":3}]}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.id").value(updated.getId().toString()))
+				.andExpect(jsonPath("$.data.effectiveMonth").value("2026-11"));
+		@SuppressWarnings("unchecked")
+		ArgumentCaptor<List<MilestoneDraft>> drafts = ArgumentCaptor.forClass(List.class);
+		verify(service).updateStreakPolicy(any(), eq(updated.getId()), drafts.capture());
+		assertThat(drafts.getValue()).extracting(MilestoneDraft::getMilestoneDays, MilestoneDraft::getRewardTicketCount)
+				.containsExactly(tuple(7, 1), tuple(14, 3));
+	}
+
+	@Test
+	@DisplayName("AP06은 단계가 비었거나 범위 밖이면 400이고 서비스를 부르지 않는다")
+	void rejectsInvalidStreakUpdate() throws Exception {
+		String url = STREAK + "/" + UUID.randomUUID();
+		mvc.perform(json(put(url), "{\"milestones\":[]}")).andExpect(status().isBadRequest());
+		mvc.perform(json(put(url), "{\"milestones\":[{\"milestoneDays\":29,\"rewardTicketCount\":1}]}"))
+				.andExpect(status().isBadRequest());
+		verifyNoInteractions(service);
+	}
+
+	@Test
+	@DisplayName("AP06의 없는 묶음은 404 ATTENDANCE-006, 이미 시작한 묶음은 409 ATTENDANCE-007로 내려간다")
+	void mapsStreakUpdateErrors() throws Exception {
+		when(service.updateStreakPolicy(any(), any(), any()))
+				.thenThrow(new AttendanceException(AttendanceErrorCode.UPDATE_TARGET_POLICY_NOT_FOUND))
+				.thenThrow(new AttendanceException(AttendanceErrorCode.POLICY_ALREADY_STARTED));
+		String url = STREAK + "/" + UUID.randomUUID();
+		String body = "{\"milestones\":[{\"milestoneDays\":7,\"rewardTicketCount\":1}]}";
+		mvc.perform(json(put(url), body))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("ATTENDANCE-006"));
+		mvc.perform(json(put(url), body))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("ATTENDANCE-007"));
 	}
 }

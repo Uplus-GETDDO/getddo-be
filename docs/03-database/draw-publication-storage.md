@@ -13,7 +13,7 @@
 
 ## 서비스 연결
 
-- `DrawPublicationService.publishInitial(eventId)`: 마감 +300초 이후 최초 결과를 공개한다. 준비·확인이 미완료이면 빈 Optional을 반환해 재호출을 기다린다. 이미 최초 공개됐으면 최신 버전을 반환한다.
+- `DrawPublicationService.publishInitial(eventId)`: 마감 +60초 이후 최초 결과를 공개한다. 준비·확인이 미완료이면 빈 Optional을 반환해 재호출을 기다린다. 이미 최초 공개됐으면 최신 버전을 반환한다.
 - `DrawResultConfirmationService.confirmBeforeInitial(runId, actorId)`: GD-199의 최초 발표 진입점. 정상 최초 결과와 발표 전 재추첨의 최종 명단을 한 요청으로 확인·공개하고 이벤트 상태 전환·알림 작업 등록을 함께 처리한다. 동일 요청 재시도는 원래 최초 공개 버전을 반환한다.
 - `confirmForPublication(runId, actorId)`: 최초 공개가 존재할 때만 재추첨 결과를 확인·반영한다. 기존 연결 취소 사유를 사용하며 별도 사유를 입력받지 않는다. 반환은 요청 실행의 가상 버전이 아닌 실제 최신 공개 버전이다.
 - `confirmReplacement(runId, actorId)`: 기존 내부 확인 진입점. HTTP 단계 제한은 위 두 진입점에서 검사한다.

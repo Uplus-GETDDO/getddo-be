@@ -102,16 +102,16 @@ class DrawExecutionIntegrationTest {
 
 	@ParameterizedTest
 	@EnumSource(value = EventStatus.class, names = {"SCHEDULED", "OPEN", "CLOSED"})
-	@DisplayName("마감 5분 경계와 취소·삭제·등록 여부를 조회에서 구분한다")
+	@DisplayName("마감 1분 경계와 취소·삭제·등록 여부를 조회에서 구분한다")
 	void pollsOnlyUnregisteredEligibleEvents(EventStatus initialStatus) {
 		// given
 		jdbc.update("update events set status = ? where id = ?", initialStatus.name(), toBytes(eventId));
 		jdbc.update("update events set ends_at = ? where id = ?", utc(NOW.minusSeconds(600)), toBytes(eventId));
-		clock.set(NOW.minusSeconds(300).minusNanos(1000));
+		clock.set(NOW.minusSeconds(540).minusNanos(1000));
 		// when / then
 		assertThat(snapshots.findInitialDue()).doesNotContain(eventId);
 		assertThatThrownBy(() -> snapshots.registerInitial(eventId)).isInstanceOf(BusinessException.class);
-		clock.set(NOW.minusSeconds(300));
+		clock.set(NOW.minusSeconds(540));
 		assertThat(snapshots.findInitialDue()).contains(eventId);
 		jdbc.update("update events set status = 'CANCELED' where id = ?", toBytes(eventId));
 		assertThat(snapshots.findInitialDue()).doesNotContain(eventId);

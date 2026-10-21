@@ -105,7 +105,7 @@ public class DrawSnapshotService {
 	/** 등록된 실행은 기존 복구 워커가 처리하므로 최초 등록 누락만 조회한다. */
 	@Transactional(readOnly = true)
 	public List<UUID> findInitialDue() {
-		return repository.findInitialDue(time.now().minusSeconds(300), 20);
+		return repository.findInitialDue(time.now().minusSeconds(60), 20);
 	}
 
 	/** 최초 실행 가능 조건과 응모·차감 근거를 검증해 고정할 후보·규칙을 구성한다. 응모자가 없으면 NO_ENTRIES 입력으로 정상 종료를 표현한다. */
