@@ -33,6 +33,7 @@ import com.getddo.core.mission.domain.SurveyQuestionType;
 import com.getddo.core.mission.exception.MissionErrorCode;
 import com.getddo.core.mission.exception.MissionException;
 import com.getddo.core.mission.service.AdminMissionService;
+import com.getddo.core.user.domain.NamedValue;
 import com.getddo.core.user.domain.User;
 import com.getddo.core.user.domain.UserRole;
 import com.getddo.core.user.domain.UserStatus;
@@ -80,6 +81,10 @@ class AdminMissionControllerTest {
 		return asAdmin(request).contentType(MediaType.APPLICATION_JSON).content(body);
 	}
 
+	private static <T> NamedValue<T> named(T value) {
+		return new NamedValue<>(value, "작성자");
+	}
+
 	private static Mission mission(MissionType type) {
 		return new Mission(MISSION_ID, UUID.randomUUID(), ADMIN_ID, "가을 퀴즈", "설명", type, STARTS_AT, ENDS_AT,
 				MissionStatus.ACTIVE, null, STARTS_AT, STARTS_AT);
@@ -108,7 +113,7 @@ class AdminMissionControllerTest {
 	void returnsMissionList() throws Exception {
 		// given
 		when(service.findMissions(any(), any(), eq(new PageQuery(1, 20))))
-				.thenReturn(new PageResult<>(List.of(mission(MissionType.QUIZ)), 1, 20, 1));
+				.thenReturn(new PageResult<>(List.of(named(mission(MissionType.QUIZ))), 1, 20, 1));
 		// when
 		// then
 		mvc.perform(asAdmin(get(URL)))
@@ -118,6 +123,7 @@ class AdminMissionControllerTest {
 				.andExpect(jsonPath("$.data.items[0].status").value("ACTIVE"))
 				.andExpect(jsonPath("$.data.items[0].rewardTicketCount").value(1))
 				.andExpect(jsonPath("$.data.items[0].rewardPolicyId").isNotEmpty())
+				.andExpect(jsonPath("$.data.items[0].createdByName").value("작성자"))
 				.andExpect(jsonPath("$.data.items[0].questions").doesNotExist());
 	}
 
@@ -156,7 +162,7 @@ class AdminMissionControllerTest {
 	@DisplayName("AM02는 정답 정보를 포함한 문항·선택지를 돌려주고 필드는 유형에 맞게만 나온다")
 	void returnsMissionDetailWithAnswers() throws Exception {
 		// given
-		when(service.findMission(any(), eq(MISSION_ID))).thenReturn(quizDetail());
+		when(service.findMission(any(), eq(MISSION_ID))).thenReturn(named(quizDetail()));
 		// when
 		// then
 		mvc.perform(asAdmin(get(URL + "/{id}", MISSION_ID)))
@@ -176,7 +182,7 @@ class AdminMissionControllerTest {
 		SurveyQuestion survey = new SurveyQuestion(UUID.randomUUID(), SurveyQuestionType.SINGLE_CHOICE, "선호", true, 1,
 				List.of(new SurveyOption(UUID.randomUUID(), "A", 1)));
 		when(service.findMission(any(), eq(MISSION_ID)))
-				.thenReturn(new MissionDetail(mission(MissionType.SURVEY), List.of(), List.of(survey)));
+				.thenReturn(named(new MissionDetail(mission(MissionType.SURVEY), List.of(), List.of(survey))));
 		// when
 		// then
 		mvc.perform(asAdmin(get(URL + "/{id}", MISSION_ID)))
@@ -202,7 +208,7 @@ class AdminMissionControllerTest {
 	@DisplayName("AM03은 요청을 미션 등록 정보로 바꿔 넘기고 201과 생성된 ID를 돌려준다")
 	void registersMission() throws Exception {
 		// given
-		when(service.register(any(), any())).thenReturn(quizDetail());
+		when(service.register(any(), any())).thenReturn(named(quizDetail()));
 		// when
 		mvc.perform(json(post(URL), quizBody(",\"rewardTicketCount\":1")))
 				.andExpect(status().isCreated())
@@ -225,7 +231,7 @@ class AdminMissionControllerTest {
 	@Test
 	@DisplayName("AM03은 rewardTicketCount를 생략해도 등록한다")
 	void registersWithoutRewardTicketCount() throws Exception {
-		when(service.register(any(), any())).thenReturn(quizDetail());
+		when(service.register(any(), any())).thenReturn(named(quizDetail()));
 		mvc.perform(json(post(URL), quizBody(""))).andExpect(status().isCreated());
 	}
 

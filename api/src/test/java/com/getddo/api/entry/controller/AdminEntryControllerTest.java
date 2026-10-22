@@ -27,6 +27,7 @@ import com.getddo.core.entry.exception.EntryErrorCode;
 import com.getddo.core.entry.exception.EntryException;
 import com.getddo.core.entry.service.AdminEntryQueryService;
 import com.getddo.core.ticket.domain.TicketGrade;
+import com.getddo.core.user.domain.NamedValue;
 import com.getddo.core.user.domain.User;
 import com.getddo.core.user.domain.UserRole;
 import com.getddo.core.user.domain.UserStatus;
@@ -85,7 +86,8 @@ class AdminEntryControllerTest {
 	void returnsEntriesWithUserAndParticipant() throws Exception {
 		// given
 		when(service.findEntries(any(), any(), any()))
-				.thenReturn(new PageResult<>(List.of(rejected(), accepted()), 1, 20, 2));
+				.thenReturn(new PageResult<>(List.of(new NamedValue<>(rejected(), "홍길동"),
+						new NamedValue<>(accepted(), null)), 1, 20, 2));
 		// when
 		// then
 		mvc.perform(asAdmin(get("/api/v1/admin/entries")))
@@ -93,6 +95,9 @@ class AdminEntryControllerTest {
 				.andExpect(jsonPath("$.data.totalElements").value(2))
 				.andExpect(jsonPath("$.data.items[0].status").value("REJECTED"))
 				.andExpect(jsonPath("$.data.items[0].userId").value(USER_ID.toString()))
+				.andExpect(jsonPath("$.data.items[0].userName").value("홍길동"))
+				.andExpect(jsonPath("$.data.items[1].userName").hasJsonPath())
+				.andExpect(jsonPath("$.data.items[1].userName").value(nullValue()))
 				.andExpect(jsonPath("$.data.items[0].participantId").hasJsonPath())
 				.andExpect(jsonPath("$.data.items[0].participantId").value(nullValue()))
 				.andExpect(jsonPath("$.data.items[0].rejectionCode").value("ENTRY-007"))
@@ -153,8 +158,8 @@ class AdminEntryControllerTest {
 		// given
 		UUID participantId = UUID.randomUUID();
 		when(service.findParticipants(any(), eq(EVENT_ID), eq(new PageQuery(1, 20))))
-				.thenReturn(new PageResult<>(List.of(new EntryParticipant(participantId, EVENT_ID, USER_ID, 7, AT)),
-						1, 20, 1));
+				.thenReturn(new PageResult<>(List.of(new NamedValue<>(
+						new EntryParticipant(participantId, EVENT_ID, USER_ID, 7, AT), "홍길동")), 1, 20, 1));
 		// when
 		// then
 		mvc.perform(asAdmin(get("/api/v1/admin/events/{eventId}/participants", EVENT_ID)))
@@ -163,6 +168,7 @@ class AdminEntryControllerTest {
 				.andExpect(jsonPath("$.data.items[0].id").value(participantId.toString()))
 				.andExpect(jsonPath("$.data.items[0].eventId").value(EVENT_ID.toString()))
 				.andExpect(jsonPath("$.data.items[0].userId").value(USER_ID.toString()))
+				.andExpect(jsonPath("$.data.items[0].userName").value("홍길동"))
 				.andExpect(jsonPath("$.data.items[0].usedTicketCount").value(7))
 				.andExpect(jsonPath("$.data.items[0].createdAt").value("2026-10-14T03:00:00Z"));
 	}
