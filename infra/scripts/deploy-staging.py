@@ -85,7 +85,8 @@ def validate_targets(config, aws):
         raise ValueError("Stage requires an internal ALB in the expected VPC")
     descriptions = aws("elbv2", "describe-tags", "--resource-arns", group, *balancers)["TagDescriptions"]
     if ({row["ResourceArn"] for row in descriptions} != {group, *balancers} or
-            any(tags(row["Tags"]).get("Environment") != "staging" for row in descriptions)):
+            any(tags(row["Tags"]).get("Environment") != "staging" or
+                tags(row["Tags"]).get("RunId") != config["run_id"] for row in descriptions)):
         raise ValueError("Stage TG/ALB tags required")
     aws("s3api", "head-bucket", "--bucket", config["deploy_bucket"],
         "--expected-bucket-owner", config["account_id"])
@@ -102,7 +103,8 @@ def validate_targets(config, aws):
         instance = next(i for i in instances if i["InstanceId"] == instance_id)
         labels = tags(instance.get("Tags", []))
         if (instance["State"]["Name"] != "running" or instance["VpcId"] != config["vpc_id"] or
-                labels.get("Environment") != "staging" or labels.get("Name") != config["expected_names"][server]):
+                labels.get("Environment") != "staging" or labels.get("Name") != config["expected_names"][server] or
+                labels.get("RunId") != config["run_id"]):
             raise ValueError("Stage instance state/VPC/environment/name mismatch")
     rows = aws("ssm", "describe-instance-information", "--filters",
                "Key=InstanceIds,Values=" + ids["a"] + "," + ids["c"])["InstanceInformationList"]
@@ -167,11 +169,12 @@ def run(config, source, artifact, sha, image_id, checksum, aws, check_only=False
         return
     prefix = "staging/" + config["run_id"] + "/"
     attempt = str(uuid.uuid4().int)
-    key, lock = prefix + "releases/" + sha + "/" + attempt + "/release.tar", prefix + "locks/app.json"
+    key = prefix + "releases/" + sha + "/" + attempt + "/release.tar"
+    lock = "staging/locks/app.json"
     common = ("--bucket", config["deploy_bucket"], "--expected-bucket-owner", config["account_id"])
     # Lock must be retained when a remote outcome or any partial a/c deployment is unresolved.
     aws("s3api", "put-object", *common, "--key", lock, "--if-none-match", "*",
-        "--server-side-encryption", "AES256", "--metadata", "source-sha=" + sha + ",image-id=" + image_id)
+        "--server-side-encryption", "AES256", "--metadata", "source-sha=" + sha + ",image-id=" + image_id + ",run-id=" + config["run_id"])
     safe_to_unlock = True
     try:
         with tempfile.TemporaryDirectory(prefix="getddo-stage-") as temporary:
@@ -182,6 +185,18 @@ def run(config, source, artifact, sha, image_id, checksum, aws, check_only=False
         for server in ("a", "c"):
             validate_targets(config, aws)
             safe_to_unlock = False
+            aws("elbv2", "deregister-targets", "--target-group-arn", config["target_group_arn"],
+                "--targets", "Id=" + config["instances"][server] + ",Port=8080")
+            deadline = time.monotonic() + 300
+            while True:
+                rows = aws("elbv2", "describe-target-health", "--target-group-arn", config["target_group_arn"],
+                           "--targets", "Id=" + config["instances"][server] + ",Port=8080")["TargetHealthDescriptions"]
+                if not rows or (len(rows) == 1 and rows[0]["Target"]["Id"] == config["instances"][server] and
+                                rows[0]["Target"]["Port"] == 8080 and rows[0]["TargetHealth"]["State"] == "unused"):
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("Stage ALB drain timeout; retain Stage lock")
+                time.sleep(5)
             result = rolling.invocation(aws, config["instances"][server], parameters(config, server, sha, key, release_checksum, attempt))
             if result["Status"] != "Success" or result["ResponseCode"] != 0:
                 raise RuntimeError("Stage host deployment failed; next host stopped; retain Stage lock")

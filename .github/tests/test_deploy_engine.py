@@ -25,7 +25,7 @@ class DeploymentEngineTest(unittest.TestCase):
             engine = (ROOT / 'infra/scripts/deploy-container.sh').read_text().replace('/etc/getddo', str(config))
             (release / 'deploy-container.sh').write_text(engine)
             shutil.copy(ROOT / 'infra/scripts/inject-host-env.py', release)
-            (release / 'fetch-app-env.py').write_text('import sys, pathlib, os\np = pathlib.Path(sys.argv[sys.argv.index("--output")+1])\np.write_text("AWS_REGION=ap-northeast-2\\n")\np.chmod(0o600)\n')
+            (release / 'fetch-app-env.py').write_text('import sys, pathlib, os\nargs = sys.argv[1:]\nexpected = os.environ.get("GETDDO_DEPLOY_ENVIRONMENT", "dev")\npassed = args[args.index("--environment")+1] if "--environment" in args else "dev"\nif passed != expected:\n    raise SystemExit(3)\np = pathlib.Path(args[args.index("--output")+1])\np.write_text("AWS_REGION=ap-northeast-2\\n")\np.chmod(0o600)\n')
             (release / 'compose.deploy.yaml').write_text('services: {}\n' if legacy else (ROOT / 'compose.deploy.yaml').read_text())
             (release / 'image-id.txt').write_text(NEW)
             (release / 'image.tar.gz').write_bytes(b'validated-test-artifact')

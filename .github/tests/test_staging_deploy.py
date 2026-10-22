@@ -51,12 +51,12 @@ class FakeAWS:
                 'TargetType': 'instance', 'Port': 8080, 'Protocol': 'HTTP', 'LoadBalancerArns': [ALB]}]},
             'describe-load-balancers': {'LoadBalancers': [{'LoadBalancerArn': ALB, 'Scheme': 'internal',
                                                           'VpcId': config['vpc_id']}]},
-            'describe-tags': {'TagDescriptions': [{'ResourceArn': arn, 'Tags': [{'Key': 'Environment', 'Value': 'staging'}]}
+            'describe-tags': {'TagDescriptions': [{'ResourceArn': arn, 'Tags': [{'Key': 'Environment', 'Value': 'staging'}, {'Key': 'RunId', 'Value': config['run_id']}]}
                                                   for arn in (TG, ALB)]},
             'head-bucket': {}, 'get-bucket-location': {'LocationConstraint': REGION},
             'describe-instances': {'Reservations': [{'Instances': [
                 {'InstanceId': instance, 'State': {'Name': 'running'}, 'VpcId': config['vpc_id'],
-                 'Tags': [{'Key': 'Environment', 'Value': 'staging'}, {'Key': 'Name', 'Value': config['expected_names'][server]}]}
+                 'Tags': [{'Key': 'Environment', 'Value': 'staging'}, {'Key': 'Name', 'Value': config['expected_names'][server]}, {'Key': 'RunId', 'Value': config['run_id']}]}
                 for server, instance in config['instances'].items()]}]},
             'describe-instance-information': {'InstanceInformationList': [{'InstanceId': instance, 'PingStatus': 'Online'} for instance in (A, C)]},
             'describe-target-health': {'TargetHealthDescriptions': []},
@@ -64,13 +64,15 @@ class FakeAWS:
 
     def __call__(self, service, operation, *args, **kwargs):
         self.calls.append((service, operation, args))
+        if operation == 'deregister-targets':
+            self.registered.discard(args[args.index('--targets') + 1].split(',')[0][3:])
         if operation == 'register-targets':
             self.registered.add(args[args.index('--targets') + 1].split(',')[0][3:])
         if operation == 'describe-target-health' and '--targets' not in args and self.registered:
             return {'TargetHealthDescriptions': [{'Target': {'Id': target, 'Port': 8080}, 'TargetHealth': {'State': 'healthy'}} for target in sorted(self.registered)]}
         if operation == 'describe-target-health' and '--targets' in args:
             target = args[args.index('--targets') + 1].split(',')[0][3:]
-            return {'TargetHealthDescriptions': [{'Target': {'Id': target, 'Port': 8080}, 'TargetHealth': {'State': 'healthy'}}]}
+            return {'TargetHealthDescriptions': [{'Target': {'Id': target, 'Port': 8080}, 'TargetHealth': {'State': 'healthy' if target in self.registered else 'unused'}}]}
         return copy.deepcopy(self.results.get(operation, {}))
 
 
@@ -119,6 +121,13 @@ class StageBoundaryTest(unittest.TestCase):
         self.assertNotIn('/getddo/dev/', script)
         self.assertNotIn('source ', script)
         self.assertNotIn('eval ', script)
+
+    def test_run_ownership_rejects_reusing_current_hosts_with_another_run(self):
+        data = configuration(); data['run_id'] = 'another-run'
+        aws = FakeAWS()
+        with self.assertRaises(ValueError): stage.validate_targets(data, aws)
+        self.assertFalse(any(op in ('put-object', 'send-command', 'deregister-targets') for _, op, _ in aws.calls))
+
 
 
 class ArtifactTest(unittest.TestCase):
@@ -185,7 +194,7 @@ class StageRunTest(unittest.TestCase):
                     self.assertEqual(0 if failure == 'upload' else 1 if failure in ('failed-a', 'unknown-a') else 2, remote.call_count)
                     main_guard.assert_not_called()
                 mutations = [(op, args) for _, op, args in aws.calls if op in ('put-object', 'delete-object')]
-                self.assertTrue(all(args[args.index('--key') + 1].startswith('staging/test-123/') for _, args in mutations))
+                self.assertTrue(all(args[args.index('--key') + 1].startswith('staging/test-123/') or args[args.index('--key') + 1] == 'staging/locks/app.json' for _, args in mutations))
                 self.assertFalse(any('locks/container-deploy.json' in args for _, args in mutations))
                 self.assertEqual(1 if failure in (None, 'upload') else 0, sum(op == 'delete-object' for op, _ in mutations))
 
@@ -221,6 +230,20 @@ class StageRunTest(unittest.TestCase):
                 self.assertNotIn('STAGING_DEPLOY_OK', output.getvalue())
                 if failure == 'final-health':
                     self.assertFalse(any(op == 'delete-object' for _, op, _ in aws.calls))
+
+    def test_drain_timeout_holds_lock_and_never_replaces_any_host(self):
+        aws = FakeAWS()
+        def stuck(service, operation, *args, **kwargs):
+            result = aws(service, operation, *args, **kwargs)
+            if operation == 'describe-target-health' and '--targets' in args:
+                result['TargetHealthDescriptions'][0]['TargetHealth']['State'] = 'draining'
+            return result
+        with patch.object(stage, 'validate_artifact'), patch.object(stage.deploy, 'bundle', return_value='b'*64), \
+             patch.object(stage.rolling, 'invocation') as remote, patch.object(stage.time, 'monotonic', side_effect=[0, 301]):
+            with self.assertRaisesRegex(RuntimeError, 'drain timeout'):
+                stage.run(configuration(), ROOT, ROOT, SHA, 'sha256:'+'b'*64, 'c'*64, stuck)
+            remote.assert_not_called()
+        self.assertFalse(any(op == 'delete-object' for _, op, _ in aws.calls))
 
     def test_target_validation_failure_before_lock_or_remote_command(self):
         aws = FakeAWS()

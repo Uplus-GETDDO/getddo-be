@@ -37,7 +37,7 @@ Stage 앱은 `/getddo/staging/app/`의 기존 필수 14개 항목을 읽는다. 
 
 Stage 드라이버가 `GETDDO_DEPLOY_ENVIRONMENT=staging`을 원격 배포에 전달한다. 기존 운영 호출은 명시하지 않으면 dev 설정·로그·라벨을 유지한다. production deploy-ssm.py의 main-only 가드는 변경하지 않는다.
 
-S3 경로는 `staging/<run_id>/releases/<source_sha>/<attempt>/`와 `staging/<run_id>/locks/app.json`으로 제한한다. 재배포 attempt는 고유하며 기존 원격 release 디렉터리를 재사용하지 않는다. 서버 실패/원격 결과 불명/최종 두 대상 정상 실패에서는 다음 배포를 중단하고 Stage 잠금을 유지한다. 기존 배포 엔진의 서버별 rollback을 사용하며 데이터 rollback을 수행했다고 해석하지 않는다.
+S3 경로는 `staging/<run_id>/releases/<source_sha>/<attempt>/`와 `staging/locks/app.json`으로 제한한다. 재배포 attempt는 고유하며 기존 원격 release 디렉터리를 재사용하지 않는다. 서버 실패/원격 결과 불명/최종 두 대상 정상 실패에서는 다음 배포를 중단하고 Stage 잠금을 유지한다. 기존 배포 엔진의 서버별 rollback을 사용하며 데이터 rollback을 수행했다고 해석하지 않는다.
 
 두 서버의 최종 healthy 상태와 Stage 잠금 삭제까지 성공한 뒤에만 `STAGING_DEPLOY_OK`를 출력한다. 잠금이 남으면 SSM 결과·현재 버전·대상 상태를 확인하고 임의 재시도하지 않는다. Stage 환경 자체의 실패 정리·최대 유지시간·결과 보관은 Infra의 GD-306/GD-311 수명주기에서 수행한다.
 
@@ -46,3 +46,5 @@ S3 경로는 `staging/<run_id>/releases/<source_sha>/<attempt>/`와 `staging/<ru
 회귀 테스트는 잘못된 계정/대상/설정·archive/config digest·revision·운영 기본값 보존·실패 시 다음 서버 중단·잠금 보존·반복 시도 경로 분리·최종 두 서버 상태·잠금 삭제 실패의 성공 오보고 방지를 검증한다. 대역 검증이며 실환경 배포 증거는 아니다.
 
 PR 리뷰 수정을 완료한 최종 SHA에서 실제 Stage 기동·작은 부하·관측·결과 보관·환경 삭제/잔존 확인 결과를 PR에 남기고 팀원 1명 승인 대기로 인계한다. 병합을 우회하지 않는다.
+
+Stage 배포 잠금은 실행 ID와 무관한 `staging/locks/app.json`을 공유하며 `run-id` 메타데이터로 소유 실행을 기록한다. 대상 EC2·ALB·TG는 모두 같은 RunId 태그여야 한다. 재배포는 각 대상을 먼저 제외하고 드레이닝 완료 후 교체한다. 실패 시 잠금을 유지하며, 인프라 삭제에서 해당 RunId 소유 확인 후 잠금을 정리한다.
