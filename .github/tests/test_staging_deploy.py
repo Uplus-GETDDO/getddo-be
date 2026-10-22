@@ -53,7 +53,7 @@ class FakeAWS:
                                                           'VpcId': config['vpc_id']}]},
             'describe-tags': {'TagDescriptions': [{'ResourceArn': arn, 'Tags': [{'Key': 'Environment', 'Value': 'staging'}, {'Key': 'RunId', 'Value': config['run_id']}]}
                                                   for arn in (TG, ALB)]},
-            'head-bucket': {}, 'get-bucket-location': {'LocationConstraint': REGION},
+            'get-bucket-location': {'LocationConstraint': REGION},
             'describe-instances': {'Reservations': [{'Instances': [
                 {'InstanceId': instance, 'State': {'Name': 'running'}, 'VpcId': config['vpc_id'],
                  'Tags': [{'Key': 'Environment', 'Value': 'staging'}, {'Key': 'Name', 'Value': config['expected_names'][server]}, {'Key': 'RunId', 'Value': config['run_id']}]}
@@ -91,6 +91,9 @@ class StageBoundaryTest(unittest.TestCase):
     def test_exact_stage_targets_pass_without_writes(self):
         aws = FakeAWS()
         stage.validate_targets(configuration(), aws)
+        self.assertFalse(any(op == 'head-bucket' for _, op, _ in aws.calls))
+        location = next(args for _, op, args in aws.calls if op == 'get-bucket-location')
+        self.assertEqual(location[location.index('--expected-bucket-owner')+1], ACCOUNT)
         self.assertFalse(any(op in ('put-object', 'send-command', 'register-targets') for _, op, _ in aws.calls))
 
     def test_prod_or_wrong_account_vpc_name_alb_targets_and_offline_hosts_rejected(self):

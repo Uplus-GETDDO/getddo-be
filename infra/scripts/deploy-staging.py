@@ -88,8 +88,6 @@ def validate_targets(config, aws):
             any(tags(row["Tags"]).get("Environment") != "staging" or
                 tags(row["Tags"]).get("RunId") != config["run_id"] for row in descriptions)):
         raise ValueError("Stage TG/ALB tags required")
-    aws("s3api", "head-bucket", "--bucket", config["deploy_bucket"],
-        "--expected-bucket-owner", config["account_id"])
     location = aws("s3api", "get-bucket-location", "--bucket", config["deploy_bucket"],
                    "--expected-bucket-owner", config["account_id"])
     if location.get("LocationConstraint") != config["region"]:
