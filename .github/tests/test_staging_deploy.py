@@ -231,6 +231,15 @@ class StageRunTest(unittest.TestCase):
                 if failure == 'final-health':
                     self.assertFalse(any(op == 'delete-object' for _, op, _ in aws.calls))
 
+    def test_only_healthy_host_remains_while_unregistered_peer_is_prepared_first(self):
+        aws=FakeAWS();aws.registered={A}
+        with patch.object(stage, 'validate_artifact'), patch.object(stage.deploy, 'bundle', return_value='b'*64), \
+             patch.object(stage.rolling, 'invocation', return_value={'Status':'Success','ResponseCode':0}) as remote:
+            stage.run(configuration(),ROOT,ROOT,SHA,'sha256:'+'b'*64,'c'*64,aws)
+        self.assertEqual([C,A],[call.args[1] for call in remote.call_args_list])
+        removed=[args[args.index('--targets')+1] for _,op,args in aws.calls if op=='deregister-targets']
+        self.assertEqual(['Id='+C+',Port=8080','Id='+A+',Port=8080'],removed)
+
     def test_drain_timeout_holds_lock_and_never_replaces_any_host(self):
         aws = FakeAWS()
         def stuck(service, operation, *args, **kwargs):

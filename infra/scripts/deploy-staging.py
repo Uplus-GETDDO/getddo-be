@@ -182,8 +182,18 @@ def run(config, source, artifact, sha, image_id, checksum, aws, check_only=False
             release_checksum = deploy.bundle(source, artifact, archive, source)
             aws("s3api", "put-object", *common, "--key", key, "--body", str(archive),
                 "--if-none-match", "*", "--server-side-encryption", "AES256", timeout=600)
-        for server in ("a", "c"):
+        initial = aws("elbv2", "describe-target-health", "--target-group-arn", config["target_group_arn"])["TargetHealthDescriptions"]
+        healthy = {row["Target"]["Id"] for row in initial if row["TargetHealth"]["State"] == "healthy"}
+        # 먼저 비정상/미등록 호스트를 준비하여 유일한 정상 호스트를 유지한다.
+        servers = sorted(("a", "c"), key=lambda server: config["instances"][server] in healthy)
+        for server in servers:
+            safe_to_unlock = False
             validate_targets(config, aws)
+            rows = aws("elbv2", "describe-target-health", "--target-group-arn", config["target_group_arn"])["TargetHealthDescriptions"]
+            healthy = {row["Target"]["Id"] for row in rows if row["TargetHealth"]["State"] == "healthy"}
+            selected = config["instances"][server]
+            if selected in healthy and not (healthy - {selected}):
+                raise RuntimeError("Cannot drain the only healthy Stage target; retain Stage lock")
             safe_to_unlock = False
             aws("elbv2", "deregister-targets", "--target-group-arn", config["target_group_arn"],
                 "--targets", "Id=" + config["instances"][server] + ",Port=8080")
