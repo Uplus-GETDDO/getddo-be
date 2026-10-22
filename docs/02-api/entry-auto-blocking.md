@@ -29,7 +29,7 @@ Redis는 한 Lua 실행에서 ACTIVE 재확인 → 구간 준비 → 기존 단�
 
 메모리 모드는 주입된 TimeProvider와 사용자 단위 임계 구역에서 같은 제한·차단 판단을 제공한다. 서버별 상태이며 재시작 시 사라지고 Redis 저널·DB 저장 대기를 만들지 않는다. 관리자 이력까지 연결하는 GD-291 생산 경로는 Redis 모드가 전제다. 기존 비응모 메모리 제한은 변경하지 않는다.
 
-GD-291 연결 전에는 Redis 모드의 GD-144 운영 배포를 보류한다. `RATE_LIMIT_STORE=redis`에서는 별도 자동 차단 활성화 설정 없이 저널을 생산하므로, 배포 전 확인과 메모리 검증 모드의 제한은 [런북의 배포 제한](../06-runbook/entry-abuse-migration.md#gd-291-연결-전-배포-제한)을 따른다.
+GD-291 연결 전에는 Redis 모드의 GD-144 운영 배포를 보류한다. 기본 `RedisRateLimiter`가 내부 `RedisEntryRateLimiter`에 위임하고 응모 전용 `EntryRateLimitHandler`가 인터셉터에 연결된 `RATE_LIMIT_STORE=redis` 환경에서는, 요청 제한이 활성화된 응모 평가가 별도 자동 차단 활성화 설정 없이 저널을 생산하므로, 배포 전 확인과 메모리 검증 모드의 제한은 [런북의 배포 제한](../06-runbook/entry-abuse-migration.md#gd-291-연결-전-배포-제한)을 따른다.
 
 ## GD-291 저장 작업자 인계
 

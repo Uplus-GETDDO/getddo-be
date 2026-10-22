@@ -46,7 +46,9 @@ CodeRabbit 후속으로 실제 MySQL 조회·매핑·기간 경계·동시각 ID
 
 ### GD-291 연결 전 배포 제한
 
-`RATE_LIMIT_STORE=redis`이고 `RATE_LIMIT_ENABLED=true`이면 GD-144의 응모 자동 차단과 저장 대기 등록이 함께 실행된다. 자동 차단만 따로 끄는 설정은 없다. `RATE_LIMIT_ENABLED`를 생략해도 기본값은 true이므로, 기존 Redis 요청 제한 배포에 이 PR을 반영하는 것만으로 저널 생산이 시작될 수 있다.
+기본 `RedisRateLimiter`가 내부 `RedisEntryRateLimiter`에 위임하고 응모 전용 `EntryRateLimitHandler`가 인터셉터에 연결된 구성에서, `RATE_LIMIT_STORE=redis`이고 `RATE_LIMIT_ENABLED=true`이면 GD-144의 응모 자동 차단과 저장 대기 등록이 함께 실행된다. 자동 차단만 따로 끄는 설정은 없다. `RATE_LIMIT_ENABLED`를 생략해도 기본값은 true이므로, 기존 Redis 요청 제한 배포에 이 PR을 반영하는 것만으로 저널 생산이 시작될 수 있다.
+
+사용자 정의 `RateLimiter`가 기본 빈을 대체하면 설정값만으로 저널 생산 여부를 판단하지 않는다. 인터셉터는 `policy=entry` 요청에서 제한기가 `EntryRateLimiter`를 구현하고 응모 전용 핸들러가 연결된 경우에만 응모 평가로 분기한다. `RateLimiter`만 구현한 대체 빈은 일반 `tryAcquire` 경로를 사용하며 이 PR의 Redis 저널을 만들지 않는다. 대체 구현의 저장·차단 동작은 해당 구현을 별도로 확인한다.
 
 배포 담당자는 아래 조건을 배포 전에 확인한다.
 
