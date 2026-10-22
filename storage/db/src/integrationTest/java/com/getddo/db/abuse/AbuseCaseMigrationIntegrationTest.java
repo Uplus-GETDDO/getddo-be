@@ -1,5 +1,6 @@
 package com.getddo.db.abuse;
 
+import java.sql.SQLException;
 import java.util.Map;
 import java.util.UUID;
 
@@ -48,7 +49,11 @@ class AbuseCaseMigrationIntegrationTest {
 				.locations("classpath:db/migration").load();
 
 		// when / then
-		assertThatThrownBy(latest::migrate).isInstanceOf(FlywayException.class);
+		assertThatThrownBy(latest::migrate).isInstanceOf(FlywayException.class)
+				.rootCause().isInstanceOfSatisfying(SQLException.class, cause -> {
+					assertThat(cause.getErrorCode()).isEqualTo(3819);
+					assertThat(cause.getMessage()).contains("chk_abuse_empty_transition");
+				});
 		assertThat(jdbc.queryForMap("select * from abuse_cases where id = ?", bytes(id)))
 				.usingRecursiveComparison().isEqualTo(before);
 		assertThat(jdbc.queryForObject("""

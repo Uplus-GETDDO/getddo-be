@@ -1,5 +1,6 @@
 package com.getddo.db.abuse;
 
+import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -11,6 +12,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
@@ -131,13 +134,17 @@ class AbuseCaseQueryIntegrationTest {
 		insert(id(3), user, null, FROM.plusSeconds(1));
 		insert(id(4), user, event, FROM.plusSeconds(2));
 		// 신규 ENTRY 이력으로 해석하면 안 되는 별도 기능 행을 재현한다.
-		jdbc.update("update abuse_cases set source_type = 'OTHER', detection_type = 'OTHER' where id = ?", bytes(id(4)));
+		jdbc.update("update abuse_cases set source_type = 'OTHER' where id = ?", bytes(id(4)));
 
 		// when
 		PageResult<AbuseCaseSummary> result = service.findAll(admin(),
+				new AbuseCaseFilter(user, event, null, null, null), new PageQuery(1, 20));
+		PageResult<AbuseCaseSummary> explicitSource = service.findAll(admin(),
 				new AbuseCaseFilter(user, event, AbuseSourceType.ENTRY, null, null), new PageQuery(1, 20));
 
 		// then
+		assertThat(explicitSource.getItems()).extracting(AbuseCaseSummary::getId).containsExactly(id(1));
+		assertThat(explicitSource.getTotalElements()).isEqualTo(1);
 		assertThat(result.getTotalElements()).isEqualTo(1);
 		assertThat(result.getItems()).extracting(AbuseCaseSummary::getId).containsExactly(id(1));
 	}
@@ -151,17 +158,26 @@ class AbuseCaseQueryIntegrationTest {
 
 		// when / then
 		assertThatThrownBy(() -> insert(id(2), user, null, FROM))
-				.isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
-		assertThatThrownBy(() -> jdbc.update("update abuse_cases set blocked_until = blocked_at where id = ?", bytes(id(1))))
-				.isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
-		assertThatThrownBy(() -> jdbc.update("update abuse_cases set detection_type = 'OTHER' where id = ?", bytes(id(1))))
-				.isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+				.isInstanceOf(DataIntegrityViolationException.class);
+		assertCheckViolation("update abuse_cases set blocked_until = blocked_at where id = ?", "chk_abuse_block_period");
+		assertCheckViolation("update abuse_cases set detection_type = 'OTHER' where id = ?", "chk_abuse_entry_detection");
+		assertCheckViolation("update abuse_cases set detection_reason = 'OTHER' where id = ?", "chk_abuse_entry_detection");
 		assertThatThrownBy(() -> jdbc.update("update abuse_cases set source_type = null where id = ?", bytes(id(1))))
-				.isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+				.isInstanceOf(DataIntegrityViolationException.class);
 		assertThatThrownBy(() -> jdbc.update("update abuse_cases set evidence = null where id = ?", bytes(id(1))))
-				.isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+				.isInstanceOf(DataIntegrityViolationException.class);
 		assertThat(jdbc.queryForObject("select count(*) from abuse_cases where user_id = ?", Long.class, bytes(user)))
 				.isEqualTo(1);
+	}
+
+	/** MySQL 8.4 CHECK는 SQLState HY000으로 전달되므로 Spring 하위 예외 분류 대신 실제 제약 위반을 확인한다. */
+	private void assertCheckViolation(String sql, String constraint) {
+		assertThatThrownBy(() -> jdbc.update(sql, bytes(id(1))))
+				.isInstanceOf(DataAccessException.class)
+				.rootCause().isInstanceOfSatisfying(SQLException.class, cause -> {
+					assertThat(cause.getErrorCode()).isEqualTo(3819);
+					assertThat(cause.getMessage()).contains(constraint);
+				});
 	}
 
 	/** 현재 트랜잭션 안의 테스트 사용자만 생성하므로 종료 후 함께 롤백된다. */
