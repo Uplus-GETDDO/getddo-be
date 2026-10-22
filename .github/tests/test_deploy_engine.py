@@ -14,7 +14,7 @@ OLD = 'sha256:' + 'd' * 64
 
 
 class DeploymentEngineTest(unittest.TestCase):
-    def execute(self, previous=True, fail_new=False, fail_stop=False, fail_cleanup=False, metadata="10.0.1.20", fail_metadata=False, fail_metrics=False, legacy=False, previous_monitoring=False, metrics_response="samples"):
+    def execute(self, previous=True, fail_new=False, fail_stop=False, fail_cleanup=False, metadata="10.0.1.20", fail_metadata=False, fail_metrics=False, legacy=False, previous_monitoring=False, metrics_response="samples", fail_metadata_ip=False):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             host = base / 'opt/getddo'
@@ -82,6 +82,7 @@ if '169.254.169.254' in url:
         assert 'test-metadata-token' not in ' '.join(sys.argv)
         assert sys.argv[sys.argv.index('--header')+1] == '@-'
         assert sys.stdin.read() == 'X-aws-ec2-metadata-token: test-metadata-token\\n'
+        if os.environ['FAIL_METADATA_IP']=='1': sys.exit(22)
         print(os.environ['METADATA_IP'])
 elif url.endswith('/actuator/prometheus'):
     assert url.startswith('http://' + os.environ['METADATA_IP'] + ':9091/')
@@ -109,7 +110,7 @@ else:
             if fail_cleanup:
                 sync.write_text('#!/usr/bin/env python3\nimport os,sys\nsys.exit(1 if sys.argv[-1] == os.environ["CONFIG_DIR"] else 0)\n')
             environment = dict(os.environ, PATH=str(mock_bin) + ':' + os.environ['PATH'],
-                               METRICS_RESPONSE=metrics_response, API_PRIVATE_IP='0.0.0.0', METADATA_IP=metadata, FAIL_METADATA=str(int(fail_metadata)),
+                               METRICS_RESPONSE=metrics_response, API_PRIVATE_IP='0.0.0.0', METADATA_IP=metadata, FAIL_METADATA=str(int(fail_metadata)), FAIL_METADATA_IP=str(int(fail_metadata_ip)),
                                FAIL_METRICS=str(int(fail_metrics)), FAIL_NEW=str(int(fail_new)), FAIL_STOP=str(int(fail_stop)),
                                STATE_FILE=str(base/'state'), CONFIG_DIR=str(config),
                                NEW_IMAGE=NEW, SOURCE_SHA=SHA, GETDDO_DEPLOY_SERVER='c',
@@ -161,7 +162,7 @@ else:
         self.assertIn('DEPLOY_INCOMPLETE:', result.stderr)
 
     def test_metadata_failure_keeps_previous_env_and_app_before_transaction(self):
-        for options in ({"fail_metadata": True}, {"metadata": "0.0.0.0"}, {"metadata": "127.0.0.1"},
+        for options in ({"fail_metadata": True}, {"fail_metadata_ip": True}, {"metadata": "0.0.0.0"}, {"metadata": "127.0.0.1"},
                         {"metadata": "169.254.169.254"}, {"metadata": "8.8.8.8"}, {"metadata": "10.0.0.1:9091"},
                         {"metadata": "::1"}, {"metadata": "10.0.0.1\n10.0.0.2"}):
             with self.subTest(options=options):
