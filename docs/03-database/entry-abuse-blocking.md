@@ -7,7 +7,7 @@
 - 공용 정책 원본: [응모·어뷰징 규칙](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/02-domain/entry.md)
 - FE 계약 원본: [어뷰징 조회 API](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/05-api/abuse.md)
 
-정책과 공개 DTO의 원본은 spec이며 이 문서는 BE 내부 처리·저장·검증만 다룬다. 2026-10-21 합의한 정책·조회 필드를 getddo-spec의 entry.md·abuse.md에 반영하고 main에 push했다([반영 커밋](https://github.com/Uplus-GETDDO/getddo-spec/commit/02ac909)). 2026-10-22 evidence 세부 필드명·타입도 사용자 결정으로 채택했으며 업무 오류 번호는 후속이다. 문서·설계 작업에는 GD-141 브랜치를 사용하며 Jira 티켓 본문이나 상태는 변경하지 않는다.
+정책과 공개 DTO의 원본은 spec이며 이 문서는 BE 내부 처리·저장·검증만 다룬다. 2026-10-21 합의한 정책·조회 필드를 getddo-spec의 entry.md·abuse.md에 반영하고 main에 push했다([반영 커밋](https://github.com/Uplus-GETDDO/getddo-spec/commit/02ac909)). 2026-10-22 evidence 세부 필드명·타입과 조회 오류 코드·공통 오류 재사용 기준도 공용 API 계약에 반영됐다([오류 계약 반영 커밋](https://github.com/Uplus-GETDDO/getddo-spec/commit/5be13861e5fcc1a72d9bac997bf524c51c40e2d0)). 같은 날 사용자 요청에 따라 Jira 구현 분담을 API 단위로 재편하고 이 문서를 동기화한다. 문서·설계 작업에는 GD-141 브랜치를 사용하며 티켓 담당자·상태·스프린트는 변경하지 않는다.
 
 ## 현재 구현과 변경 경계
 
@@ -24,7 +24,7 @@
 
 ### 응모 평가·집계 구간 제공 계약
 
-현재 RateLimiter.Decision은 allowed·retryAfterSeconds만 반환하며 RedisRateLimiter의 count·PTTL도 공개 결과에 남지 않는다. 이 기존 결과만으로 거절 카운터의 시작·종료 시각을 복원하지 않는다. GD-142/응모 연동에서는 entry 전용 복합 평가 계약 `evaluateEntry(userKey, eventKey?, limits, policy.window())`를 제한기 경계에 추가한다. 아래 이름은 설계상 계약이며 이번 PR에 메서드를 구현한 것은 아니다.
+현재 RateLimiter.Decision은 allowed·retryAfterSeconds만 반환하며 RedisRateLimiter의 count·PTTL도 공개 결과에 남지 않는다. 이 기존 결과만으로 거절 카운터의 시작·종료 시각을 복원하지 않는다. GD-144/응모 연동에서는 entry 전용 복합 평가 계약 `evaluateEntry(userKey, eventKey?, limits, policy.window())`를 제한기 경계에 추가한다. 아래 이름은 설계상 계약이며 이번 PR에 메서드를 구현한 것은 아니다.
 
 | 계약 | 제공·보장 내용 |
 | --- | --- |
@@ -185,7 +185,7 @@ startedAt·endsAt·occurred_at·detected_at·blocked_at·blocked_until은 모두
 
 ### 빈 테이블 전환과 마이그레이션 선행 조건
 
-2026-10-21 사용자는 실제 서비스 어뷰징 데이터가 없고 현재 데이터는 더미이며, 데모 데이터는 새 스키마 기준으로 별도 주입한다고 확인했다. 이는 사용자 제공 전제이며 실제 DB 행 수를 이번 문서 작업에서 조회한 결과는 아니다. 별도 보존 테이블·과거 데이터 이전을 설계하지 않고, GD-143 적용 환경에서 abuse_cases가 비어 있는 것을 검증한 경우에만 전환한다.
+2026-10-21 사용자는 실제 서비스 어뷰징 데이터가 없고 현재 데이터는 더미이며, 데모 데이터는 새 스키마 기준으로 별도 주입한다고 확인했다. 이는 사용자 제공 전제이며 실제 DB 행 수를 이번 문서 작업에서 조회한 결과는 아니다. 별도 보존 테이블·과거 데이터 이전을 설계하지 않고, GD-142 적용 환경에서 abuse_cases가 비어 있는 것을 검증한 경우에만 전환한다.
 
 1. 배포 대상에서 기존 abuse_cases 쓰기를 중지한 상태로 실제 행 수 0을 확인한다. 검사와 DDL 사이에도 쓰기를 허용하지 않는다. 행이 있으면 마이그레이션을 중단하며 더미라고 가정해 자동 DELETE·TRUNCATE·덮어쓰기를 하지 않는다. 비우기나 보존은 별도 확인 후 처리한다.
 2. 빈 테이블에서 detection_key와 기존 UNIQUE, request_id 및 chk_abuse_source_evidence, review_*와 chk_abuse_review_shape·reviewed_by FK를 제거한다. 이전 탐지·검토 생산 경로를 함께 운영하지 않으며 기존 detection_key를 신규 키로 임의 변환하지 않는다. 빈 테이블이므로 보존할 기존 detection_key·review_* 값과 병행할 기존 중복 계약이 없다.
@@ -194,15 +194,29 @@ startedAt·endsAt·occurred_at·detected_at·blocked_at·blocked_until은 모두
 
 현재 PR 기준 V009·DBML·api/core/storage의 Java·SQL을 대조했으며 ticket_recovery_targets 테이블 또는 abuse_case_id 참조는 확인되지 않았다. 이를 실제 기존 의존성으로 가정하지 않는다. event_entry_id도 현재 abuse_cases의 컬럼이 아니므로 오래된 로컬 문서의 이름으로 DDL을 만들지 않는다. 적용 직전 최신 기준에서 다시 대조한다.
 
-기존 Flyway를 수정하지 않고 위 전환을 새 버전으로 추가한다. 현재 테스트의 기존 review_*·detection_key 기반 INSERT는 GD-143에서 새 시드로 수정하며, 정상 응모가 차단 이력 때문에 추첨에서 제외되지 않는 검증은 유지한다. 이번 작업은 문서 변경이며 ERD·DDL·DB 데이터를 변경하지 않는다.
+기존 Flyway를 수정하지 않고 위 전환을 새 버전으로 추가한다. 현재 테스트의 기존 review_*·detection_key 기반 INSERT는 GD-142에서 새 시드로 수정하며, 정상 응모가 차단 이력 때문에 추첨에서 제외되지 않는 검증은 유지한다. 이번 작업은 문서 변경이며 ERD·DDL·DB 데이터를 변경하지 않는다.
 
-## 모듈·후속 작업
+## 구현 단위·후속 작업
 
-- GD-142: core 차단 이력 모델·Service·Repository, 저장 입력 검증·조회 모델 계약.
-- GD-143: 빈 테이블 검증을 선행하는 신규 Flyway·JPA·변환·복합 UNIQUE 처리·조회 구현. 행이 있으면 중단하고 별도 확인한다. 새 데모·테스트 시드 전환 포함.
-- GD-144: 활성 관리자 전용 AR01/AR02와 HTTP DTO·필터·공통 응답·권한 오류.
-- 응모 제한 연동: 인계받은 인터셉터·Redis 카운터에 차단·대기 등록 연결. 원자 경계·저장 작업자 구체 구현은 후속. 기존 지급·응모 로직을 중복 구현하지 않는다.
-- API 오류 번호 중 관리자 권한 거절·상세 없음의 도메인 번호는 구현 전에 기존 ErrorCode와 대조해 확정한다. 이번 대화에서 새 번호를 만들지 않았다.
+계층별로 티켓을 나누던 분담을 API·처리 기능 단위로 재편한다. 각 티켓에서 필요한 core·storage:db·api와 통합 검증까지 연결하되 기존 모듈 의존 방향은 유지한다. 공통 기반을 선행 티켓에서 최소한으로 준비하고 후속 티켓이 재사용하며, 불필요한 모델·조회·사용자 검증을 복제하지 않는다.
+
+| 티켓 | 구현·검증 범위 |
+| --- | --- |
+| [GD-141](https://ureca4.atlassian.net/browse/GD-141) | 이 설계 문서. 기존 티켓 본문·상태는 유지하며 런타임 구현 완료를 뜻하지 않음 |
+| [GD-142](https://ureca4.atlassian.net/browse/GD-142) | AR01 목록 API. 최소 공통 차단 모델·Repository·Entity·변환, 신규 Flyway·DBML·테스트/데모 시드, 목록 조회·조인·필터·정렬·페이징·권한·Controller와 API/DB 통합 검증. 빈 테이블 전환 조건을 확인하고 행이 있으면 무삭제 중단 |
+| [GD-143](https://ureca4.atlassian.net/browse/GD-143) | AR02 상세 API. GD-142 기반을 재사용해 상세 조회·허용 evidence 변환·권한 선확인·상세 없음 처리와 API/DB 통합 검증 |
+| [GD-144](https://ureca4.atlassian.net/browse/GD-144) | 기존 응모 제한·사용자 검증을 재사용한 자동 일시 차단, 일반/거절 집계·원자 평가·저널·저장 대기 등록과 실패·동시성 검증. 저장 작업자에 전달할 최초 payload·재처리 계약까지 연결 |
+| [GD-291](https://ureca4.atlassian.net/browse/GD-291) | 최초 DB 저장 작업자, 저장 재시도·정기 배치·commit 후 완료 처리·미저장 건 보존. 위 저장 재시도·배치 계약을 구현하고 실제 응모 차단→DB 저장→AR01/AR02 조회를 통합 검증 |
+
+권장 진행 순서는 GD-142 → GD-143 → GD-144 → GD-291이다. 기술적 선행 관계는 GD-141 → GD-142, GD-142 → GD-143 및 GD-144, GD-144 → GD-291이며, 최소 공통 기반이 준비되면 GD-143과 GD-144는 병렬 진행할 수 있다. GD-143이 Redis 차단의 필수 선행 조건은 아니다. GD-136의 하위 작업·순서도 같은 분담으로 정리한다. 기존 완료된 추첨 작업을 가리키는 과거 Blocks 링크는 이번 구현의 선행 조건으로 사용하지 않는다.
+
+AR01/AR02는 시드로 먼저 검증할 수 있다. 시드 기반 조회 검증은 Redis 자동 차단 생성·저장 완료 검증과 구분하며, 전체 연동 완료는 GD-291에서 실제 생산 경로까지 확인한 뒤 판단한다. 구현 브랜치는 각각 feat/GD-142·feat/GD-143·feat/GD-144·feat/GD-291을 사용한다. 이 문서 변경에서는 구현 브랜치를 생성하거나 런타임 코드를 수정하지 않는다.
+
+### 조회 오류 계약 반영
+
+업무 오류 번호는 [공용 AR01/AR02 오류 계약](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/05-api/abuse.md#조회-오류-계약--ar01ar02)에서 확정됐다. GD-142는 두 API에서 사용할 활성 관리자 권한 오류 `403 ABUSE-001`을 준비하고, GD-143은 상세 이력이 없을 때 `404 ABUSE-002`를 연결한다. 오류 메시지는 공용 계약을 따르며 새로운 번호를 다시 정하지 않는다.
+
+기존 사용자 문맥 검증 후 활성 관리자 권한을 먼저 확인하고, 권한을 통과한 경우에만 상세 존재 여부를 조회한다. `USER-*`는 기존 상태·코드를 유지한다. 입력 해석 실패는 `COMMON-005`, 입력 범위·필터 검증 실패는 `COMMON-002`, 예상하지 못한 내부 오류는 `COMMON-001`을 재사용한다. 기존 ErrorCode·BusinessException·ResponseEnvelope 구조에 연결하며 문맥 오류를 일괄 ABUSE-001로 바꾸지 않는다. 목록 결과 없음은 200·빈 목록이며 만료된 차단도 정상 이력이다. 이번 조회 계약에 별도 409 업무 오류는 추가하지 않고, 응모 제한의 기존 `429 COMMON-006`도 유지한다. 상세 업무 이력 없음과 경로 미구현·라우팅 실패의 404는 구분한다.
 
 ## 검증 계획 — 아직 실행하지 않음
 
@@ -227,4 +241,5 @@ startedAt·endsAt·occurred_at·detected_at·blocked_at·blocked_until은 모두
 - recordingStatus와 HTTP 결과 조합, 명령 응답 유실·카운터 쓰기 전/후 실패, 동일 요청 내부 재호출 금지, 다음 별도 요청의 >= 재판정과 구간 만료 후 과거 거절 미반영을 검증한다. ENTRY에 비응모 원본 FK를 넣으면 core·mapper·DB에서 거절하는지 확인한다.
 - 만료·미저장 ACTIVE가 남은 상태에서 새 요청/새 임계값 도달 시 과거 ID·payload를 보존한 채 새 ID가 생성되고 독립 저장·정리되는지 확인한다. 구현에서 선택한 저장 경계의 직전/직후 실패를 주입해 USER·EVENT 거절 상태가 한쪽만 반영되지 않는지 검증한다. HASH/HSET 후보를 채택하면 단일 HSET의 두 범위 상태 교체와 논리 만료를 추가 검증한다.
 - 일반 재시도 기간 경과 후 배치 대기 전환, 오전 6시 Asia/Seoul 예약, 성공/실패 혼재 배치의 건별 commit·rollback, 실패 건 다음 배치 보존과 만료 뒤 이력만 저장을 검증한다. 최초 실패부터 10분 경계, 10초·30초·1분·2분 간격과 2분 상한, 경계 이후 일반 재시도 미실행을 검증한다.
+- AR01/AR02의 사용자 문맥 오류 재사용·활성 관리자 권한 선확인·403 ABUSE-001, AR02의 404 ABUSE-002, 입력 형식 COMMON-005·범위 COMMON-002·내부 오류 COMMON-001을 검증한다. 권한 거절 시 상세 존재 조회가 실행되지 않는지, 빈 목록과 만료 이력이 정상 응답인지 확인한다.
 - 실제 연동 후 전체 ./gradlew test, ./gradlew build. 일부 테스트나 설계 문서 검증을 구현 완료로 표현하지 않는다.
