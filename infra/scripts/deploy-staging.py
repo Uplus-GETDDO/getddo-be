@@ -165,6 +165,14 @@ def run(config, source, artifact, sha, image_id, checksum, aws, check_only=False
     if check_only:
         print("STAGING_CHECK_OK: source, image and exact Stage targets verified; no writes")
         return
+
+    def require_healthy(instance):
+        rows = aws("elbv2", "describe-target-health", "--target-group-arn", config["target_group_arn"],
+                   "--targets", "Id=" + instance + ",Port=8080")["TargetHealthDescriptions"]
+        if (len(rows) != 1 or rows[0]["Target"]["Id"] != instance or
+                rows[0]["Target"]["Port"] != 8080 or rows[0]["TargetHealth"]["State"] != "healthy"):
+            raise RuntimeError("Required Stage target is not healthy; retain Stage lock")
+
     prefix = "staging/" + config["run_id"] + "/"
     attempt = str(uuid.uuid4().int)
     key = prefix + "releases/" + sha + "/" + attempt + "/release.tar"
@@ -184,19 +192,26 @@ def run(config, source, artifact, sha, image_id, checksum, aws, check_only=False
         healthy = {row["Target"]["Id"] for row in initial if row["TargetHealth"]["State"] == "healthy"}
         # 먼저 비정상/미등록 호스트를 준비하여 유일한 정상 호스트를 유지한다.
         servers = sorted(("a", "c"), key=lambda server: config["instances"][server] in healthy)
+        recovered = set()
         for server in servers:
             safe_to_unlock = False
             validate_targets(config, aws)
             rows = aws("elbv2", "describe-target-health", "--target-group-arn", config["target_group_arn"])["TargetHealthDescriptions"]
             healthy = {row["Target"]["Id"] for row in rows if row["TargetHealth"]["State"] == "healthy"}
             selected = config["instances"][server]
-            if selected in healthy and not (healthy - {selected}):
+            # 이미 복구한 상대가 이탈한 경우 최초 생성 예외로 다시 진입하지 않는다.
+            peers = (healthy | recovered) - {selected}
+            if selected in healthy and not peers:
                 raise RuntimeError("Cannot drain the only healthy Stage target; retain Stage lock")
             safe_to_unlock = False
+            for peer in peers:
+                require_healthy(peer)
             aws("elbv2", "deregister-targets", "--target-group-arn", config["target_group_arn"],
                 "--targets", "Id=" + config["instances"][server] + ",Port=8080")
             deadline = time.monotonic() + 300
             while True:
+                for peer in peers:
+                    require_healthy(peer)
                 rows = aws("elbv2", "describe-target-health", "--target-group-arn", config["target_group_arn"],
                            "--targets", "Id=" + config["instances"][server] + ",Port=8080")["TargetHealthDescriptions"]
                 if not rows or (len(rows) == 1 and rows[0]["Target"]["Id"] == config["instances"][server] and
@@ -205,6 +220,8 @@ def run(config, source, artifact, sha, image_id, checksum, aws, check_only=False
                 if time.monotonic() >= deadline:
                     raise RuntimeError("Stage ALB drain timeout; retain Stage lock")
                 time.sleep(5)
+            for peer in peers:
+                require_healthy(peer)
             result = rolling.invocation(aws, config["instances"][server], parameters(config, server, sha, key, release_checksum, attempt))
             if result["Status"] != "Success" or result["ResponseCode"] != 0:
                 raise RuntimeError("Stage host deployment failed; next host stopped; retain Stage lock")
@@ -220,6 +237,13 @@ def run(config, source, artifact, sha, image_id, checksum, aws, check_only=False
                 if time.monotonic() >= deadline:
                     raise RuntimeError("Stage ALB health timeout; retain Stage lock")
                 time.sleep(10)
+            # 운영 rolling 배포와 동일하게 2분 동안 10초 간격으로 연속 정상을 확인한다.
+            for _ in range(12):
+                time.sleep(10)
+                for peer in peers:
+                    require_healthy(peer)
+                require_healthy(selected)
+            recovered.add(selected)
         # 첫 서버가 두 번째 교체 중 이탈했을 수 있으므로 전체 두 대를 마지막에 다시 확인한다.
         rows = aws("elbv2", "describe-target-health", "--target-group-arn", config["target_group_arn"])["TargetHealthDescriptions"]
         if (len(rows) != 2 or {row["Target"]["Id"] for row in rows} != set(config["instances"].values()) or

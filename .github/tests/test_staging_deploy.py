@@ -64,6 +64,9 @@ class FakeAWS:
 
     def __call__(self, service, operation, *args, **kwargs):
         self.calls.append((service, operation, args))
+        if operation == 'get-bucket-location':
+            if args[args.index('--bucket') + 1] != configuration()['deploy_bucket']:
+                raise AssertionError('Unexpected deployment bucket')
         if operation == 'deregister-targets':
             self.registered.discard(args[args.index('--targets') + 1].split(',')[0][3:])
         if operation == 'register-targets':
@@ -93,6 +96,7 @@ class StageBoundaryTest(unittest.TestCase):
         stage.validate_targets(configuration(), aws)
         self.assertFalse(any(op == 'head-bucket' for _, op, _ in aws.calls))
         location = next(args for _, op, args in aws.calls if op == 'get-bucket-location')
+        self.assertEqual(location[location.index('--bucket')+1], configuration()['deploy_bucket'])
         self.assertEqual(location[location.index('--expected-bucket-owner')+1], ACCOUNT)
         self.assertFalse(any(op in ('put-object', 'send-command', 'register-targets') for _, op, _ in aws.calls))
 
@@ -167,6 +171,9 @@ class ArtifactTest(unittest.TestCase):
 
 
 class StageRunTest(unittest.TestCase):
+    def setUp(self):
+        self.sleep = self.enterContext(patch.object(stage.time, 'sleep'))
+
     def test_check_is_read_only_and_does_not_query_main(self):
         aws = FakeAWS()
         with patch.object(stage, 'validate_artifact'), patch.object(stage.deploy, 'verify_main') as verify:
@@ -255,6 +262,90 @@ class StageRunTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'drain timeout'):
                 stage.run(configuration(), ROOT, ROOT, SHA, 'sha256:'+'b'*64, 'c'*64, stuck)
             remote.assert_not_called()
+        self.assertFalse(any(op == 'delete-object' for _, op, _ in aws.calls))
+
+    def test_recovered_peer_is_observed_for_two_minutes_before_healthy_host_drains(self):
+        aws = FakeAWS()
+        aws.registered = {A}
+        def invoke(service, operation, *args, **kwargs):
+            if operation == 'deregister-targets' and args[-1] == 'Id=' + A + ',Port=8080':
+                self.assertEqual([10] * 12, [call.args[0] for call in self.sleep.call_args_list])
+            return aws(service, operation, *args, **kwargs)
+        with patch.object(stage, 'validate_artifact'), patch.object(stage.deploy, 'bundle', return_value='b' * 64), \
+             patch.object(stage.rolling, 'invocation', return_value={'Status': 'Success', 'ResponseCode': 0}):
+            stage.run(configuration(), ROOT, ROOT, SHA, 'sha256:' + 'b' * 64, 'c' * 64, invoke)
+        self.assertEqual([10] * 24, [call.args[0] for call in self.sleep.call_args_list])
+
+    def test_transient_recovered_peer_never_drains_existing_healthy_host(self):
+        for healthy_observations in (1, 12):
+            with self.subTest(healthy_observations=healthy_observations):
+                aws = FakeAWS()
+                aws.registered = {A}
+                observations = 0
+                def invoke(service, operation, *args, **kwargs):
+                    nonlocal observations
+                    result = aws(service, operation, *args, **kwargs)
+                    if operation == 'describe-target-health' and '--targets' in args and args[-1] == 'Id=' + C + ',Port=8080' and C in aws.registered:
+                        observations += 1
+                        if observations > healthy_observations:
+                            result['TargetHealthDescriptions'][0]['TargetHealth']['State'] = 'unhealthy'
+                    return result
+                with patch.object(stage, 'validate_artifact'), patch.object(stage.deploy, 'bundle', return_value='b' * 64), \
+                     patch.object(stage.rolling, 'invocation', return_value={'Status': 'Success', 'ResponseCode': 0}) as remote:
+                    with self.assertRaisesRegex(RuntimeError, 'not healthy'):
+                        stage.run(configuration(), ROOT, ROOT, SHA, 'sha256:' + 'b' * 64, 'c' * 64, invoke)
+                self.assertEqual([C], [call.args[1] for call in remote.call_args_list])
+                self.assertIn(A, aws.registered)
+                self.assertFalse(any(op == 'deregister-targets' and args[-1] == 'Id=' + A + ',Port=8080' for _, op, args in aws.calls))
+                self.assertFalse(any(op == 'delete-object' for _, op, _ in aws.calls))
+
+    def test_failed_peer_before_or_during_drain_never_stops_existing_host(self):
+        for phase in ('before-drain', 'both-unhealthy', 'draining', 'drained'):
+            with self.subTest(phase=phase):
+                aws = FakeAWS()
+                aws.registered = {A}
+                peer_failed = False
+                def invoke(service, operation, *args, **kwargs):
+                    nonlocal peer_failed
+                    result = aws(service, operation, *args, **kwargs)
+                    if operation == 'describe-target-health':
+                        if phase in ('before-drain', 'both-unhealthy') and '--targets' not in args and aws.registered == {A, C}:
+                            peer_failed = True
+                            if phase == 'both-unhealthy':
+                                for row in result['TargetHealthDescriptions']:
+                                    row['TargetHealth']['State'] = 'unhealthy'
+                        if '--targets' in args and args[-1] == 'Id=' + A + ',Port=8080' and A not in aws.registered:
+                            if phase == 'draining':
+                                result['TargetHealthDescriptions'][0]['TargetHealth']['State'] = 'draining' if not peer_failed else 'unused'
+                            peer_failed = phase != 'before-drain'
+                        if peer_failed and '--targets' in args:
+                            for row in result['TargetHealthDescriptions']:
+                                if row['Target']['Id'] == C:
+                                    row['TargetHealth']['State'] = 'unhealthy'
+                    return result
+                with patch.object(stage, 'validate_artifact'), patch.object(stage.deploy, 'bundle', return_value='b' * 64), \
+                     patch.object(stage.rolling, 'invocation', return_value={'Status': 'Success', 'ResponseCode': 0}) as remote:
+                    with self.assertRaisesRegex(RuntimeError, 'not healthy'):
+                        stage.run(configuration(), ROOT, ROOT, SHA, 'sha256:' + 'b' * 64, 'c' * 64, invoke)
+                self.assertEqual([C], [call.args[1] for call in remote.call_args_list])
+                if phase in ('before-drain', 'both-unhealthy'):
+                    self.assertIn(A, aws.registered)
+                self.assertFalse(any(op == 'register-targets' and args[-1] == 'Id=' + A + ',Port=8080' for _, op, args in aws.calls))
+                self.assertFalse(any(op == 'delete-object' for _, op, _ in aws.calls))
+
+    def test_health_timeout_retains_lock_and_stops_next_host(self):
+        aws = FakeAWS()
+        def invoke(service, operation, *args, **kwargs):
+            result = aws(service, operation, *args, **kwargs)
+            if operation == 'describe-target-health' and '--targets' in args and A in aws.registered:
+                result['TargetHealthDescriptions'][0]['TargetHealth']['State'] = 'initial'
+            return result
+        with patch.object(stage, 'validate_artifact'), patch.object(stage.deploy, 'bundle', return_value='b' * 64), \
+             patch.object(stage.rolling, 'invocation', return_value={'Status': 'Success', 'ResponseCode': 0}) as remote, \
+             patch.object(stage.time, 'monotonic', side_effect=[0, 0, 301]):
+            with self.assertRaisesRegex(RuntimeError, 'health timeout'):
+                stage.run(configuration(), ROOT, ROOT, SHA, 'sha256:' + 'b' * 64, 'c' * 64, invoke)
+        self.assertEqual([A], [call.args[1] for call in remote.call_args_list])
         self.assertFalse(any(op == 'delete-object' for _, op, _ in aws.calls))
 
     def test_target_validation_failure_before_lock_or_remote_command(self):
