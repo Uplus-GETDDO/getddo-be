@@ -96,9 +96,7 @@ class EntryRedisScriptExecutor {
 		current.getRedisCredentialsProviderFactory().ifPresent(builder::redisCredentialsProviderFactory);
 		if (current.isUseSsl()) {
 			LettuceClientConfiguration.LettuceSslClientConfigurationBuilder ssl = builder.useSsl();
-			if (!current.isVerifyPeer()) {
-				ssl.disablePeerVerification();
-			}
+			ssl.verifyPeer(current.getVerifyMode());
 			if (current.isStartTls()) {
 				ssl.startTls();
 			}

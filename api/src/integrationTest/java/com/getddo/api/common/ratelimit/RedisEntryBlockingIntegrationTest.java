@@ -294,11 +294,13 @@ class RedisEntryBlockingIntegrationTest {
 		byte[] script = "return 'ok'".getBytes(StandardCharsets.UTF_8);
 		// when
 		assertThat(executor.execute(script, List.of(), List.of())).isEqualTo("ok");
+		// 첫 조회는 공유 조회 연결까지 만든 뒤의 누적 연결 수다. 연결 종료는 이 값을 줄이지 않는다.
 		String first = redis.execute((org.springframework.data.redis.core.RedisCallback<java.util.Properties>)
-				connection -> connection.serverCommands().info("clients")).getProperty("connected_clients");
+				connection -> connection.serverCommands().info("stats")).getProperty("total_connections_received");
+		assertThat(first).isNotBlank();
 		assertThat(executor.execute(script, List.of(), List.of())).isEqualTo("ok");
 		String second = redis.execute((org.springframework.data.redis.core.RedisCallback<java.util.Properties>)
-				connection -> connection.serverCommands().info("clients")).getProperty("connected_clients");
+				connection -> connection.serverCommands().info("stats")).getProperty("total_connections_received");
 		// then
 		assertThat(second).isEqualTo(first);
 	}

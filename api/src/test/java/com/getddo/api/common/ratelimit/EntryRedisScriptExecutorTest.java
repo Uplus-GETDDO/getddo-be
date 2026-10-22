@@ -8,6 +8,9 @@ import org.springframework.boot.test.context.ConfigDataApplicationContextInitial
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import io.lettuce.core.ClientOptions;
+import io.lettuce.core.SslVerifyMode;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
@@ -49,7 +52,7 @@ class EntryRedisScriptExecutorTest {
 		assertThat(options.getDisconnectedBehavior()).isEqualTo(ClientOptions.DisconnectedBehavior.REJECT_COMMANDS);
 		assertThat(pooled.getCommandTimeout()).isEqualTo(timeout);
 		assertThat(pooled.isUseSsl()).isTrue();
-		assertThat(pooled.isVerifyPeer()).isTrue();
+		assertThat(pooled.getVerifyMode()).isEqualTo(SslVerifyMode.FULL);
 		assertThat(pooled.getClientName()).contains("entry-test");
 	}
 	@Test
@@ -70,6 +73,21 @@ class EntryRedisScriptExecutorTest {
 					assertThat(original.getShareNativeConnection()).isTrue();
 					assertThat(original.getClientConfiguration()).isNotInstanceOf(LettucePoolingClientConfiguration.class);
 				});
+	}
+
+	@ParameterizedTest
+	@EnumSource(SslVerifyMode.class)
+	@DisplayName("전용 연결은 원본의 FULL·CA·NONE TLS 검증 모드를 그대로 보존한다")
+	void preservesTlsVerificationMode(SslVerifyMode mode) {
+		// given
+		LettuceClientConfiguration current = LettuceClientConfiguration.builder().useSsl()
+				.verifyPeer(mode).startTls().and().build();
+		// when
+		LettuceClientConfiguration copied = EntryRedisScriptExecutor.pooledConfiguration(current);
+		// then
+		assertThat(copied.isUseSsl()).isTrue();
+		assertThat(copied.isStartTls()).isTrue();
+		assertThat(copied.getVerifyMode()).isEqualTo(mode);
 	}
 
 }
