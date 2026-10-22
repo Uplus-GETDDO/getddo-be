@@ -1,0 +1,26 @@
+# 배포 Compose에서만 활성화한다. 호스트 공개 범위는 Compose의 private IP bind로 제한한다.
+management:
+  server:
+    port: 9091
+    address: 0.0.0.0
+  endpoints:
+    web:
+      exposure:
+        include: [health, prometheus]
+        exclude: []
+  endpoint:
+    health:
+      show-details: never
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+
+server:
+  tomcat:
+    mbeanregistry:
+      enabled: true

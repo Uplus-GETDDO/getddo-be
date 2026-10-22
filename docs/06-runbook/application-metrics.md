@@ -38,7 +38,7 @@ CloudWatch registry만 명시적 meter 허용 목록을 적용하고 위 추가 
 
 ## 접근과 실패 처리
 
-Actuator HTTP/JMX exposure는 모두 제외하고 HTTP discovery도 비활성화한다. `/actuator`, `/actuator/metrics`, `/actuator/info`, `/actuator/health`를 공개하지 않는다. 기존 `/v3/api-docs` 배포 확인 경로는 그대로 사용하며 DB·Redis 연결 확인을 대체하지 않는다. Tomcat MBean registry는 앱 지표 활성화 시에만 활성화하며 원격 JMX 포트는 열지 않는다.
+기본 프로파일은 Actuator HTTP/JMX exposure를 모두 제외하고 HTTP discovery도 비활성화한다. 배포 전용 monitoring 프로파일의 private 관리 endpoint는 아래 GD-298 절을 따른다. `/actuator`, `/actuator/metrics`, `/actuator/info`, `/actuator/health`를 공개하지 않는다. 기존 `/v3/api-docs` 배포 확인 경로는 그대로 사용하며 DB·Redis 연결 확인을 대체하지 않는다. Tomcat MBean registry는 CloudWatch 앱 지표 또는 monitoring 프로파일 활성화 시 활성화하며 원격 JMX 포트는 열지 않는다.
 
 리전은 명시해 시작 시 기본 리전 체인의 IMDS 조회를 피한다. 기본 자격 증명 provider는 생성 시 조회하지 않으며 앱 준비 완료(ApplicationReadyEvent) 후 시작하는 첫 백그라운드 전송에서 조회한다. 시작 실패 시에는 종료 전송도 실행하지 않는다. 앱 요청 스레드는 AWS 전송을 기다리지 않는다. SDK는 총 1회 시도(추가 재시도 없음), attempt 2초·전체 3초, HTTP 연결/획득 500ms·읽기/쓰기 2초, registry 응답 대기 3초다. AWS/IAM/네트워크 실패는 publisher 로그로 남고 다음 주기에 다시 수집하며 업무 요청이나 앱 시작에 성공을 요구하지 않는다. 유효하지 않은 활성화 설정은 별도 시작 오류다.
 
@@ -53,3 +53,15 @@ Actuator HTTP/JMX exposure는 모두 제외하고 HTTP discovery도 비활성화
 배포 후 A/C에서 60초 주기 수신, 전체 차원, Tomcat MBean 지표 존재, 실제 DB 연결 뒤 Hikari 값, GC 이벤트 뒤 pause, 인스턴스별 오류 로그를 확인한다. 양쪽 역할·네트워크와 배포 env 전달은 실제 운영 인수 항목으로 남긴다.
 
 근거: [Boot 지표 수집](https://docs.spring.io/spring-boot/reference/actuator/metrics.html), [Micrometer CloudWatch](https://docs.micrometer.io/micrometer/reference/implementations/cloudwatch.html), [1.17.1 CloudWatch 전송 구현](https://github.com/micrometer-metrics/micrometer/blob/v1.17.1/implementations/micrometer-registry-cloudwatch2/src/main/java/io/micrometer/cloudwatch2/CloudWatchMeterRegistry.java).
+
+## GD-298: private Prometheus 수집 준비
+
+배포 Compose는 `monitoring` 프로파일을 추가 활성화한다. 기본 로컬/테스트 프로파일의 Actuator 비노출은 유지한다. 이 프로파일은 관리 listener를 컨테이너의 `0.0.0.0:9091`에 열고 health/prometheus만 제공한다. 호스트에서는 IMDSv2로 조회·검증한 RFC1918 기본 private IPv4에만 `9091:9091`을 publish한다. 서비스 8080의 `/v3/api-docs`와 ALB health 계약은 유지하고 8080에는 Actuator를 노출하지 않는다. JMX exposure와 HTTP discovery도 계속 닫혀 있다.
+
+기존 CloudWatch registry의 namespace·dev 환경·a/c 차원·허용 목록은 그대로다. Prometheus registry는 HTTP count/sum/bucket, Hikari 연결 active/idle/max/pending/acquire/timeout, Tomcat busy/current/max, JVM 메모리/GC/스레드 지표를 제공한다. histogram은 `http.server.requests`에만 활성화한다. GC pause는 GC 이벤트 이후 관측값이 생기며, Hikari 지표는 풀 초기화 후 제공된다. Tomcat에는 서비스와 관리 connector가 있으므로 사용자 요청 지표는 `name`의 8080 connector로 구분한다.
+
+GD-297의 Prometheus target 설정이 `environment=prod`, `server=A|C`를 붙이고 `instance`는 기본 privateIP:port로 유지한다. 앱 전역 공통 태그는 추가하지 않는다. HTTP URI는 Boot의 route 템플릿/NOT_FOUND 분류를 사용하며 사용자 식별자나 원본 URL을 추가하지 않는다. A/C 통합 p95/p99는 `http_server_requests_seconds_bucket`의 rate를 `le`별로 합산한 뒤 `histogram_quantile`로 계산한다. 개별 서버 percentile을 평균하지 않는다.
+
+GD-297의 수집 서버에서만 9091 접근을 허용하는 SG 준비가 선행되어야 한다. 실제 네트워크 차단·운영 수신·15초 수집 부담은 GD-299에서 사용자 승인 후 확인한다. 이 변경의 PR 생성·CI 성공은 병합·배포 승인이 아니다.
+
+`PrometheusManagementTest`는 실제 별도 HTTP 서버와 실제 Prometheus/CloudWatch registry를 함께 실행한다. AWS 전송과 JDBC 연결은 대역을 사용하고 Hikari 풀 자체는 실제 구현으로 구동한다. 관리 endpoint 경계·필수 meter·HTTP 전용 bucket·알 수 없는 경로의 URI 분류·CloudWatch 기존 차원을 검증한다. 이는 운영 DB 연결이나 AWS 수신 결과가 아니다. 기본 bucket 메모리는 HTTP 태그 조합 수에 따라 증가하므로 GD-299에서 실제 시계열 수·힙 사용량을 확인한다.
