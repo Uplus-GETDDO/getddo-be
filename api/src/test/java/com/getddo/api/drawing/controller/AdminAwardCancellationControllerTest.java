@@ -1,9 +1,11 @@
 package com.getddo.api.drawing.controller;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -15,28 +17,54 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import com.getddo.api.common.context.CurrentUserArgumentResolver;
 import com.getddo.api.common.exception.GlobalExceptionHandler;
 import com.getddo.core.common.exception.BusinessException;
-import com.getddo.core.drawing.domain.*;
+import com.getddo.core.drawing.domain.AwardCancellation;
+import com.getddo.core.drawing.domain.AwardCancellationReceipt;
+import com.getddo.core.drawing.domain.DrawConfirmation;
+import com.getddo.core.drawing.domain.DrawExecutionResult;
+import com.getddo.core.drawing.domain.DrawPrize;
+import com.getddo.core.drawing.domain.DrawResult;
+import com.getddo.core.drawing.domain.DrawRunStatus;
+import com.getddo.core.drawing.domain.DrawSelection;
+import com.getddo.core.drawing.domain.DrawSelectionResultType;
 import com.getddo.core.drawing.service.AwardCancellationService;
-import com.getddo.core.user.domain.*;
+import com.getddo.core.drawing.service.DrawAdminNameService;
+import com.getddo.core.user.domain.Membership;
+import com.getddo.core.user.domain.User;
+import com.getddo.core.user.domain.UserRole;
+import com.getddo.core.user.domain.UserStatus;
+import com.getddo.core.user.repository.UserNameRepository;
 import com.getddo.core.user.service.UserService;
 
-import static com.getddo.core.drawing.exception.AwardCancellationErrorCode.*;
+import static com.getddo.core.drawing.exception.AwardCancellationErrorCode.KEY_CONFLICT;
+import static com.getddo.core.drawing.exception.AwardCancellationErrorCode.NOT_CANCELABLE;
+import static com.getddo.core.drawing.exception.AwardCancellationErrorCode.NOT_FOUND;
 import static com.getddo.core.drawing.exception.DrawingErrorCode.ADMIN_REQUIRED;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class AdminAwardCancellationControllerTest {
+	private final UserNameRepository userNames = mock(UserNameRepository.class);
 	private final UUID actor = UUID.randomUUID(), win = UUID.randomUUID(), key = UUID.randomUUID(), run = UUID.randomUUID();
 	private final UUID cancellationId = UUID.randomUUID();
 	private final AwardCancellationService service = mock(AwardCancellationService.class);
 	private MockMvc mvc;
 
 	@BeforeEach void setUp() {
+		when(userNames.findNamesByIds(anyCollection())).thenAnswer(call -> {
+			Collection<UUID> ids = call.getArgument(0);
+			return ids.stream().collect(Collectors.toMap(id -> id, id -> "현재 이름"));
+		});
 		User admin = new User(actor, "관리자", UserRole.ADMIN, UserStatus.ACTIVE, Membership.VIP,
 				null, null, null, null, Instant.EPOCH, Instant.EPOCH);
-		mvc = MockMvcBuilders.standaloneSetup(new AdminAwardCancellationController(service))
+		mvc = MockMvcBuilders.standaloneSetup(new AdminAwardCancellationController(
+				new DrawAdminNameService(userNames), service))
 				.setCustomArgumentResolvers(new CurrentUserArgumentResolver(new UserService(id -> Optional.of(admin))))
 				.setControllerAdvice(new GlobalExceptionHandler()).build();
 	}
@@ -97,11 +125,15 @@ class AdminAwardCancellationControllerTest {
 		// when / then
 		mvc.perform(post(redrawPath()).header("X-User-ID", actor).header("X-User-Role", "ADMIN"))
 				.andExpect(status().isAccepted()).andExpect(jsonPath("$.data.runId").value(run.toString()));
-		DrawResult result = new DrawResult(win, DrawSelection.unfilled(new DrawPrize(UUID.randomUUID(), 1, 1), 1), Instant.EPOCH);
+		UUID winner = UUID.randomUUID();
+		DrawResult result = new DrawResult(win, new DrawSelection(UUID.randomUUID(), 1, 1, 1,
+				UUID.randomUUID(), winner, DrawSelectionResultType.SELECTED), Instant.EPOCH);
 		when(service.startOrResume(actor, cancellationId)).thenReturn(new DrawExecutionResult(run, DrawRunStatus.CONFIRMED,
 				new DrawConfirmation(run, UUID.randomUUID(), Instant.EPOCH, List.of(result))));
 		mvc.perform(post(redrawPath()).header("X-User-ID", actor).header("X-User-Role", "ADMIN"))
-				.andExpect(status().isOk()).andExpect(jsonPath("$.data.confirmation.results[0].resultId").value(win.toString()));
+				.andExpect(status().isOk()).andExpect(jsonPath("$.data.confirmation.results[0].resultId").value(win.toString()))
+				.andExpect(jsonPath("$.data.confirmation.results[0].userId").value(winner.toString()))
+				.andExpect(jsonPath("$.data.confirmation.results[0].userName").value("현재 이름"));
 	}
 
 	@Test @DisplayName("사용자 문맥 누락과 DB 역할에 맞지 않는 헤더는 Service 호출 전에 거절한다")

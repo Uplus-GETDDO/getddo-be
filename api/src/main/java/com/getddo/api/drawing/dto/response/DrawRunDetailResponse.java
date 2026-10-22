@@ -21,7 +21,7 @@ public record DrawRunDetailResponse(UUID id, UUID eventId, int runNumber, DrawTy
 	}
 
 	/** 실행 메타데이터·저장 조건·결과와 운영 요약을 HTTP 전용 응답으로 변환한다. */
-	public static DrawRunDetailResponse from(DrawInspectionView.Detail detail) {
+	public static DrawRunDetailResponse from(DrawInspectionView.Detail detail, Map<UUID, String> names) {
 		DrawInspectionView.Run run = detail.getRun();
 		Map<UUID, Integer> ranks = new HashMap<>();
 		if (run.getRules() != null) {
@@ -29,8 +29,8 @@ public record DrawRunDetailResponse(UUID id, UUID eventId, int runNumber, DrawTy
 		}
 		return new DrawRunDetailResponse(run.getId(), run.getEventId(), run.getRunNumber(), run.getDrawType(),
 				run.getStatus(), run.getOriginalDrawId(), run.getStartedAt(), run.getConfirmedAt(), run.getCreatedAt(),
-				run.getAlgorithmVersion(), DrawRulesResponse.from(run), run.getSnapshotFixedAt(), detail.getResults().stream()
+				run.getAlgorithmVersion(), DrawRulesResponse.from(run, names), run.getSnapshotFixedAt(), detail.getResults().stream()
 				.map(result -> DrawResultResponse.from(result, ranks.get(result.getPrizeId()),
-				result.getUserId())).toList(), DrawExecutionSummaryResponse.from(detail.getExecution()));
+				result.getUserId(), names)).toList(), DrawExecutionSummaryResponse.from(detail.getExecution(), names));
 	}
 }

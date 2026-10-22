@@ -2,18 +2,20 @@ package com.getddo.api.drawing.dto.response;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import com.getddo.core.drawing.domain.DrawInspectionView;
 import com.getddo.core.drawing.domain.DrawSnapshot;
 
-/** 관리자용 확정 후보. 현재 사용자 개인정보를 조회·추가하지 않는다. */
-public record DrawCandidateResponse(UUID id, UUID participantId, UUID userId, long ticketCount, long weight,
+/** 관리자용 확정 후보. 저장 근거와 별도로 현재 사용자 이름을 제공한다. */
+public record DrawCandidateResponse(UUID id, UUID participantId, UUID userId, String userName, long ticketCount, long weight,
 		EntryEvidence entrySnapshot, EligibilityEvidence eligibilitySnapshot) {
 	/** 저장된 후보와 응모 근거를 API 응답으로 변환한다. */
-	public static DrawCandidateResponse from(DrawInspectionView.Candidate view) {
+	public static DrawCandidateResponse from(DrawInspectionView.Candidate view, Map<UUID, String> names) {
 		DrawSnapshot.Candidate candidate = view.getSnapshot();
 		return new DrawCandidateResponse(candidate.id(), candidate.participantId(), candidate.userId(),
+				candidate.userId() == null ? null : names.get(candidate.userId()),
 				candidate.ticketCount(), candidate.weight(), EntryEvidence.from(candidate.entryEvidence()),
 				EligibilityEvidence.from(candidate.eligibilityEvidence()));
 	}

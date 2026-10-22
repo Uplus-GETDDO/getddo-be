@@ -1,5 +1,22 @@
 package com.getddo.api.drawing.controller;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+
 import com.getddo.api.common.context.CurrentUserArgumentResolver;
 import com.getddo.api.common.exception.GlobalExceptionHandler;
 import com.getddo.core.common.pagination.PageQuery;
@@ -16,29 +33,20 @@ import com.getddo.core.drawing.domain.DrawType;
 import com.getddo.core.drawing.domain.DrawVerification;
 import com.getddo.core.drawing.repository.DrawCheckRepository;
 import com.getddo.core.drawing.repository.DrawInspectionRepository;
+import com.getddo.core.drawing.service.DrawAdminNameService;
 import com.getddo.core.drawing.service.DrawInspectionService;
 import com.getddo.core.user.domain.User;
 import com.getddo.core.user.domain.UserRole;
 import com.getddo.core.user.domain.UserStatus;
+import com.getddo.core.user.repository.UserNameRepository;
 import com.getddo.core.user.service.UserService;
-import java.time.Clock;
-import java.time.Instant;
-import java.time.ZoneOffset;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -47,6 +55,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /** 실제 Controller·사용자 문맥·업무 서비스와 저장소 대역을 연결한 API 테스트다. */
 class AdminDrawControllerTest {
+	private final UserNameRepository userNames = mock(UserNameRepository.class);
 	private final DrawInspectionRepository repository = mock(DrawInspectionRepository.class);
 	private final DrawCheckRepository checks = mock(DrawCheckRepository.class);
 	private final UUID actorId = UUID.randomUUID(), runId = UUID.randomUUID(), eventId = UUID.randomUUID();
@@ -56,9 +65,14 @@ class AdminDrawControllerTest {
 
 	@BeforeEach
 	void setUp() {
+		when(userNames.findNamesByIds(anyCollection())).thenAnswer(call -> {
+			Collection<UUID> ids = call.getArgument(0);
+			return ids.stream().collect(Collectors.toMap(id -> id, id -> "현재 이름"));
+		});
 		selected = user(UserRole.ADMIN, UserStatus.ACTIVE);
 		DrawInspectionService service = new DrawInspectionService(repository, checks, new TimeProvider(Clock.fixed(now, ZoneOffset.UTC)));
-		mvc = MockMvcBuilders.standaloneSetup(new AdminDrawController(service))
+		mvc = MockMvcBuilders.standaloneSetup(new AdminDrawController(
+				new DrawAdminNameService(userNames), service))
 				.setControllerAdvice(new GlobalExceptionHandler())
 				.setCustomArgumentResolvers(new CurrentUserArgumentResolver(new UserService(id -> Optional.of(selected).filter(user -> user.getId().equals(id)))))
 				.build();
@@ -79,12 +93,14 @@ class AdminDrawControllerTest {
 		mvc.perform(get("/api/v1/admin/draws/{id}", runId).header("X-User-ID", actorId).header("X-User-Role", "ADMIN"))
 				.andExpect(status().isOk()).andExpect(jsonPath("$.data.execution.failureCount").value(2))
 				.andExpect(jsonPath("$.data.execution.latestFailure.message").value("추첨 처리 시도가 중단되었습니다."))
-				.andExpect(jsonPath("$.data.execution.cancellations[0].canceledBy").value(actorId.toString()));
+				.andExpect(jsonPath("$.data.execution.cancellations[0].canceledBy").value(actorId.toString()))
+				.andExpect(jsonPath("$.data.execution.cancellations[0].canceledByName").value("현재 이름"));
 		mvc.perform(get("/api/v1/admin/draws/{id}/failures", runId).param("size", "1").header("X-User-ID", actorId).header("X-User-Role", "ADMIN"))
 				.andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements").value(2))
 				.andExpect(jsonPath("$.data.items[0].failureCode").value("INTERRUPTED"));
 		mvc.perform(get("/api/v1/admin/draws/{id}/execution-audits", runId).param("size", "1").header("X-User-ID", actorId).header("X-User-Role", "ADMIN"))
-				.andExpect(status().isOk()).andExpect(jsonPath("$.data.items[0].actorId").value(actorId.toString()));
+				.andExpect(status().isOk()).andExpect(jsonPath("$.data.items[0].actorId").value(actorId.toString()))
+				.andExpect(jsonPath("$.data.items[0].actorName").value("현재 이름"));
 	}
 
 	/** 다음 동작을 검증한다: 실패·감사 이력도 일반 사용자를 거절하고 존재하지 않는 실행은 404를 반환한다. */
@@ -126,6 +142,7 @@ class AdminDrawControllerTest {
 				.andExpect(status().isOk()).andExpect(jsonPath("$.data.results[0].wasPublished").value(true))
 				.andExpect(jsonPath("$.data.results[0].isCanceled").value(true))
 				.andExpect(jsonPath("$.data.results[0].userId").value(winnerId.toString()))
+				.andExpect(jsonPath("$.data.results[0].userName").value("현재 이름"))
 				.andExpect(jsonPath("$.data.failureCount").doesNotExist()).andExpect(jsonPath("$.data.cancellations").doesNotExist());
 	}
 
@@ -142,7 +159,8 @@ class AdminDrawControllerTest {
 		// when / then
 		mvc.perform(post("/api/v1/admin/draws/{id}/checks", runId).header("X-User-ID", actorId).header("X-User-Role", selected.getRole().name()))
 				.andExpect(status().isCreated()).andExpect(jsonPath("$.data.passed").value(false))
-				.andExpect(jsonPath("$.data.verifiedBy").value(actorId.toString()));
+				.andExpect(jsonPath("$.data.verifiedBy").value(actorId.toString()))
+				.andExpect(jsonPath("$.data.verifiedByName").value("현재 이름"));
 		mvc.perform(get("/api/v1/admin/draws/{id}/checks", runId).header("X-User-ID", actorId).header("X-User-Role", selected.getRole().name()))
 				.andExpect(status().isOk()).andExpect(jsonPath("$.data.items[0].id").value(stored.getId().toString()));
 	}
@@ -182,6 +200,7 @@ class AdminDrawControllerTest {
 		mvc.perform(get("/api/v1/admin/draws/{id}/participants", runId)
 				.header("X-User-ID", actorId).header("X-User-Role", "ADMIN"))
 				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.items[0].userName").value("현재 이름"))
 				.andExpect(jsonPath("$.data.items[0].entrySnapshot.platinumCount").value((int) platinumCount));
 	}
 
@@ -207,7 +226,8 @@ class AdminDrawControllerTest {
 				.andExpect(jsonPath("$.data.rulesSnapshot.originalRunId").value(firstId.toString()))
 				.andExpect(jsonPath("$.data.rulesSnapshot.targetSlots[0].slotNumber").value(3))
 				.andExpect(jsonPath("$.data.rulesSnapshot.retainedAwards[0].resultId").value(awardId.toString()))
-				.andExpect(jsonPath("$.data.rulesSnapshot.retainedAwards[0].userId").value(winnerId.toString()));
+				.andExpect(jsonPath("$.data.rulesSnapshot.retainedAwards[0].userId").value(winnerId.toString()))
+				.andExpect(jsonPath("$.data.rulesSnapshot.retainedAwards[0].userName").value("현재 이름"));
 	}
 
 	/** 다음 동작을 검증한다: 허용 범위 밖 페이지는 공통 400 응답으로 거절한다. */
