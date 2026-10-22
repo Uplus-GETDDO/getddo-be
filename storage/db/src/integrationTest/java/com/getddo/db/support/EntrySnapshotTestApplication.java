@@ -2,6 +2,7 @@ package com.getddo.db.support;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Map;
 
 import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -15,6 +16,7 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import com.getddo.core.common.time.TimeProvider;
 import com.getddo.core.drawing.service.DrawSnapshotService;
 import com.getddo.core.event.service.EventStatusChangeService;
+import com.getddo.core.user.repository.UserNameRepository;
 import com.getddo.db.common.config.JpaAuditingConfig;
 import com.getddo.db.drawing.mapper.DrawSnapshotMapper;
 import com.getddo.db.drawing.repository.DrawSnapshotRepositoryImpl;
@@ -41,6 +43,10 @@ public class EntrySnapshotTestApplication {
 	/** 서비스와 JPA 감사에 같은 서버 시계를 제공한다. */
 	@Bean
 	MutableClock clock() { return new MutableClock(INITIAL_TIME); }
+
+	/** 응모 컴포넌트 스캔에 들어오는 관리자 조회 서비스의 이름 조회 의존성이다. 이 테스트는 사용자 이름을 쓰지 않는다. */
+	@Bean
+	UserNameRepository userNames() { return ids -> Map.of(); }
 
 	/** 테스트 시계로 기존 서비스의 시간 공급자를 구성한다. */
 	@Bean

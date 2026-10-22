@@ -141,10 +141,15 @@ class DailyStatsIntegrationTest extends MissionIntegrationTestSupport {
 	private void abuseCaseAt(UUID user, Instant at) {
 		abuseUsers.add(user);
 		jdbc.update("""
-				insert into abuse_cases (id, user_id, request_id, detection_key, detection_type, detection_reason,
-				  evidence, occurred_at, detected_at, review_status)
-				values (?, ?, 'req-stats', ?, 'TEST', '집계 테스트', '{}', ?, ?, 'PENDING')
-				""", bytes(UUID.randomUUID()), bytes(user), "stats-" + UUID.randomUUID(), utc(at), utc(at));
+				insert into abuse_cases (id, user_id, source_type, detection_type, detection_reason,
+				  evidence, occurred_at, detected_at, blocked_at, blocked_until)
+				values (?, ?, 'ENTRY', 'REPEATED_RATE_LIMIT_EXCEEDED',
+				  '응모 요청 한도 초과가 반복되어 일시 차단되었습니다.',
+				  JSON_OBJECT('ruleVersion', 'v1', 'triggerScope', 'USER',
+				    'windowStartedAt', ?, 'windowEndsAt', ?, 'requestLimit', 20,
+				    'rejectedCount', 20, 'rejectionThreshold', 20), ?, ?, ?, ?)
+				""", bytes(UUID.randomUUID()), bytes(user), at.minusSeconds(30).toString(), at.plusSeconds(30).toString(),
+				utc(at), utc(at), utc(at), utc(at.plusSeconds(600)));
 	}
 
 	@Test

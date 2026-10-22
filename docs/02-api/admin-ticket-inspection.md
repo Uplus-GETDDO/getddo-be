@@ -18,6 +18,7 @@
 
 ## 판단과 제약
 
+- AO04 응답은 확인한 사용자의 현재 이름 `userName`을 담는다(ADR-028). 요청 시점에 읽고 저장하지 않는다. AO03·AO05·AO08·AO09의 이름은 이 작업 범위가 아니다.
 - 사용자 이름, 이벤트·미션 제목, 지급 근거는 다른 도메인이 소유한 테이블이다. Entity를 만들지 않고 `AdminTicketQueryRepositoryImpl`의 읽기 전용 네이티브 SQL JOIN으로 읽는다. 값은 모두 파라미터로 바인딩하고 `keyword`의 `%`·`_`는 문자 그대로 검색한다.
 - AO03의 `sourceId`는 출석 기록(`ATTENDANCE`)·미션 제출(`MISSION`)·게임 플레이(`GAME`) ID다. `missionId`를 주면 미션 지급만 나오고 `sourceType`과 함께 모순되면 빈 결과다.
 - AO05·AO08의 이벤트는 사용 이력이 가리키는 응모에서, 반환 이력은 되돌린 원본 사용 이력의 응모에서 얻는다. AO08의 `reasonType`은 반환이 이벤트 취소로만 일어나므로 `EVENT_CANCELED`로 고정이다. 반환 처리 상태·재시도 횟수는 노출하지 않는다.

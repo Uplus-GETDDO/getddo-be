@@ -88,6 +88,7 @@ WHERE mock_delivery_status IN ('PENDING', 'FAILED');
 
 - 활성 ADMIN 사용자 문맥을 사용해 AN01~AN05를 호출한다. 확정 경로·필터·응답·오류는 [공용 알림 API](https://github.com/GETDDO/getddo-spec/blob/main/05-api/notification.md#관리자-알림-운영--an01an05-확정)를 따른다.
 - 작업 목록·상세와 사용자별 모의 발송 이력을 조회한다. createdAt DESC, id DESC의 페이지이며 생성 시각 [from,to)로 검색한다. 목록 조회는 읽음 상태를 바꾸지 않는다.
+- AN04·AN05의 `userName`은 `NotificationAdminRepositoryImpl`이 `notifications.user_id`와 `users.id`를 조인해 읽는다. 이름을 원본 알림에 저장하지 않는다. 목록의 필터·개수·정렬은 기존 알림을 기준으로 유지하고, 복구 조회는 `FOR UPDATE OF n` / `FOR SHARE OF n`으로 알림 행만 잠근다. 이 계약은 [관리자 알림 이름 필드](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/05-api/notification.md#2026-10-21-관리자-알림-수신자-이름-추가)를 따른다.
 - 생성 FAILED와 모의 발송 FAILED의 최종 실패만 복구한다. 다음 자동 재시도가 있거나 진행·성공 상태면 NOTIFICATION-010(409)으로 거절한다. 이미 접수한 같은 대상의 반복 요청도 409다.
 - generationStoppedBy가 있는 생성 작업은 상태와 관계없이 복구하지 않는다. EVENT_START는 미삭제·SCHEDULED·시작 전인 이벤트만 생성 복구한다. 이미 생성된 사용자 알림의 모의 발송에 이 제한을 확대하지 않는다.
 - POST는 202로 접수 결과를 반환하며 실제 성공을 보장하지 않는다. 기존 워커가 처리하고 기존 발생 키·수신자·내용·알림 ID·읽음 상태를 보존한다.

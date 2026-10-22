@@ -71,7 +71,7 @@ GitHub **Settings → Environments → production → Variables**에 기본 단�
 - 배포 후 새 컨테이너 ID의 stream에 기동 로그와 이후 요청 로그가 들어오는지 확인한다. HTTP 기동 확인만으로 로그 수집 성공을 판단하지 않는다. 실패 시 로그 그룹·리전·역할 권한·네트워크를 확인한다.
 - 실패 복구는 이전 release의 Compose를 사용한다. 이전 파일이 `json-file`이면 복구 시 로그 드라이버도 되돌아가므로 CloudWatch 수집 유지 여부를 별도로 확인한다.
 
-오프라인에서는 비밀값 없는 임시 env 파일을 `APP_ENV_FILE`로 지정하고 `APP_IMAGE`를 설정한 뒤 `docker compose --project-name getddo --env-file /dev/null --file compose.deploy.yaml config --format json`으로 드라이버·옵션·raw env 보존을 검사한다. 이 검사는 AWS 권한·네트워크·실제 로그 도착을 검증하지 않는다. 실제 재배포 후 수집 확인은 별도 운영 검증으로 남는다.
+오프라인에서는 비밀값 없는 임시 env 파일을 `APP_ENV_FILE`로 지정하고 `APP_IMAGE`와 검증용 `API_PRIVATE_IP=10.0.1.20`을 설정한 뒤 `docker compose --project-name getddo --env-file /dev/null --file compose.deploy.yaml config --format json`으로 드라이버·옵션·raw env 보존을 검사한다. 검증용 IP는 오프라인 렌더링에만 사용하며 운영 배포의 IP는 호스트 IMDSv2에서 결정한다. 이 검사는 AWS 권한·네트워크·실제 로그 도착을 검증하지 않는다. 실제 재배포 후 수집 확인은 별도 운영 검증으로 남는다.
 
 설정 근거: [Docker awslogs 드라이버](https://docs.docker.com/engine/logging/drivers/awslogs/), [non-blocking 버퍼 동작](https://docs.docker.com/engine/logging/configure/#configure-the-delivery-mode-of-log-messages-from-container-to-log-driver).
 
@@ -180,3 +180,11 @@ GitHub concurrency는 진행 중 실행을 취소하지 않는다. single/rollin
 OIDC 역할에 정확한 `releases/*` 쓰기 외 **해당 버킷의 `locks/container-deploy.json` 한 객체**에 `s3:PutObject`·`s3:DeleteObject`가 필요하다. 정상 단일 모드도 이 잠금 권한을 먼저 준비한다. 대상 조회용 `ec2:DescribeInstances`·`ssm:DescribeInstanceInformation`, 대상 그룹 조회/health 조회와 `elasticloadbalancing:DescribeTargetGroupAttributes`, 해당 TG만의 `elasticloadbalancing:RegisterTargets`·`DeregisterTargets`, 정확한 A/C 인스턴스·AWS-RunShellScript에 한정한 기존 SSM 권한을 준비한다. draining은 조회한 `deregistration_delay.timeout_seconds`에 관측 여유 60초를 더하고 최소 300초까지 기다린다. 조회 API의 리소스 범위 제한 가능 여부는 IAM 정책에서 구분한다. EC2 런타임 역할과 GitHub 역할을 혼동하거나 관리자 권한을 추가하지 않는다. 정상 attachment는 Terraform이 계속 관리한다. CloudFormation/RDS 자원 변경은 없다.
 
 오프라인 회귀 검증은 `python3 -m unittest discover -s .github/tests`로 수행한다. 이 검증은 AWS 모의 응답·배포 엔진 테스트 대역이며 실제 SSM/ALB/DB/Redis/CloudWatch 운영 검증과 구분한다. PR의 Build와 Container CD 모두 이 회귀 검증을 실행하며 CD에서는 AWS 인증 전에 수행한다.
+
+### GD-298: private 관리 포트 사전 검증과 복구
+
+새 Compose는 8080 매핑을 유지하고 `${API_PRIVATE_IP}:9091:9091`을 추가하며 `monitoring` 프로파일을 활성화한다. `API_PRIVATE_IP`는 배포 엔진이 호스트 IMDSv2의 `local-ipv4`에서 자동 조회한다. 프록시/리디렉션/IMDSv1 fallback 없이 유한 timeout으로 조회하고 RFC1918 IPv4 형식을 검증한다. 새 Compose 또는 이전 Compose가 변수를 필요로 할 때만 조회하므로 과거 승인 산출물의 initial-c도 유지한다. 메타데이터 실패·잘못된 IP는 설정 교체·앱 재생성 전에 실패한다. 호스트 메타데이터가 IP 소유권의 근거이며 배포 호출자의 IP override는 사용하지 않는다.
+
+IP는 Compose 실행 환경에만 전달하고 app.env나 Parameter Store에는 저장하지 않는다. 필수 Parameter Store 목록·IAM 조회 범위는 변경하지 않는다. 새 앱은 기존 8080 정상 응답에 이어 private 9091의 HTTP bucket/JVM/Tomcat/Hikari 지표 제공을 확인한 뒤 current로 기록한다. 확인 실패 시 이전 Compose·이미지·전체 app.env를 복원하며, 롤백 성공 판정은 기존 8080 정상 응답과 이미지 확인만 사용한다. 이전 버전에 Prometheus가 없어도 복구 성공으로 처리하고 이번 배포 자체는 실패로 남긴다. 따라서 앱 복구 후 계측이 중단될 수 있으며 수집 대상의 up 상태도 별도로 확인한다.
+
+GD-297의 private 수집 SG·target 라벨 준비가 선행 조건이다. 실제 적용·복원 수신 검증은 GD-299의 별도 사용자 승인 후 수행한다. 운영 적용 승인 대기 — 병합/배포 금지.

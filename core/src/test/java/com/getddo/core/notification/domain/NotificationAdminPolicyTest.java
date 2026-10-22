@@ -103,7 +103,7 @@ class NotificationAdminPolicyTest {
 
 	/** 필수 값・차수 검증용 발송 조회 결과를 만든다. */
 	private AdminNotification adminDelivery(UUID id, UUID jobId, UUID userId, MockDeliveryStatus status, int count, int base) {
-		return new AdminNotification(id, jobId, userId, null, "제목", "내용", null, NOW, false,
+		return new AdminNotification(id, jobId, userId, "수신자", null, "제목", "내용", null, NOW, false,
 				status, null, count, base, null, null);
 	}
 

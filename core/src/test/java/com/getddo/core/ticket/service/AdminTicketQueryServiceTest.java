@@ -4,6 +4,8 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -35,6 +37,7 @@ import com.getddo.core.ticket.repository.TicketQueryRepository;
 import com.getddo.core.user.domain.User;
 import com.getddo.core.user.domain.UserRole;
 import com.getddo.core.user.domain.UserStatus;
+import com.getddo.core.user.repository.UserNameRepository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -55,13 +58,15 @@ class AdminTicketQueryServiceTest {
 	private AdminTicketQueryRepository repository;
 	@Mock
 	private TicketQueryRepository queryRepository;
+	@Mock
+	private UserNameRepository userNames;
 
 	private AdminTicketQueryService service;
 
 	@BeforeEach
 	void setUp() {
 		service = new AdminTicketQueryService(repository, queryRepository,
-				new TimeProvider(Clock.fixed(NOW, ZoneOffset.UTC)));
+				new TimeProvider(Clock.fixed(NOW, ZoneOffset.UTC)), userNames);
 	}
 
 	private static User user(UserRole role, UserStatus status) {
@@ -175,6 +180,7 @@ class AdminTicketQueryServiceTest {
 				TicketGrade.GOLD, 3, 1, TicketStatus.SPENT, TicketStatus.AVAILABLE);
 		when(repository.userExists(userId)).thenReturn(true);
 		when(repository.userExists(NO_SUCH_USER)).thenReturn(false);
+		when(userNames.findNamesByIds(Set.of(userId))).thenReturn(Map.of(userId, "홍길동"));
 		when(queryRepository.findHoldings(userId, NOW)).thenReturn(List.of(
 				new TicketHolding(TicketGrade.GOLD, NOW.plusSeconds(60), 2),
 				new TicketHolding(TicketGrade.BRONZE, NOW.plusSeconds(60), 3)));
@@ -183,6 +189,7 @@ class AdminTicketQueryServiceTest {
 		TicketConsistencyResult result = service.getConsistency(admin, userId);
 		// then
 		assertThat(result.getCheckedAt()).isEqualTo(NOW);
+		assertThat(result.getUserName()).isEqualTo("홍길동");
 		assertThat(result.getAvailableCount()).isEqualTo(5);
 		assertThat(result.isConsistent()).isFalse();
 		assertThat(result.getInconsistencies()).containsExactly(mismatch);

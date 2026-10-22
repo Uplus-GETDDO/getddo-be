@@ -84,3 +84,5 @@ E08·E09의 공용 계약은 [SPEC 추첨 API](https://github.com/Uplus-GETDDO/g
 GD-209의 배너 구현·FE 연결·검증 상태는 [배너 안내](banners.md)에 정리합니다.
 
 GD-227의 이벤트·경품 이미지 업로드 API, 5MB 제한과 S3Mock 실행 방법은 [이벤트 이미지 업로드](event-images.md)에 정리합니다.
+
+GD-142의 AR01 차단 이력 목록은 기존 사용자 문맥·ResponseEnvelope·PageResult를 재사용합니다. `AbuseCaseQueryService`가 활성 관리자 권한을 먼저 확인하고, 저장소에서 사용자 닉네임·선택 이벤트 제목을 조인합니다. 공개 계약은 [SPEC 어뷰징 API](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/05-api/abuse.md), 신규 DB 전환·시드와 미실행 검증은 [차단 이력 전환 절차](../06-runbook/entry-abuse-migration.md)를 따릅니다. GD-143은 같은 기반으로 AR02 상세와 허용 evidence 변환을 연결합니다. 구현 경계는 [관리자 차단 이력 조회](abuse-cases.md)를 참고합니다. Redis 차단·저장 작업자는 후속입니다.

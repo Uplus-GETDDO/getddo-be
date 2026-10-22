@@ -1,34 +1,14 @@
 package com.getddo.api.drawing.controller;
 
-import com.getddo.api.common.context.CurrentUserArgumentResolver;
-import com.getddo.api.common.exception.GlobalExceptionHandler;
-import com.getddo.core.common.exception.BusinessException;
-import com.getddo.core.common.pagination.PageQuery;
-import com.getddo.core.common.pagination.PageResult;
-import com.getddo.core.common.time.TimeProvider;
-import com.getddo.core.drawing.domain.DrawPublication;
-import com.getddo.core.drawing.domain.DrawPublicationConfirmation;
-import com.getddo.core.drawing.domain.DrawPublicationChange;
-import com.getddo.core.drawing.domain.DrawPublicationRun;
-import com.getddo.core.drawing.domain.DrawPublicationType;
-import com.getddo.core.drawing.domain.DrawResultConfirmation;
-import com.getddo.core.drawing.domain.DrawRunStatus;
-import com.getddo.core.drawing.repository.DrawPublicationRepository;
-import com.getddo.core.drawing.service.DrawAdminAuthorization;
-import com.getddo.core.drawing.service.DrawPublicationQueryService;
-import com.getddo.core.drawing.service.DrawPublicationService;
-import com.getddo.core.drawing.service.DrawResultConfirmationService;
-import com.getddo.core.user.domain.User;
-import com.getddo.core.user.domain.UserRole;
-import com.getddo.core.user.domain.UserStatus;
-import com.getddo.core.user.repository.UserRepository;
-import com.getddo.core.user.service.UserService;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -39,16 +19,44 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
+
+import com.getddo.api.common.context.CurrentUserArgumentResolver;
+import com.getddo.api.common.exception.GlobalExceptionHandler;
+import com.getddo.core.common.exception.BusinessException;
+import com.getddo.core.common.pagination.PageQuery;
+import com.getddo.core.common.pagination.PageResult;
+import com.getddo.core.common.time.TimeProvider;
+import com.getddo.core.drawing.domain.DrawPublication;
+import com.getddo.core.drawing.domain.DrawPublicationChange;
+import com.getddo.core.drawing.domain.DrawPublicationConfirmation;
+import com.getddo.core.drawing.domain.DrawPublicationRun;
+import com.getddo.core.drawing.domain.DrawPublicationType;
+import com.getddo.core.drawing.domain.DrawResultConfirmation;
+import com.getddo.core.drawing.domain.DrawRunStatus;
+import com.getddo.core.drawing.repository.DrawPublicationRepository;
+import com.getddo.core.drawing.service.DrawAdminAuthorization;
+import com.getddo.core.drawing.service.DrawAdminNameService;
+import com.getddo.core.drawing.service.DrawPublicationQueryService;
+import com.getddo.core.drawing.service.DrawPublicationService;
+import com.getddo.core.drawing.service.DrawResultConfirmationService;
+import com.getddo.core.user.domain.User;
+import com.getddo.core.user.domain.UserRole;
+import com.getddo.core.user.domain.UserStatus;
+import com.getddo.core.user.repository.UserNameRepository;
+import com.getddo.core.user.repository.UserRepository;
+import com.getddo.core.user.service.UserService;
+
 import static com.getddo.core.drawing.exception.DrawPublicationErrorCode.NOT_CONFIRMABLE;
 import static org.hamcrest.Matchers.aMapWithSize;
 import static org.hamcrest.Matchers.nullValue;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -56,6 +64,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /** 실제 MVC 사용자 문맥·확인/권한 서비스를 사용한다. 공개 계산·저장소는 대역이며 DB 연동 검증은 아니다. */
 class AdminDrawPublicationControllerTest {
+	private final UserNameRepository userNames = mock(UserNameRepository.class);
 	private static final Instant NOW = Instant.parse("2026-10-12T03:00:00Z");
 	private final UUID actorId = UUID.randomUUID(), eventId = UUID.randomUUID(), runId = UUID.randomUUID();
 	private final DrawPublicationRepository repository = mock(DrawPublicationRepository.class);
@@ -68,6 +77,10 @@ class AdminDrawPublicationControllerTest {
 	/** 각 시나리오에 사용할 공개·확인 서비스와 저장·사용자 대역을 준비한다. */
 	@BeforeEach
 	void setUp() {
+		when(userNames.findNamesByIds(anyCollection())).thenAnswer(call -> {
+			Collection<UUID> ids = call.getArgument(0);
+			return ids.stream().collect(Collectors.toMap(id -> id, id -> "현재 이름"));
+		});
 		actor = user(UserRole.ADMIN, UserStatus.ACTIVE);
 		confirmation = new DrawResultConfirmation(UUID.randomUUID(), runId, actorId, NOW);
 		when(users.findById(actorId)).thenAnswer(call -> Optional.of(actor));
@@ -78,7 +91,7 @@ class AdminDrawPublicationControllerTest {
 				new DrawPublicationConfirmation(eventId, confirmation, publication(1)));
 		LocalValidatorFactoryBean validator = new LocalValidatorFactoryBean();
 		validator.afterPropertiesSet();
-		mvc = MockMvcBuilders.standaloneSetup(new AdminDrawPublicationController(
+		mvc = MockMvcBuilders.standaloneSetup(new AdminDrawPublicationController(new DrawAdminNameService(userNames),
 				new DrawResultConfirmationService(repository, publications, new DrawAdminAuthorization(users), new TimeProvider(Clock.fixed(NOW, ZoneOffset.UTC))),
 				new DrawPublicationQueryService(publications, repository, new DrawAdminAuthorization(users))))
 				.setControllerAdvice(new GlobalExceptionHandler()).setValidator(validator)
@@ -98,6 +111,7 @@ class AdminDrawPublicationControllerTest {
 			mvc.perform(selected(post("/api/v1/admin/draws/{id}/result-confirmation", runId)))
 					.andExpect(status().isOk()).andExpect(jsonPath("$.data.isPublished").value(true))
 					.andExpect(jsonPath("$.data.confirmationId").value(confirmation.getId().toString()))
+					.andExpect(jsonPath("$.data.confirmedByName").value("현재 이름"))
 					.andExpect(jsonPath("$.data.publicationId").value(first.getId().toString()));
 		}
 		verify(publications, times(2)).publishReviewedInitial(eventId, runId, actorId);
@@ -149,7 +163,7 @@ class AdminDrawPublicationControllerTest {
 		for (int attempt = 0; attempt < 2; attempt++) {
 			// when / then
 			mvc.perform(selected(post("/api/v1/admin/draws/{id}/publication", runId)))
-					.andExpect(status().isOk()).andExpect(jsonPath("$.data").value(aMapWithSize(7)))
+					.andExpect(status().isOk()).andExpect(jsonPath("$.data").value(aMapWithSize(8)))
 					.andExpect(jsonPath("$.data.publicationId").value(latest.getId().toString()))
 					.andExpect(jsonPath("$.data.drawRunId").value(latest.getSourceDrawId().toString()))
 					.andExpect(jsonPath("$.data.revision").value(3));
@@ -171,7 +185,8 @@ class AdminDrawPublicationControllerTest {
 		// when / then
 		mvc.perform(selected(post("/api/v1/admin/draws/{id}/publication", runId)))
 				.andExpect(status().isOk()).andExpect(jsonPath("$.data.revision").value(2))
-				.andExpect(jsonPath("$.data.updatedBy").value(actorId.toString()));
+				.andExpect(jsonPath("$.data.updatedBy").value(actorId.toString()))
+				.andExpect(jsonPath("$.data.updatedByName").value("현재 이름"));
 		verify(repository).saveConfirmation(runId, actorId, NOW);
 		verify(publications).publishConfirmed(eventId, runId);
 	}
@@ -205,7 +220,11 @@ class AdminDrawPublicationControllerTest {
 				.andExpect(jsonPath("$.data.items[0].executions[0].confirmedBy").value(actorId.toString()))
 				.andExpect(jsonPath("$.data.items[0].executions[0].cancellations[0].reason").value("실행별 사유"))
 				.andExpect(jsonPath("$.data.items[0].changes[0].beforeUserId").value(before.toString()))
-				.andExpect(jsonPath("$.data.items[0].changes[0].afterUserId").value(after.toString()));
+				.andExpect(jsonPath("$.data.items[0].changes[0].afterUserId").value(after.toString()))
+				.andExpect(jsonPath("$.data.items[0].confirmedByName").value("현재 이름"))
+				.andExpect(jsonPath("$.data.items[0].executions[0].confirmedByName").value("현재 이름"))
+				.andExpect(jsonPath("$.data.items[0].changes[0].beforeUserName").value("현재 이름"))
+				.andExpect(jsonPath("$.data.items[0].changes[0].afterUserName").value("현재 이름"));
 	}
 
 	/** 다음 동작을 검증한다: 근거 연결이 없는 과거 공개 버전은 executions 빈 배열을 반환한다. */
