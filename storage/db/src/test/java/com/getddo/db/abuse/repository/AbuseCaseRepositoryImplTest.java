@@ -2,6 +2,7 @@ package com.getddo.db.abuse.repository;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import jakarta.persistence.EntityManager;
@@ -13,6 +14,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.getddo.core.abuse.domain.AbuseCaseDetail;
+import com.getddo.core.abuse.domain.AbuseEvidence;
+import com.getddo.core.abuse.domain.AbuseTriggerScope;
 import com.getddo.core.abuse.domain.AbuseCaseFilter;
 import com.getddo.core.abuse.domain.AbuseCaseSummary;
 import com.getddo.core.abuse.domain.AbuseSourceType;
@@ -20,8 +24,10 @@ import com.getddo.core.common.pagination.PageQuery;
 import com.getddo.core.common.pagination.PageResult;
 import com.getddo.db.abuse.entity.AbuseCaseEntity;
 import com.getddo.db.abuse.mapper.AbuseCaseMapper;
+import com.getddo.db.abuse.mapper.AbuseEvidenceMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -39,6 +45,8 @@ class AbuseCaseRepositoryImplTest {
 	private AbuseCaseMapper mapper;
 	@Mock
 	private TypedQuery<Long> count;
+	@Mock
+	private AbuseEvidenceMapper evidenceMapper;
 	@Mock
 	private TypedQuery<Object[]> select;
 
@@ -61,7 +69,7 @@ class AbuseCaseRepositoryImplTest {
 		when(mapper.toSummary(entity, "닉네임", null)).thenReturn(summary);
 
 		// when
-		PageResult<AbuseCaseSummary> result = new AbuseCaseRepositoryImpl(entityManager, mapper).findAll(
+		PageResult<AbuseCaseSummary> result = new AbuseCaseRepositoryImpl(entityManager, mapper, evidenceMapper).findAll(
 				new AbuseCaseFilter(userId, eventId, AbuseSourceType.ENTRY, from, to), new PageQuery(2, 1));
 
 		// then
@@ -96,7 +104,7 @@ class AbuseCaseRepositoryImplTest {
 		when(count.getSingleResult()).thenReturn(Long.MAX_VALUE);
 
 		// when
-		PageResult<AbuseCaseSummary> result = new AbuseCaseRepositoryImpl(entityManager, mapper).findAll(
+		PageResult<AbuseCaseSummary> result = new AbuseCaseRepositoryImpl(entityManager, mapper, evidenceMapper).findAll(
 				new AbuseCaseFilter(null, null, null, null, null), new PageQuery(Integer.MAX_VALUE, 100));
 
 		// then
@@ -113,12 +121,72 @@ class AbuseCaseRepositoryImplTest {
 		when(count.getSingleResult()).thenReturn(0L);
 
 		// when
-		PageResult<AbuseCaseSummary> result = new AbuseCaseRepositoryImpl(entityManager, mapper).findAll(
+		PageResult<AbuseCaseSummary> result = new AbuseCaseRepositoryImpl(entityManager, mapper, evidenceMapper).findAll(
 				new AbuseCaseFilter(null, null, null, null, null), new PageQuery(1, 20));
 
 		// then
 		assertThat(result.getItems()).isEmpty();
 		assertThat(result.getTotalElements()).isZero();
 		verifyNoInteractions(mapper, select);
+	}
+
+	@Test
+	@DisplayName("상세는 같은 대상·조인 조건에서 단건을 읽고 최초 근거와 표시값을 함께 복원한다")
+	void readsDetailWithSharedEligibilityAndJoins() {
+		// given
+		UUID id = UUID.randomUUID();
+		AbuseCaseEntity entity = mock(AbuseCaseEntity.class);
+		AbuseCaseSummary summary = mock(AbuseCaseSummary.class);
+		AbuseEvidence evidence = new AbuseEvidence("v1", AbuseTriggerScope.USER, Instant.EPOCH,
+				Instant.EPOCH.plusSeconds(60), 20, 20, 20);
+		when(entityManager.createQuery(anyString(), eq(Object[].class))).thenReturn(select);
+		when(select.getResultList()).thenReturn(List.<Object[]>of(new Object[] {entity, "닉네임", null}));
+		when(mapper.toSummary(entity, "닉네임", null)).thenReturn(summary);
+		when(entity.getEvidence()).thenReturn("stored-json");
+		when(evidenceMapper.toDomain("stored-json")).thenReturn(evidence);
+
+		// when
+		AbuseCaseDetail result = new AbuseCaseRepositoryImpl(entityManager, mapper, evidenceMapper).findById(id).orElseThrow();
+
+		// then
+		assertThat(result.getSummary()).isSameAs(summary);
+		assertThat(result.getEvidence()).isSameAs(evidence);
+		ArgumentCaptor<String> hql = ArgumentCaptor.forClass(String.class);
+		verify(entityManager).createQuery(hql.capture(), eq(Object[].class));
+		assertThat(hql.getValue()).contains("left join EventEntity", "a.sourceType = :entrySource",
+				"a.detectionType = :automaticDetection", "a.id = :caseId").doesNotContain("blockedUntil", "current_timestamp");
+		verify(select).setParameter("caseId", id);
+		verify(select).setParameter("entrySource", "ENTRY");
+		verify(select).setParameter("automaticDetection", "REPEATED_RATE_LIMIT_EXCEEDED");
+		verifyNoInteractions(count);
+	}
+
+	@Test
+	@DisplayName("대상 부재는 empty이며 원문 근거를 파싱하지 않는다")
+	void missingDetailDoesNotDecodeEvidence() {
+		// given
+		when(entityManager.createQuery(anyString(), eq(Object[].class))).thenReturn(select);
+		when(select.getResultList()).thenReturn(List.of());
+
+		// when
+		Optional<AbuseCaseDetail> result = new AbuseCaseRepositoryImpl(entityManager, mapper, evidenceMapper).findById(UUID.randomUUID());
+
+		// then
+		assertThat(result).isEmpty();
+		verifyNoInteractions(mapper, evidenceMapper, count);
+	}
+
+	@Test
+	@DisplayName("조회 저장소 장애는 대상 부재로 바꾸지 않고 기존 공통 서버 오류 경계로 전달한다")
+	void lookupFailureIsNotNotFound() {
+		// given
+		IllegalStateException failure = new IllegalStateException("DB failure");
+		when(entityManager.createQuery(anyString(), eq(Object[].class))).thenReturn(select);
+		when(select.getResultList()).thenThrow(failure);
+
+		// when / then
+		assertThatThrownBy(() -> new AbuseCaseRepositoryImpl(entityManager, mapper, evidenceMapper).findById(UUID.randomUUID()))
+				.isSameAs(failure);
+		verifyNoInteractions(mapper, evidenceMapper, count);
 	}
 }

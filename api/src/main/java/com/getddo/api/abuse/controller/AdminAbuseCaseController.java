@@ -8,10 +8,12 @@ import io.swagger.v3.oas.annotations.Parameter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.getddo.api.abuse.dto.response.AbuseCaseDetailResponse;
 import com.getddo.api.abuse.dto.response.AbuseCaseSummaryResponse;
 import com.getddo.api.common.context.CurrentUser;
 import com.getddo.api.common.exception.CommonErrorCode;
@@ -24,7 +26,7 @@ import com.getddo.core.common.pagination.PageQuery;
 import com.getddo.core.common.pagination.PageResult;
 import com.getddo.core.user.domain.User;
 
-/** AR01 관리자 차단 이력 목록의 입력 해석과 공개 응답 변환을 담당한다. */
+/** AR01·AR02 관리자 차단 이력의 입력 해석과 공개 응답 변환을 담당한다. */
 @RestController
 @RequestMapping("/api/v1/admin/abuse-cases")
 @RequiredArgsConstructor
@@ -57,5 +59,13 @@ public class AdminAbuseCaseController {
 				from == null ? null : from.toInstant(), to == null ? null : to.toInstant());
 		return ResponseEnvelope.success(service.findAll(actor, filter, new PageQuery(page, size))
 				.map(AbuseCaseSummaryResponse::from));
+	}
+
+	/** 형식이 잘못된 UUID는 공통 해석 오류로, 조회 대상 부재는 Service의 ABUSE-002로 구분한다. */
+	@Operation(summary = "AR02 어뷰징 차단 이력 상세", description = "활성 ADMIN 전용. 최초 차단 당시의 저장 근거를 조회합니다.")
+	@GetMapping("/{caseId}")
+	public ResponseEnvelope<AbuseCaseDetailResponse> detail(
+			@CurrentUser(membershipRequired = false) User actor, @PathVariable UUID caseId) {
+		return ResponseEnvelope.success(AbuseCaseDetailResponse.from(service.findById(actor, caseId)));
 	}
 }

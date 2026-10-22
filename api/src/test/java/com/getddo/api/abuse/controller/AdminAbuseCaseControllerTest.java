@@ -17,11 +17,15 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import com.getddo.api.common.context.CurrentUserArgumentResolver;
 import com.getddo.api.common.exception.GlobalExceptionHandler;
+import com.getddo.core.abuse.domain.AbuseCaseDetail;
+import com.getddo.core.abuse.domain.AbuseEvidence;
+import com.getddo.core.abuse.domain.AbuseTriggerScope;
 import com.getddo.core.abuse.domain.AbuseCaseFilter;
 import com.getddo.core.abuse.domain.AbuseCaseSummary;
 import com.getddo.core.abuse.domain.AbuseSourceType;
 import com.getddo.core.abuse.exception.AbuseErrorCode;
 import com.getddo.core.abuse.service.AbuseCaseQueryService;
+import com.getddo.core.abuse.repository.AbuseCaseRepository;
 import com.getddo.core.common.exception.BusinessException;
 import com.getddo.core.common.pagination.PageQuery;
 import com.getddo.core.common.pagination.PageResult;
@@ -178,6 +182,110 @@ class AdminAbuseCaseControllerTest {
 		// when / then
 		mvc.perform(asAdmin(get("/api/v1/admin/abuse-cases"))).andExpect(status().isInternalServerError())
 				.andExpect(jsonPath("$.code").value("COMMON-001"))
+				.andExpect(jsonPath("$.message").value("서버 오류가 발생했습니다."))
+				.andExpect(jsonPath("$.data").value(nullValue()));
+	}
+
+	@ParameterizedTest
+	@CsvSource({"USER,true", "EVENT,false"})
+	@DisplayName("AR02는 평탄한 열한 필드와 근거 일곱 필드만 공개하고 저장된 범위·설정·시각을 보존한다")
+	void returnsAllowedDetailFields(AbuseTriggerScope scope, boolean withoutEvent) throws Exception {
+		// given
+		UUID id = UUID.randomUUID();
+		AbuseCaseSummary summary = new AbuseCaseSummary(id, USER_ID, "응모자", withoutEvent ? null : EVENT_ID,
+				withoutEvent ? null : "이벤트 제목", "ENTRY", "REPEATED_RATE_LIMIT_EXCEEDED", "저장된 사유", AT, AT.plusSeconds(600));
+		AbuseCaseDetail detail = new AbuseCaseDetail(summary, new AbuseEvidence("stored-v2", scope,
+				AT.minusSeconds(30), AT.plusSeconds(30), 37, 39, 37));
+		when(service.findById(any(), eq(id))).thenReturn(detail);
+
+		// when / then
+		mvc.perform(asAdmin(get("/api/v1/admin/abuse-cases/{caseId}", id))).andExpect(status().isOk())
+				.andExpect(jsonPath("$.data", aMapWithSize(11)))
+				.andExpect(jsonPath("$.data.id").value(id.toString()))
+				.andExpect(jsonPath("$.data.userId").value(USER_ID.toString()))
+				.andExpect(jsonPath("$.data.userNickname").value("응모자"))
+				.andExpect(jsonPath("$.data.eventId").value(withoutEvent ? nullValue() : org.hamcrest.Matchers.is(EVENT_ID.toString())))
+				.andExpect(jsonPath("$.data.eventTitle").value(withoutEvent ? nullValue() : org.hamcrest.Matchers.is("이벤트 제목")))
+				.andExpect(jsonPath("$.data.sourceType").value("ENTRY"))
+				.andExpect(jsonPath("$.data.detectionType").value("REPEATED_RATE_LIMIT_EXCEEDED"))
+				.andExpect(jsonPath("$.data.detectionReason").value("저장된 사유"))
+				.andExpect(jsonPath("$.data.blockedAt").value("2026-10-21T06:00:00Z"))
+				.andExpect(jsonPath("$.data.blockedUntil").value("2026-10-21T06:10:00Z"))
+				.andExpect(jsonPath("$.data.evidence", aMapWithSize(7)))
+				.andExpect(jsonPath("$.data.evidence.ruleVersion").value("stored-v2"))
+				.andExpect(jsonPath("$.data.evidence.triggerScope").value(scope.name()))
+				.andExpect(jsonPath("$.data.evidence.windowStartedAt").value("2026-10-21T05:59:30Z"))
+				.andExpect(jsonPath("$.data.evidence.windowEndsAt").value("2026-10-21T06:00:30Z"))
+				.andExpect(jsonPath("$.data.evidence.requestLimit").value(37))
+				.andExpect(jsonPath("$.data.evidence.rejectedCount").value(39))
+				.andExpect(jsonPath("$.data.evidence.rejectionThreshold").value(37));
+	}
+
+	@Test
+	@DisplayName("AR02 대상 부재는 경로 404가 아닌 ABUSE-002와 공용 메시지로 응답한다")
+	void detailMissingIsBusinessNotFound() throws Exception {
+		// given
+		when(service.findById(any(), any())).thenThrow(new BusinessException(AbuseErrorCode.CASE_NOT_FOUND));
+
+		// when / then
+		mvc.perform(asAdmin(get("/api/v1/admin/abuse-cases/{caseId}", UUID.randomUUID())))
+				.andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("ABUSE-002"))
+				.andExpect(jsonPath("$.message").value("차단 이력을 찾을 수 없습니다."))
+				.andExpect(jsonPath("$.data").value(nullValue()));
+	}
+
+	@Test
+	@DisplayName("AR02 UUID 해석 실패는 COMMON-005이고 상세 서비스를 호출하지 않는다")
+	void rejectsMalformedDetailId() throws Exception {
+		// given / when / then
+		mvc.perform(asAdmin(get("/api/v1/admin/abuse-cases/not-a-uuid")))
+				.andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("COMMON-005"));
+		verifyNoInteractions(service);
+	}
+
+	@ParameterizedTest
+	@CsvSource({"USER,ACTIVE", "ADMIN,INACTIVE"})
+	@DisplayName("실제 상세 서비스는 비관리자·비활성 관리자를 ABUSE-001로 거절하고 이력 저장소를 조회하지 않는다")
+	void actualDetailServiceChecksPermissionFirst(UserRole role, UserStatus state) throws Exception {
+		// given
+		User actor = new User(ADMIN_ID, "요청자", role, state, null, null, null, null, null, null, null);
+		AbuseCaseRepository repository = mock(AbuseCaseRepository.class);
+		MockMvc actualServiceMvc = MockMvcBuilders.standaloneSetup(new AdminAbuseCaseController(new AbuseCaseQueryService(repository)))
+				.setControllerAdvice(new GlobalExceptionHandler())
+				.setCustomArgumentResolvers(new CurrentUserArgumentResolver(new UserService(id -> Optional.of(actor))))
+				.build();
+
+		// when / then
+		actualServiceMvc.perform(get("/api/v1/admin/abuse-cases/{caseId}", UUID.randomUUID())
+				.header("X-User-ID", ADMIN_ID).header("X-User-Role", role.name()))
+				.andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("ABUSE-001"));
+		verifyNoInteractions(repository);
+	}
+
+	@Test
+	@DisplayName("AR02도 기존 USER 문맥 오류를 그대로 유지한다")
+	void detailPreservesContextErrors() throws Exception {
+		// given
+		String path = "/api/v1/admin/abuse-cases/" + UUID.randomUUID();
+
+		// when / then
+		mvc.perform(get(path)).andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("USER-003"));
+		mvc.perform(get(path).header("X-User-ID", UUID.randomUUID()).header("X-User-Role", "ADMIN"))
+				.andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("USER-002"));
+		mvc.perform(get(path).header("X-User-ID", ADMIN_ID).header("X-User-Role", "USER"))
+				.andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("USER-004"));
+		verifyNoInteractions(service);
+	}
+
+	@Test
+	@DisplayName("손상된 근거 등 상세 내부 오류는 COMMON-001이며 근거 원문을 응답하지 않는다")
+	void detailHidesStoredEvidenceFailure() throws Exception {
+		// given
+		when(service.findById(any(), any())).thenThrow(new IllegalStateException("Stored abuse evidence is invalid"));
+
+		// when / then
+		mvc.perform(asAdmin(get("/api/v1/admin/abuse-cases/{caseId}", UUID.randomUUID())))
+				.andExpect(status().isInternalServerError()).andExpect(jsonPath("$.code").value("COMMON-001"))
 				.andExpect(jsonPath("$.message").value("서버 오류가 발생했습니다."))
 				.andExpect(jsonPath("$.data").value(nullValue()));
 	}
