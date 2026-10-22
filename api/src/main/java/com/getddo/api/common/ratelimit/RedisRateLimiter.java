@@ -1,8 +1,12 @@
 package com.getddo.api.common.ratelimit;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.List;
 
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 
@@ -16,7 +20,7 @@ import org.springframework.data.redis.core.script.DefaultRedisScript;
  * <p>Redis에 닿지 못하면 {@link org.springframework.dao.DataAccessException} 등 런타임 예외를 던진다. 호출하는
  * 인터셉터가 이를 받아 요청을 제한하지 않고 통과시킨다.</p>
  */
-public class RedisRateLimiter implements RateLimiter {
+public class RedisRateLimiter implements EntryRateLimiter, DisposableBean {
 
 	static final String KEY_PREFIX = "getddo:rate-limit:";
 
@@ -37,9 +41,11 @@ public class RedisRateLimiter implements RateLimiter {
 	@SuppressWarnings("rawtypes")
 	private final DefaultRedisScript<List> script = new DefaultRedisScript<>(SCRIPT, List.class);
 	private final StringRedisTemplate redis;
+	private final RedisEntryRateLimiter entries;
 
 	public RedisRateLimiter(StringRedisTemplate redis) {
 		this.redis = redis;
+		this.entries = new RedisEntryRateLimiter(new EntryRedisScriptExecutor(redis));
 	}
 
 	@Override
@@ -58,4 +64,21 @@ public class RedisRateLimiter implements RateLimiter {
 		long ttlMillis = Math.min(Math.max(result.get(1), 0), windowMillis);
 		return Decision.deny((long) Math.ceil(ttlMillis / 1000.0));
 	}
+	@Override
+	public Optional<EntryLimitDecision> findActiveEntry(UUID userId) {
+		return entries.active(userId);
+	}
+
+	@Override
+	public EntryLimitDecision evaluateEntry(UUID userId, UUID eventScope,
+			UUID verifiedEventId, Instant occurredAt, RateLimitProperties.Policy policy,
+			EntryBlockProperties blockProperties) {
+		return entries.evaluate(userId, eventScope, verifiedEventId, occurredAt, policy, blockProperties);
+	}
+
+	@Override
+	public void destroy() {
+		entries.destroy();
+	}
+
 }

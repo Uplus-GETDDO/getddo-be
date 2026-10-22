@@ -290,6 +290,11 @@ class CorsConfigTest {
 	@Import({UserController.class, CurrentUserArgumentResolver.class, UserService.class,
 			GlobalExceptionHandler.class, PublicController.class})
 	static class TestApplication {
+		/** CORS 전용 컨텍스트에서 응모의 DB·Redis 연결을 요구하지 않도록 의존성 경계만 대역으로 둔다. */
+		@org.springframework.context.annotation.Bean
+		com.getddo.api.common.ratelimit.EntryRateLimitHandler entryRateLimitHandler() {
+			return org.mockito.Mockito.mock(com.getddo.api.common.ratelimit.EntryRateLimitHandler.class);
+		}
 	}
 
 	@RestController

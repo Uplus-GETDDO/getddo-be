@@ -20,6 +20,8 @@ class RateLimitConfigTest {
 
 	private final ApplicationContextRunner runner = new ApplicationContextRunner()
 			.withBean(TimeProvider.class, () -> new TimeProvider(Clock.system(ZoneOffset.UTC)))
+			.withBean(com.getddo.api.common.ratelimit.EntryRateLimitHandler.class,
+				() -> mock(com.getddo.api.common.ratelimit.EntryRateLimitHandler.class))
 			.withUserConfiguration(RateLimitConfig.class);
 
 	@Test
@@ -83,4 +85,13 @@ class RateLimitConfigTest {
 		runner.withPropertyValues("getddo.rate-limit.store=redis")
 				.run(context -> assertThat(context).hasFailed());
 	}
+	@Test
+	@DisplayName("응모 집계 시간이 차단 시간보다 길면 부팅 단계에서 거절한다")
+	void invalidEntryWindow() {
+		// given / when / then
+		runner.withPropertyValues("getddo.rate-limit.policies.entry.limit=20",
+				"getddo.rate-limit.policies.entry.window=11m", "getddo.rate-limit.entry-block.duration=10m")
+				.run(context -> assertThat(context).hasFailed());
+	}
+
 }

@@ -10,6 +10,8 @@ import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 import com.getddo.api.common.ratelimit.InMemoryRateLimiter;
+import com.getddo.api.common.ratelimit.EntryBlockProperties;
+import com.getddo.api.common.ratelimit.EntryRateLimitHandler;
 import com.getddo.api.common.ratelimit.RateLimitInterceptor;
 import com.getddo.api.common.ratelimit.RateLimitProperties;
 import com.getddo.api.common.ratelimit.RateLimiter;
@@ -23,20 +25,27 @@ import com.getddo.core.common.time.TimeProvider;
  * 횟수를 합치는 Redis 구현이다. 다른 {@link RateLimiter} 빈을 직접 등록하면 기본 구현은 만들지 않는다.</p>
  */
 @Configuration
-@EnableConfigurationProperties(RateLimitProperties.class)
+@EnableConfigurationProperties({RateLimitProperties.class, EntryBlockProperties.class})
 public class RateLimitConfig implements WebMvcConfigurer {
 
 	private final RateLimiter rateLimiter;
 	private final RateLimitProperties properties;
+	private final EntryRateLimitHandler entries;
 
-	public RateLimitConfig(RateLimiter rateLimiter, RateLimitProperties properties) {
+	public RateLimitConfig(RateLimiter rateLimiter, RateLimitProperties properties, EntryRateLimitHandler entries,
+			EntryBlockProperties blockProperties) {
 		this.rateLimiter = rateLimiter;
 		this.properties = properties;
+		this.entries = entries;
+		RateLimitProperties.Policy entry = properties.policies().get("entry");
+		if (entry != null) {
+			blockProperties.validateWindow(entry.window());
+		}
 	}
 
 	@Override
 	public void addInterceptors(InterceptorRegistry registry) {
-		registry.addInterceptor(new RateLimitInterceptor(rateLimiter, properties)).addPathPatterns("/api/**");
+		registry.addInterceptor(new RateLimitInterceptor(rateLimiter, properties, entries)).addPathPatterns("/api/**");
 	}
 
 	/** 기본으로 쓰는 서버 메모리 제한기. 서버가 한 대일 때만 한도가 정확하다. */

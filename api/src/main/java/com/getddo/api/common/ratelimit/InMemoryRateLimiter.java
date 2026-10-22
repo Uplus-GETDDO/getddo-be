@@ -1,6 +1,9 @@
 package com.getddo.api.common.ratelimit;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -15,17 +18,19 @@ import com.getddo.core.common.time.TimeProvider;
  * 그 요청이 느려질 수 있다. 사용자 식별이 UUID 형식 검증뿐이라 값을 바꿔 보내는 요청으로 키가 늘 수 있지만, 키는 창 길이가
  * 지나면 정리되고 시연 규모(서버 한 대)에서는 문제가 되지 않는다. 규모가 커지면 키 수 상한이나 별도 정리 스레드를 둔다.</p>
  */
-public class InMemoryRateLimiter implements RateLimiter {
+public class InMemoryRateLimiter implements EntryRateLimiter {
 
 	/** 이 횟수만큼 호출될 때마다 끝난 창을 지운다. */
 	private static final long CLEANUP_EVERY = 1024;
 
 	private final TimeProvider timeProvider;
+	private final InMemoryEntryState entries;
 	private final ConcurrentHashMap<String, Window> windows = new ConcurrentHashMap<>();
 	private final AtomicLong calls = new AtomicLong();
 
 	public InMemoryRateLimiter(TimeProvider timeProvider) {
 		this.timeProvider = timeProvider;
+		this.entries = new InMemoryEntryState(timeProvider);
 	}
 
 	@Override
@@ -46,6 +51,18 @@ public class InMemoryRateLimiter implements RateLimiter {
 			return Decision.allow();
 		}
 		return Decision.deny((long) Math.ceil((current.endMillis() - now) / 1000.0));
+	}
+
+	@Override
+	public Optional<EntryLimitDecision> findActiveEntry(UUID userId) {
+		return entries.active(userId);
+	}
+
+	@Override
+	public EntryLimitDecision evaluateEntry(UUID userId, UUID eventScope,
+			UUID verifiedEventId, Instant occurredAt, RateLimitProperties.Policy policy,
+			EntryBlockProperties blockProperties) {
+		return entries.evaluate(userId, eventScope, verifiedEventId, occurredAt, policy, blockProperties);
 	}
 
 	/** 창이 끝나는 시각과 그 창에서 센 요청 수. */

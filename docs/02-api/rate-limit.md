@@ -3,6 +3,10 @@
 - 상태: 검토 대기 · 담당 윤태형(GD-146) · 수치는 확정 전 추천값
 - 적용 대상: 응모(E04), 출석(AT02), 미션 제출(M03), 게임 결과 제출(G04). G04는 정책 `game-result`(분당 10회)로 `GameResultController`에 `@RateLimited(policy = "game-result")`가 붙어 있다.
 
+## 응모 전용 확장 — GD-144
+
+응모(entry)는 [자동 차단 구현](entry-auto-blocking.md)에 따라 기존 문맥 검증 후 일반·거절 집계를 평가한다. 기존 ACTIVE의 읽기 전용 거절만 DB 조회 없이 처리한다. 따라서 아래 비즈니스 검증 전 일반 제한 설명은 비응모 정책과 구별해야 한다. 응모 정책·수치는 [공용 응모 규칙](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/02-domain/entry.md#응모-요청-반복-초과에-따른-일시-차단--gd-141)을 기준으로 한다. DB 차단 이력 저장은 GD-291 후속이며 Redis 저장 대기 등록과 구별한다.
+
 ## 동작
 
 사용자별로 일정 시간 안에 보낼 수 있는 요청 수를 제한한다. 한도를 넘으면 `429 Too Many Requests`, 오류 코드 `COMMON-006`(`RATE_LIMIT_EXCEEDED`), `Retry-After`(다시 시도할 수 있을 때까지 남은 초) 헤더를 돌려준다. 거절 요청은 비즈니스 로직과 요청 검증보다 먼저 일어나므로 응모권 차감·거절 이력 저장 같은 DB 작업을 하지 않는다. 거절 이력(GD-145)에도 남기지 않는다.
@@ -14,7 +18,7 @@
 
 ## 설정
 
-`api/src/main/resources/application.yaml`의 `getddo.rate-limit`에서 조정한다. 재배포 없이 환경변수 `RATE_LIMIT_ENABLED=false`로 전체를 끌 수 있다. 정책이 설정에 없으면 그 API는 제한하지 않는다.
+`api/src/main/resources/application.yaml`의 `getddo.rate-limit`에서 조정한다. 환경변수 `RATE_LIMIT_ENABLED=false`를 반영하고 프로세스를 재시작하면 전체를 끌 수 있다. 런타임 설정 자동 갱신은 제공하지 않는다. 정책이 설정에 없으면 그 API는 제한하지 않는다.
 
 | 정책 | 대상 | 한도(창 1분) | 범위별 한도 |
 | --- | --- | --- | --- |

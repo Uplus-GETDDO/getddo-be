@@ -1,0 +1,142 @@
+package com.getddo.api.common.ratelimit;
+
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+import com.getddo.core.abuse.domain.AbuseEvidence;
+import com.getddo.core.abuse.domain.AbuseTriggerScope;
+import com.getddo.core.common.time.TimeProvider;
+
+/** 메모리 모드의 사용자별 원자 평가다. DB 인계 대상은 만들지 않으며 서버 재시작 시 사라진다. */
+final class InMemoryEntryState {
+	private final TimeProvider time;
+	private final ConcurrentHashMap<UUID, State> users = new ConcurrentHashMap<>();
+	private final Object[] locks = new Object[256];
+	private final AtomicLong calls = new AtomicLong();
+
+	InMemoryEntryState(TimeProvider time) {
+		this.time = time;
+		for (int i = 0; i < locks.length; i++) {
+			locks[i] = new Object();
+		}
+	}
+
+	private Object lock(UUID id) {
+		return locks[(id.hashCode() & Integer.MAX_VALUE) % locks.length];
+	}
+
+	/** 실제 유효한 차단만 읽으며 상태를 생성하거나 만료를 연장하지 않는다. */
+	Optional<EntryLimitDecision> active(UUID id) {
+		synchronized (lock(id)) {
+			State state = users.get(id);
+			Instant now = time.now();
+			return state != null && state.block != null && now.isBefore(state.block.getBlockedUntil())
+					? Optional.of(EntryLimitDecision.blocked(state.block, now)) : Optional.empty();
+		}
+	}
+
+	/** 사용자·해당 이벤트 상태를 같은 임계 구역에서 교체한다. */
+	EntryLimitDecision evaluate(UUID id, UUID event, UUID verifiedEvent, Instant received,
+			RateLimitProperties.Policy policy, EntryBlockProperties settings) {
+		settings.validateWindow(policy.window());
+		EntryLimitDecision decision;
+		synchronized (lock(id)) {
+			Instant now = time.now().truncatedTo(ChronoUnit.MILLIS);
+			State state = users.computeIfAbsent(id, ignored -> new State());
+			if (state.block != null && now.isBefore(state.block.getBlockedUntil())) {
+				return EntryLimitDecision.blocked(state.block, now);
+			}
+			state.block = null;
+			state.events.values().removeIf(window -> !now.isBefore(window.end));
+			state.user = window(state.user, now, policy);
+			Window scoped = event == null ? null : window(state.events.get(event), now, policy);
+			if (scoped != null) {
+				state.events.put(event, scoped);
+			}
+			Window user = state.user;
+			user.count = Math.min((long) policy.limit() + 1, user.count + 1);
+			boolean denied = user.count > policy.limit();
+			Instant retryAt = user.end;
+			if (!denied && scoped != null && policy.scopedLimit() != null) {
+				scoped.count = Math.min((long) policy.scopedLimit() + 1, scoped.count + 1);
+				denied = scoped.count > policy.scopedLimit();
+				retryAt = scoped.end;
+			}
+			if (denied) {
+				user.denied = (int) Math.min(Integer.MAX_VALUE, (long) user.denied + 1);
+				if (scoped != null) {
+					scoped.denied = (int) Math.min(Integer.MAX_VALUE, (long) scoped.denied + 1);
+				}
+				boolean overall = user.denied >= settings.userThreshold();
+				boolean perEvent = scoped != null && policy.scopedLimit() != null
+						&& scoped.denied >= settings.eventThreshold();
+				if (overall || perEvent) {
+					Window representative = overall ? user : scoped;
+					AbuseEvidence evidence = new AbuseEvidence(settings.ruleVersion(),
+							overall ? AbuseTriggerScope.USER : AbuseTriggerScope.EVENT,
+							representative.start, representative.end,
+							overall ? policy.limit() : policy.scopedLimit(), representative.denied,
+							overall ? settings.userThreshold() : settings.eventThreshold());
+					state.block = new EntryBlock(UUID.randomUUID(), id, verifiedEvent,
+							received.truncatedTo(ChronoUnit.MICROS), now, now.plusMillis(settings.duration().toMillis()), evidence);
+					EntryLimitDecision blocked = EntryLimitDecision.blocked(state.block, now);
+					return new EntryLimitDecision(EntryLimitResult.BLOCKED, EntryRecordingStatus.RECORDED,
+							blocked.getRetryAfterSeconds(), snapshot(user), scoped == null ? null : snapshot(scoped), state.block);
+				}
+			}
+			decision = new EntryLimitDecision(denied ? EntryLimitResult.RATE_LIMITED : EntryLimitResult.ALLOWED,
+					denied ? EntryRecordingStatus.RECORDED : EntryRecordingStatus.NOT_APPLICABLE,
+					denied ? Math.max(1, (retryAt.toEpochMilli() - now.toEpochMilli() + 999) / 1000) : 0,
+					snapshot(user), scoped == null ? null : snapshot(scoped), null);
+		}
+		if (calls.incrementAndGet() % 1024 == 0) {
+			cleanup();
+		}
+		return decision;
+	}
+
+	private void cleanup() {
+		Instant now = time.now();
+		for (UUID id : users.keySet()) {
+			synchronized (lock(id)) {
+				State state = users.get(id);
+				if (state != null && (state.block == null || !now.isBefore(state.block.getBlockedUntil()))
+						&& !now.isBefore(state.user.end)
+						&& state.events.values().stream().noneMatch(window -> now.isBefore(window.end))) {
+					users.remove(id);
+				}
+			}
+		}
+	}
+
+	private static Window window(Window old, Instant now, RateLimitProperties.Policy policy) {
+		return old == null || !now.isBefore(old.end) ? new Window(now, now.plusMillis(policy.window().toMillis())) : old;
+	}
+
+	private static EntryWindowSnapshot snapshot(Window window) {
+		return new EntryWindowSnapshot(window.start, window.end, window.denied);
+	}
+
+	private static final class State {
+		private Window user;
+		private final Map<UUID, Window> events = new HashMap<>();
+		private EntryBlock block;
+	}
+
+	private static final class Window {
+		private final Instant start;
+		private final Instant end;
+		private long count;
+		private int denied;
+
+		private Window(Instant start, Instant end) {
+			this.start = start;
+			this.end = end;
+		}
+	}
+}
