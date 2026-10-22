@@ -23,7 +23,7 @@
 | [V006](../../storage/db/src/main/resources/db/migration/event/V006__create_event_tables.sql) | `events`, `event_prizes`, `event_participants`, `event_entries`, `banners` | E01~E09, B01, AE01~AE08, AB01~AB05, AO06~AO07 |
 | [V007](../../storage/db/src/main/resources/db/migration/drawing/V007__create_drawing_tables.sql) | `draw_runs`, `draw_candidates`, `draw_results`, `current_awards`, `award_cancellations`, `publications` | E08~E09, AD01~AD07, 최초 자동 추첨·발표 |
 | [V008](../../storage/db/src/main/resources/db/migration/ticket/V008__create_ticket_tables.sql) | `tickets`, `ticket_histories` | T01~T02, AR04~AR05, AO03~AO05·AO08, 지급·차감·반환·만료. 응모권 한 장이 `tickets` 한 행이고 상태 변화는 `ticket_histories`에 추가로만 남긴다 |
-| [V009](../../storage/db/src/main/resources/db/migration/abuse/V009__create_abuse_tables.sql) | `abuse_cases` | AR01~AR07, 탐지 기록 |
+| [V009](../../storage/db/src/main/resources/db/migration/abuse/V009__create_abuse_tables.sql) | `abuse_cases` | 초기 탐지·검토 스키마. GD-142의 V030으로 빈 테이블만 자동 차단 이력으로 전환 |
 | [V010](../../storage/db/src/main/resources/db/migration/notification/V010__create_notification_tables.sql) | `notification_jobs`, `notifications` | N01~N03, AN01~AN05, 비동기 생성·모의 발송 |
 | [V011](../../storage/db/src/main/resources/db/migration/audit/V011__create_audit_tables.sql) | `audit_logs` | 내부 감사 기록 유지. AU01~AU02 공통 조회는 제외하며 업무별 기록 범위는 담당 계약을 따름 |
 | [V014](../../storage/db/src/main/resources/db/migration/notification/V014__add_notification_worker_indexes.sql) | 알림 생성·발송 대기 및 선점 만료 조회용 인덱스 | GD-68 비동기 알림 처리 기반. 신규 공개 API는 추가하지 않음 |
@@ -38,6 +38,7 @@
 | [V027](../../storage/db/src/main/resources/db/migration/event/V027__add_event_lifecycle_due_indexes.sql) | `events`의 상태·삭제 여부·시작/마감 기한 인덱스 두 개 | GD-203 모집 상태 전환의 상태별 due 후보 조회. 새 테이블·컬럼·공개 API는 추가하지 않음 |
 | [V028](../../storage/db/src/main/resources/db/migration/event/V028__link_banner_events_and_catalog_lock.sql) | `banners.event_id`, `banner_catalog_lock` | GD-209 이벤트 연결·빈 목록 쓰기 잠금. 기존 URL·행·CHECK·UNIQUE 보존. 실제 DB 적용은 미실행 |
 | [V029](../../storage/db/src/main/resources/db/migration/ticket/V029__add_platinum_ticket_grade.sql) | `tickets.grade`·`reward_policies.reward_ticket_type` ENUM에 `PLATINUM`, `event_entries.requested_platinum_count`와 등급별 요청 장수 CHECK | GD-228 플래티넘 응모권 등급(ADR-025). 기존 행·기존 등급의 비음수 검증 의미·UNIQUE 보존. `chk_entry_requested_grades`는 플래티넘을 포함해 재정의하고 기존 응모의 플래티넘 요청 장수는 0. GD-228의 실제 DB 검증 결과는 해당 PR #126의 기록을 별도로 확인하며, GD-230의 통합 테스트는 미완료 |
+| [V030](../../storage/db/src/main/resources/db/migration/abuse/V030__convert_abuse_cases_to_entry_blocks.sql) | `abuse_cases`의 자동 차단 필드·복합 UNIQUE·CHECK·조회 인덱스 | GD-142 AR01 목록과 후속 AR02의 기반. 기존 검토 필드는 빈 테이블에서만 제거하며 행이 있으면 중단. [전환 절차](../06-runbook/entry-abuse-migration.md). 실제 DB 적용·통합 검증은 미실행 |
 
 ## 응모 API 현행 매핑 (GD-134, GD-145, GD-200)
 
@@ -110,7 +111,7 @@ DB 컬럼 추가 없이 기존 `events.status`·`updated_at`과 `audit_logs`를 
 | D02 | V006은 `max_tickets_per_user`의 양수 여부만 제한하고 별도 소진용 지정 필드는 없음 | `TICKET`·가중치 적용·상한 null 조합이 월말 소진용 상한 없는 이벤트다. 팀은 월말에만 운영하지만 등록 서비스는 이벤트 날짜가 월말인지 검사하지 않는다. 서비스가 일반 5장·미가중치 1장·미사용 0장 조합을 검증하고, 실제 응모에서는 유효 보유량을 검증한다. [공용 응모권 규칙](https://github.com/GETDDO/getddo-spec/blob/main/02-domain/ticket.md)을 따른다 |
 | D03 | 취소에 따른 반환은 별도 반환 작업 테이블 없이 동기 처리한다. 옛 `ticket_refund_jobs`는 현재 스키마에 없다 | GD-202의 `EventCancellationService`가 기존 `events.canceled_at` 매핑을 사용해 취소 상태·시각과 응모별 `TicketRefundService.refund` 호출을 같은 트랜잭션에서 처리한다. 이벤트 쓰기 잠금 뒤 성공·유상 응모를 최신 읽기로 조회하고 반환 실패 시 취소·알림·감사도 롤백한다. 완료된 취소의 재요청은 409로 거절한다. 저장·연동과 검증 경계는 [취소 구현](../02-api/event-cancellation.md)을 따른다 |
 | D04 | 현행 V006의 events에는 `deleted_at`이 있고 banners에는 `event_url`만 있으며 이벤트 FK·`deleted_at`은 없음 | GD-61은 이벤트만 논리 삭제한다. [공용 배너 수동 삭제 정책](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/03-decisions/021-manual-banner-deletion.md)에 따라 배너는 관리자가 별도 삭제하며, 연결된 배너가 있어도 이벤트 삭제를 제한하지 않는다. 알림 연동은 [이벤트 삭제 구현](../02-api/event-deletion.md)을 따른다 |
-| D05 | 검토 현재 상태는 `abuse_cases`, 공개 현재 상태는 `publications`, 게임 판정은 `game_plays`; 별도 검토/공개 변경/검증 결과 이력 테이블 없음 | `audit_logs.before_data/after_data` 등에 구조화된 이력을 저장하는 설계 또는 추가 스키마 검토. 현재 JSON 컬럼 존재만으로 이력 API가 구현되었다고 보지 않음 |
+| D05 | V030 이후 `abuse_cases`는 자동 차단 이력이며 검토 상태를 보관하지 않음. 공개 현재 상태는 `publications`, 게임 판정은 `game_plays`; 별도 공개 변경/검증 결과 이력 테이블 없음 | 차단 목록은 GD-142 AR01, 상세 evidence는 후속 GD-143 AR02로 구분한다. 공개 변경·게임 검증 이력은 `audit_logs.before_data/after_data` 등에 구조화된 이력을 저장하는 설계 또는 추가 스키마 검토. JSON 컬럼 존재만으로 이력 API 구현 완료로 보지 않음 |
 | D06 | `current_awards`는 현재 당첨 배정이고 공개 revision별 스냅샷 테이블은 없음 | 재추첨 실행 중의 새 배정과 기존 공개 명단을 구분해야 함. `current_awards`를 그대로 공개 조회하지 않고 publication 상태·변경 이력과 일치시키는 설계 필요 |
 | D07 | `game_reward_claims`는 사용자·source_key 및 사용자·게임·보상일 UNIQUE를 모두 가짐 | 현재 원격 `dev`에 추가된 사용자·게임·보상일 UNIQUE를 기준으로 중복 지급을 검증 |
 | D08 | `reward_policies`에 게임별 보상 조건 JSON 또는 검증 버전 필드는 없음. `games.rules`는 현재 게임 규칙 | 다음 일일 기준일 적용이 필요한 게임 보상 조건의 버전·예약 저장 구조 설계 필요 |

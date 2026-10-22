@@ -11,3 +11,5 @@
 - [컨테이너 CD](container-cd.md)
 - [매일 오전 7시 자동 릴리스](daily-release.md)
 - [Parameter Store 설정 조회·반영·복구](parameter-store.md)
+
+- [차단 이력 빈 테이블 전환](entry-abuse-migration.md)
