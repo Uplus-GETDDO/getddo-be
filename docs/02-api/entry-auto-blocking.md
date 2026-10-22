@@ -25,7 +25,7 @@ Redis는 한 Lua 실행에서 ACTIVE 재확인 → 구간 준비 → 기존 단�
 | 일반 거절 확인 후 기록·준비 실패 | RATE_LIMITED + DENY_RECORDING_FAILED로 원래 429·Retry-After 유지·경고 |
 | ACTIVE 재확인 또는 최초 활성화 성공 | 최초 blockedUntil 기준 429·Retry-After. 종료 연장·추가 집계 없음 |
 
-`EntryRedisScriptExecutor`는 응모 전용 Lettuce 연결에 autoReconnect=false와 REJECT_COMMANDS를 사용하고 EVAL을 한 번 전송한다. 공유 Redis 연결 설정과 비응모 동작을 바꾸지 않는다. 요청 평가 연결은 명령 후 닫고 다음 HTTP 요청은 새 연결을 얻으므로 동일 요청 자동 재전송 없이 후속 요청에서 복구할 수 있다. 원본 단일 Redis 구성이 대상이며 Cluster·Sentinel은 지원하지 않는다. 접속·명령 시간 제한과 자격 증명은 기존 설정을 재사용한다.
+`EntryRedisScriptExecutor`는 응모 전용 Lettuce 연결에 autoReconnect=false와 REJECT_COMMANDS를 사용하고 EVAL을 한 번 전송한다. 공유 Redis 연결과 비응모 동작을 유지한다. commons-pool2 의존성 추가로 Boot가 공유 연결까지 자동 풀링하지 않도록 YAML에서 기본 자동 풀링은 끄고 응모 전용 풀만 직접 구성한다. 요청 평가 연결은 최대 8개의 전용 풀에서 대여·반납하고 대여·반납 시 닫힌 연결을 폐기한다. 풀 대기는 기존 명령 시간 제한 이내로 제한한다. 연결 재사용과 EVAL 재전송은 별개이며 같은 HTTP 요청의 EVAL을 재실행하지 않는다. 원본 단일 Redis 구성이 대상이며 Cluster·Sentinel은 지원하지 않는다. 접속·명령 시간 제한과 자격 증명은 기존 설정을 재사용한다.
 
 메모리 모드는 주입된 TimeProvider와 사용자 단위 임계 구역에서 같은 제한·차단 판단을 제공한다. 서버별 상태이며 재시작 시 사라지고 Redis 저널·DB 저장 대기를 만들지 않는다. 관리자 이력까지 연결하는 GD-291 생산 경로는 Redis 모드가 전제다. 기존 비응모 메모리 제한은 변경하지 않는다.
 
@@ -60,9 +60,9 @@ payload 필드는 id·userId·eventId(nullable)·sourceType·detectionType·dete
 
 실제 검증 결과:
 
-- 응모·기존 제한·설정 단위 테스트 47건 통과. CORS 전용 컨텍스트는 새 의존성 대역을 보완했으며 기존 CORS 회귀도 통과했다.
-- 전체 단위 테스트 1,673건 통과(API 533, core 1,042, storage:db 96, storage:s3 2). 실패·오류·건너뛰기 0건.
-- 아래 통합 테스트 실행 제외 빌드 통과. API·DB 통합 테스트 소스 컴파일 통과. 새 Redis 시나리오는 9건 작성했으며 실행하지 않았다.
+- 응모·기존 제한·설정 단위 테스트 55건 통과. CORS 전용 컨텍스트는 새 의존성 대역을 보완했으며 기존 CORS 회귀도 통과했다.
+- 전체 단위 테스트 1,681건 통과(API 541, core 1,042, storage:db 96, storage:s3 2). 실패·오류·건너뛰기 0건.
+- 아래 통합 테스트 실행 제외 빌드 통과. API·DB 통합 테스트 소스 컴파일 통과. 새 Redis 시나리오는 실패 주입 파라미터를 포함해 14건이며 실행하지 않았다.
 - 실제 Redis·MySQL·배포 검증과 통합 테스트 실행은 사용자 요청으로 수행하지 않았다. 컴파일 성공을 실제 연결·동시성 검증 성공으로 해석하지 않는다.
 
 ```bash
@@ -70,3 +70,7 @@ payload 필드는 id·userId·eventId(nullable)·sourceType·detectionType·dete
   -x :api:integrationTest -x :storage:db:integrationTest \
   --no-daemon --max-workers=1 --no-parallel
 ```
+
+## CodeRabbit 리뷰 보완
+
+최초 기록이 한 번만 발생하는지 시작 래치로 동시 평가를 검증하고, 판정 객체의 상태·대기 시간 불변식과 잘못된 JSON 응답 검증을 추가했다. Lua 리소스 읽기 실패는 내부 리소스 이름·I/O 원인을 보존한다. 두 ACTIVE 함수의 공통 추출은 현재 판정이 동일한 선택적 리팩터링이므로 이번 수정에 포함하지 않는다. Redis 보존·대기 적체 운영 확인은 [런북](../06-runbook/entry-abuse-migration.md#gd-144-redis-생산-경로-운영-경계)을 따른다. 리뷰 후 대상 단위 테스트 55건·전체 단위 테스트 1,681건과 통합 테스트 실행 제외 빌드가 통과했다. 보강한 통합 소스는 컴파일만 했고 실제 연결·부하 측정 결과를 주장하지 않는다.

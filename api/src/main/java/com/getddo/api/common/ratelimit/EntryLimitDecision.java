@@ -1,6 +1,7 @@
 package com.getddo.api.common.ratelimit;
 
 import java.time.Instant;
+import java.util.Objects;
 import lombok.Getter;
 
 /** 공개 응답과 분리된 응모 원자 평가 결과다. 기존 ACTIVE이면 구간 정보 없이 차단만 반환한다. */
@@ -15,6 +16,11 @@ public final class EntryLimitDecision {
 
 	public EntryLimitDecision(EntryLimitResult result, EntryRecordingStatus recordingStatus,
 			long retryAfterSeconds, EntryWindowSnapshot userWindow, EntryWindowSnapshot eventWindow, EntryBlock block) {
+		Objects.requireNonNull(result, "result");
+		Objects.requireNonNull(recordingStatus, "recordingStatus");
+		if (result == EntryLimitResult.ALLOWED ? retryAfterSeconds != 0 : retryAfterSeconds < 1) {
+			throw new IllegalArgumentException("허용은 대기 시간 0, 거절·차단은 1초 이상이어야 한다.");
+		}
 		this.result = result;
 		this.recordingStatus = recordingStatus;
 		this.retryAfterSeconds = retryAfterSeconds;

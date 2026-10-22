@@ -9,6 +9,8 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import com.getddo.core.abuse.domain.AbuseTriggerScope;
@@ -146,16 +148,35 @@ class EntryRateLimiterTest {
 		for (int i = 0; i < 3; i++) {
 			request(EVENT);
 		}
-		try (java.util.concurrent.ExecutorService pool = Executors.newFixedThreadPool(8)) {
+		CountDownLatch ready = new CountDownLatch(40);
+		CountDownLatch start = new CountDownLatch(1);
+		try (java.util.concurrent.ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
 			List<Callable<EntryLimitDecision>> jobs = java.util.stream.IntStream.range(0, 40)
-					.mapToObj(i -> (Callable<EntryLimitDecision>) () -> request(EVENT)).toList();
+					.mapToObj(i -> (Callable<EntryLimitDecision>) () -> {
+						ready.countDown();
+						if (!start.await(5, TimeUnit.SECONDS)) {
+							throw new IllegalStateException("동시 요청 시작 대기 시간 초과");
+						}
+						return request(EVENT);
+					}).toList();
 			// when
+			List<java.util.concurrent.Future<EntryLimitDecision>> futures = new java.util.ArrayList<>();
+			for (Callable<EntryLimitDecision> job : jobs) {
+				futures.add(pool.submit(job));
+			}
+			try {
+				assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+			} finally {
+				start.countDown();
+			}
 			List<EntryLimitDecision> decisions = new java.util.ArrayList<>();
-			for (java.util.concurrent.Future<EntryLimitDecision> future : pool.invokeAll(jobs)) {
-				decisions.add(future.get());
+			for (java.util.concurrent.Future<EntryLimitDecision> future : futures) {
+				decisions.add(future.get(10, TimeUnit.SECONDS));
 			}
 			// then
 			assertThat(decisions).allMatch(d -> d.getResult() == EntryLimitResult.BLOCKED);
+			assertThat(decisions).filteredOn(d -> d.getRecordingStatus() == EntryRecordingStatus.RECORDED).hasSize(1);
+			assertThat(decisions).filteredOn(d -> d.getRecordingStatus() == EntryRecordingStatus.NOT_APPLICABLE).hasSize(39);
 			assertThat(decisions).extracting(d -> d.getBlock().getId()).containsOnly(decisions.getFirst().getBlock().getId());
 		}
 	}

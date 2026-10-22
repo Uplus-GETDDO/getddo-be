@@ -53,4 +53,15 @@ class RedisEntryRateLimiterTest {
 		assertThat(limiter.active(user)).isEmpty();
 		verify(executor).execute(any(), eq(java.util.List.of("getddo:entry-block:user:"+user)), eq(java.util.List.of(user.toString())));
 	}
+	@Test
+	@DisplayName("잘못된 JSON 응답은 원문을 노출하지 않는 형식 오류로 전파하고 재전송하지 않는다")
+	void malformedResponse() {
+		// given
+		when(executor.execute(any(), anyList(), anyList())).thenReturn("not-json");
+		// when / then
+		assertThatThrownBy(() -> limiter.active(user)).isInstanceOf(IllegalStateException.class)
+				.hasMessage("응모 제한 결과의 형식이 올바르지 않다.").hasNoCause();
+		verify(executor, times(1)).execute(any(), anyList(), anyList());
+	}
+
 }

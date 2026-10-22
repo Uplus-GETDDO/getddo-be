@@ -4,10 +4,13 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import io.lettuce.core.ClientOptions;
+import io.lettuce.core.api.StatefulConnection;
+import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.connection.ReturnType;
 import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.connection.lettuce.LettucePoolingClientConfiguration;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
@@ -26,7 +29,7 @@ class EntryRedisScriptExecutor {
 		try {
 			return new ClassPathResource("redis/" + name + ".lua").getContentAsByteArray();
 		} catch (IOException exception) {
-			throw new IllegalStateException("응모 제한 Lua 리소스를 읽지 못했다.");
+			throw new IllegalStateException("응모 제한 Lua 리소스를 읽지 못했다: " + name, exception);
 		}
 	}
 
@@ -51,11 +54,41 @@ class EntryRedisScriptExecutor {
 				|| original.isClusterAware() || original.isRedisSentinelAware()) {
 			throw new IllegalStateException("응모 자동 차단은 단일 Redis Lettuce 연결이 필요하다.");
 		}
-		LettuceClientConfiguration current = original.getClientConfiguration();
+		factory = new LettuceConnectionFactory(original.getStandaloneConfiguration(),
+				pooledConfiguration(original.getClientConfiguration()));
+		// 공유 연결 대신 전용 풀에서 대여·반납한다. 닫힌 연결은 검증에서 폐기하고 EVAL은 재전송하지 않는다.
+		factory.setShareNativeConnection(false);
+		try {
+			factory.afterPropertiesSet();
+			template = new StringRedisTemplate(factory);
+			return template;
+		} catch (RuntimeException failure) {
+			try {
+				factory.destroy();
+			} catch (RuntimeException cleanupFailure) {
+				failure.addSuppressed(cleanupFailure);
+			} finally {
+				factory = null;
+			}
+			throw failure;
+		}
+	}
+
+	/** 풀 용량과 대기 시간을 제한하고 대여·반납 시 연결 유효성을 검사한다. 명령 재전송은 계속 금지한다. */
+	static LettuceClientConfiguration pooledConfiguration(LettuceClientConfiguration current) {
+		GenericObjectPoolConfig<StatefulConnection<?, ?>> pool = new GenericObjectPoolConfig<>();
+		pool.setMaxTotal(8);
+		pool.setMaxIdle(8);
+		pool.setMinIdle(0);
+		pool.setTestOnBorrow(true);
+		pool.setTestOnReturn(true);
+		pool.setBlockWhenExhausted(true);
+		pool.setMaxWait(current.getCommandTimeout());
 		ClientOptions options = current.getClientOptions().orElseGet(ClientOptions::create)
 				.mutate().autoReconnect(false)
 				.disconnectedBehavior(ClientOptions.DisconnectedBehavior.REJECT_COMMANDS).build();
-		LettuceClientConfiguration.LettuceClientConfigurationBuilder builder = LettuceClientConfiguration.builder()
+		LettuceClientConfiguration.LettuceClientConfigurationBuilder builder = LettucePoolingClientConfiguration.builder()
+				.poolConfig(pool)
 				.commandTimeout(current.getCommandTimeout()).shutdownTimeout(current.getShutdownTimeout())
 				.shutdownQuietPeriod(current.getShutdownQuietPeriod()).clientOptions(options);
 		current.getClientResources().ifPresent(builder::clientResources);
@@ -71,12 +104,7 @@ class EntryRedisScriptExecutor {
 			}
 			builder = ssl.and();
 		}
-		factory = new LettuceConnectionFactory(original.getStandaloneConfiguration(), builder.build());
-		// 명령 종료 시 연결을 닫아 다음 HTTP 요청은 새 연결로 복구할 수 있게 한다.
-		factory.setShareNativeConnection(false);
-		factory.afterPropertiesSet();
-		template = new StringRedisTemplate(factory);
-		return template;
+		return builder.build();
 	}
 
 	/** 애플리케이션 종료 시 이 평가기 소유 연결만 정리한다. */

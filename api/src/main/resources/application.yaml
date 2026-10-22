@@ -21,6 +21,10 @@ spring:
       # Redis가 느리거나 끊겨도 요청이 오래 붙잡히지 않게 짧게 둔다. 제한기 실패는 요청을 통과시킨다.
       connect-timeout: 500ms
       timeout: 300ms
+      lettuce:
+        pool:
+          # commons-pool2 추가가 기존 공유 연결까지 자동 풀링하지 않게 한다. 응모 전용 풀은 별도로 구성한다.
+          enabled: false
 
 springdoc:
   packages-to-scan: com.getddo.api
