@@ -264,6 +264,43 @@ class StageRunTest(unittest.TestCase):
             remote.assert_not_called()
         self.assertFalse(any(op == 'delete-object' for _, op, _ in aws.calls))
 
+    def test_only_healthy_target_after_initial_ordering_never_drains_and_holds_lock(self):
+        aws = FakeAWS()
+        aws.registered = {A, C}
+        initial_health_seen = False
+        def invoke(service, operation, *args, **kwargs):
+            nonlocal initial_health_seen
+            result = aws(service, operation, *args, **kwargs)
+            if (operation == 'describe-target-health' and '--targets' not in args and
+                    not initial_health_seen and any(op == 'put-object' and '--body' in values for _, op, values in aws.calls)):
+                self.assertEqual({A, C}, {row['Target']['Id'] for row in result['TargetHealthDescriptions']})
+                initial_health_seen = True
+                aws.registered.remove(C)
+            return result
+        with patch.object(stage, 'validate_artifact'), patch.object(stage.deploy, 'bundle', return_value='b' * 64), \
+             patch.object(stage.rolling, 'invocation') as remote:
+            with self.assertRaisesRegex(RuntimeError, 'Cannot drain the only healthy Stage target'):
+                stage.run(configuration(), ROOT, ROOT, SHA, 'sha256:' + 'b' * 64, 'c' * 64, invoke)
+            remote.assert_not_called()
+        self.assertTrue(initial_health_seen)
+        self.assertEqual({A}, aws.registered)
+        self.assertTrue(any(op == 'put-object' and 'staging/locks/app.json' in args for _, op, args in aws.calls))
+        self.assertFalse(any(op in ('deregister-targets', 'send-command', 'delete-object') for _, op, _ in aws.calls))
+
+    def test_failed_unregistered_peer_deployment_preserves_only_healthy_host_and_lock(self):
+        aws = FakeAWS()
+        aws.registered = {A}
+        with patch.object(stage, 'validate_artifact'), patch.object(stage.deploy, 'bundle', return_value='b' * 64), \
+             patch.object(stage.rolling, 'invocation', return_value={'Status': 'Failed', 'ResponseCode': 1}) as remote:
+            with self.assertRaisesRegex(RuntimeError, 'Stage host deployment failed'):
+                stage.run(configuration(), ROOT, ROOT, SHA, 'sha256:' + 'b' * 64, 'c' * 64, aws)
+        self.assertEqual([C], [call.args[1] for call in remote.call_args_list])
+        self.assertEqual({A}, aws.registered)
+        removed = [args[args.index('--targets') + 1] for _, op, args in aws.calls if op == 'deregister-targets']
+        self.assertEqual(['Id=' + C + ',Port=8080'], removed)
+        self.assertTrue(any(op == 'put-object' and 'staging/locks/app.json' in args for _, op, args in aws.calls))
+        self.assertFalse(any(op == 'delete-object' for _, op, _ in aws.calls))
+
     def test_recovered_peer_is_observed_for_two_minutes_before_healthy_host_drains(self):
         aws = FakeAWS()
         aws.registered = {A}
