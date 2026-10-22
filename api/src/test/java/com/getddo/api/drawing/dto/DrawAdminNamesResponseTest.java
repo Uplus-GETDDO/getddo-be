@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import com.getddo.api.drawing.dto.response.DrawExecutionAuditResponse;
@@ -29,7 +30,9 @@ import static org.mockito.Mockito.when;
 
 class DrawAdminNamesResponseTest {
 	@Test
+	@DisplayName("공개 변경의 전후 당첨자와 처리자 이름을 각 ID에 맞춰 한 번에 조회한다")
 	void publicationPageNamesFollowEachOriginalIdWithOneLookup() {
+		// given
 		UUID before = UUID.randomUUID();
 		UUID after = UUID.randomUUID();
 		UUID publisher = UUID.randomUUID();
@@ -48,7 +51,10 @@ class DrawAdminNamesResponseTest {
 		when(users.findNamesByIds(Set.of(before, after, publisher, confirmer))).thenReturn(names);
 		DrawAdminNameService service = new DrawAdminNameService(users);
 
+		// when
 		DrawPublicationChangeResponse response = DrawPublicationChangeResponse.from(change, service.forChanges(List.of(change)));
+
+		// then
 
 		assertThat(response.confirmedByName()).isEqualTo("발표 관리자");
 		assertThat(response.executions().getFirst().confirmedByName()).isEqualTo("확인 관리자");
@@ -60,7 +66,9 @@ class DrawAdminNamesResponseTest {
 	}
 
 	@Test
+	@DisplayName("확정 실행의 선정·미충원 결과를 보존하고 현재 이름을 추가한다")
 	void confirmedExecutionPreservesSelectedAndUnfilledResultsWhileAddingCurrentNames() {
+		// given
 		UUID run = UUID.randomUUID();
 		UUID user = UUID.randomUUID();
 		UUID prize = UUID.randomUUID();
@@ -74,7 +82,10 @@ class DrawAdminNamesResponseTest {
 		when(users.findNamesByIds(Set.of(user))).thenReturn(Map.of(user, "당첨자"));
 		DrawAdminNameService service = new DrawAdminNameService(users);
 
+		// when
 		DrawExecutionResponse response = DrawExecutionResponse.from(result, service.forExecution(result));
+
+		// then
 
 		assertThat(response.confirmation().results().getFirst().userId()).isEqualTo(user);
 		assertThat(response.confirmation().results().getFirst().userName()).isEqualTo("당첨자");
@@ -86,18 +97,25 @@ class DrawAdminNamesResponseTest {
 	}
 
 	@Test
+	@DisplayName("처리자가 없는 과거 공개와 시스템 감사는 이름도 null로 유지한다")
 	void historicalPublicationAndSystemAuditKeepNullActorNames() {
+		// given
 		DrawPublication publication = mock(DrawPublication.class);
 		DrawPublicationChange change = new DrawPublicationChange(publication, List.of(
 				new DrawPublicationChange.SlotChange(UUID.randomUUID(), 1, null, null, null, null)));
+		DrawInspectionView.Audit audit = new DrawInspectionView.Audit(
+				UUID.randomUUID(), null, "DRAW_EXECUTE", null, "{}", "{}", null, Instant.EPOCH);
+
+		// when
 		DrawPublicationChangeResponse response = DrawPublicationChangeResponse.from(change, Map.of());
+		DrawPublicationResponse publicationResponse = DrawPublicationResponse.from(publication, Map.of());
+		DrawExecutionAuditResponse auditResponse = DrawExecutionAuditResponse.from(audit, Map.of());
+
+		// then
 		assertThat(response.confirmedByName()).isNull();
 		assertThat(response.changes().getFirst().beforeUserName()).isNull();
 		assertThat(response.changes().getFirst().afterUserName()).isNull();
-		assertThat(DrawPublicationResponse.from(publication, Map.of()).updatedByName()).isNull();
-		DrawInspectionView.Audit audit = new DrawInspectionView.Audit(
-				UUID.randomUUID(), null, "DRAW_EXECUTE", null, "{}", "{}", null, Instant.EPOCH);
-		DrawExecutionAuditResponse auditResponse = DrawExecutionAuditResponse.from(audit, Map.of());
+		assertThat(publicationResponse.updatedByName()).isNull();
 		assertThat(auditResponse.actorName()).isNull();
 		assertThat(auditResponse.beforeData()).isEqualTo("{}");
 		assertThat(auditResponse.afterData()).isEqualTo("{}");

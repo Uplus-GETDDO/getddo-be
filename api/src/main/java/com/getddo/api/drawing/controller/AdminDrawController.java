@@ -1,6 +1,5 @@
 package com.getddo.api.drawing.controller;
 
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -94,7 +93,7 @@ public class AdminDrawController {
 			@PathVariable UUID drawId) {
 		DrawVerification verification = service.verify(user, drawId);
 		return ResponseEntity.status(HttpStatus.CREATED).body(ResponseEnvelope.success(
-				DrawVerificationResponse.from(verification, names.forVerifications(List.of(verification)))));
+				DrawVerificationResponse.from(verification, Map.of(user.getId(), user.getName()))));
 	}
 
 	/** 기존 검증 이력의 한 페이지를 반환한다. */

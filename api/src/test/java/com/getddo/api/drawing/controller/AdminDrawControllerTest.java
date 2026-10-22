@@ -160,9 +160,32 @@ class AdminDrawControllerTest {
 		mvc.perform(post("/api/v1/admin/draws/{id}/checks", runId).header("X-User-ID", actorId).header("X-User-Role", selected.getRole().name()))
 				.andExpect(status().isCreated()).andExpect(jsonPath("$.data.passed").value(false))
 				.andExpect(jsonPath("$.data.verifiedBy").value(actorId.toString()))
-				.andExpect(jsonPath("$.data.verifiedByName").value("현재 이름"));
+				.andExpect(jsonPath("$.data.verifiedByName").value("관리자"));
+		verifyNoInteractions(userNames);
 		mvc.perform(get("/api/v1/admin/draws/{id}/checks", runId).header("X-User-ID", actorId).header("X-User-Role", selected.getRole().name()))
 				.andExpect(status().isOk()).andExpect(jsonPath("$.data.items[0].id").value(stored.getId().toString()));
+	}
+
+	@Test
+	@DisplayName("검증 저장 응답은 이름 저장소 장애와 무관하게 현재 관리자 이름을 반환한다")
+	void verificationDoesNotQueryNamesAfterSaving() throws Exception {
+		// given
+		when(repository.findAllCandidates(runId)).thenReturn(List.of());
+		when(repository.findResults(runId)).thenReturn(List.of());
+		DrawVerification stored = new DrawVerification(UUID.randomUUID(), runId, false,
+				List.of(new DrawVerification.Item("RESULTS", false, "저장 결과 불일치")), now, actorId);
+		when(checks.save(eq(runId), eq(actorId), eq(now), eq(false), anyList())).thenReturn(stored);
+		when(userNames.findNamesByIds(anyCollection())).thenThrow(new IllegalStateException("이름 저장소 장애"));
+
+		// when / then
+		mvc.perform(post("/api/v1/admin/draws/{id}/checks", runId)
+				.header("X-User-ID", actorId).header("X-User-Role", "ADMIN"))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.data.id").value(stored.getId().toString()))
+				.andExpect(jsonPath("$.data.verifiedBy").value(actorId.toString()))
+				.andExpect(jsonPath("$.data.verifiedByName").value(selected.getName()));
+		verify(checks).save(eq(runId), eq(actorId), eq(now), eq(false), anyList());
+		verifyNoInteractions(userNames);
 	}
 
 	@Test

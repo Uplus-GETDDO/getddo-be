@@ -5,6 +5,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import com.getddo.core.drawing.domain.DrawExecutionResult;
@@ -25,7 +26,9 @@ class DrawAdminNameServiceTest {
 	private final DrawAdminNameService service = new DrawAdminNameService(repository);
 
 	@Test
+	@DisplayName("당첨자·유지 당첨자·취소 처리자의 중복과 null을 제거해 한 번 조회한다")
 	void detailCollectsWinnersRetainedWinnersAndCancelersOnce() {
+		// given
 		UUID winner = UUID.randomUUID();
 		UUID retained = UUID.randomUUID();
 		UUID actor = UUID.randomUUID();
@@ -42,7 +45,11 @@ class DrawAdminNameServiceTest {
 		Map<UUID, String> names = Map.of(winner, "당첨자", retained, "유지 당첨자", actor, "관리자");
 		when(repository.findNamesByIds(Set.of(winner, retained, actor))).thenReturn(names);
 
-		assertThat(service.forDetail(detail)).isEqualTo(names);
+		// when
+		Map<UUID, String> result = service.forDetail(detail);
+
+		// then
+		assertThat(result).isEqualTo(names);
 		verify(repository).findNamesByIds(Set.of(winner, retained, actor));
 		verifyNoMoreInteractions(repository);
 		assertThat(detail.getResults()).containsExactly(selected, selected, unfilled);
@@ -50,9 +57,12 @@ class DrawAdminNameServiceTest {
 	}
 
 	@Test
+	@DisplayName("빈 페이지·시스템 처리·미확정 실행은 이름 저장소를 조회하지 않는다")
 	void emptyPagesSystemActorsAndUnconfirmedExecutionsDoNotQueryUsers() {
+		// given
 		DrawInspectionView.Audit system = new DrawInspectionView.Audit(
 				UUID.randomUUID(), null, "DRAW_EXECUTE", null, "{}", "{}", null, null);
+		// when / then
 		assertThat(service.forAudits(List.of(system))).isEmpty();
 		assertThat(service.forCandidates(List.of())).isEmpty();
 		assertThat(service.forVerifications(List.of())).isEmpty();
@@ -63,11 +73,18 @@ class DrawAdminNameServiceTest {
 	}
 
 	@Test
+	@DisplayName("이름 변경 후 재조회하면 이전 값을 캐시하지 않고 현재 이름을 반환한다")
 	void namesAreReadAgainAfterRenameWithoutCachingOldValues() {
+		// given
 		UUID actor = UUID.randomUUID();
 		when(repository.findNamesByIds(Set.of(actor)))
 				.thenReturn(Map.of(actor, "변경 전"), Map.of(actor, "변경 후"));
-		assertThat(service.forActor(actor)).containsEntry(actor, "변경 전");
-		assertThat(service.forActor(actor)).containsEntry(actor, "변경 후");
+		// when
+		Map<UUID, String> before = service.forActor(actor);
+		Map<UUID, String> after = service.forActor(actor);
+
+		// then
+		assertThat(before).containsEntry(actor, "변경 전");
+		assertThat(after).containsEntry(actor, "변경 후");
 	}
 }
