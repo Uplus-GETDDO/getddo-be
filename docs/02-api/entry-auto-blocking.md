@@ -25,7 +25,7 @@ Redis는 한 Lua 실행에서 ACTIVE 재확인 → 구간 준비 → 기존 단�
 | 일반 거절 확인 후 기록·준비 실패 | RATE_LIMITED + DENY_RECORDING_FAILED로 원래 429·Retry-After 유지·경고 |
 | ACTIVE 재확인 또는 최초 활성화 성공 | 최초 blockedUntil 기준 429·Retry-After. 종료 연장·추가 집계 없음 |
 
-`EntryRedisScriptExecutor`는 응모 전용 Lettuce 연결에 autoReconnect=false와 REJECT_COMMANDS를 사용하고 EVAL을 한 번 전송한다. 공유 Redis 연결과 비응모 동작을 유지한다. commons-pool2 의존성 추가로 Boot가 공유 연결까지 자동 풀링하지 않도록 YAML에서 기본 자동 풀링은 끄고 응모 전용 풀만 직접 구성한다. 요청 평가 연결은 최대 8개의 전용 풀에서 대여·반납하고 대여·반납 시 닫힌 연결을 폐기한다. 풀 대기는 기존 명령 시간 제한 이내로 제한한다. 연결 재사용과 EVAL 재전송은 별개이며 같은 HTTP 요청의 EVAL을 재실행하지 않는다. 원본 단일 Redis 구성이 대상이며 Cluster·Sentinel은 지원하지 않는다. 접속·명령 시간 제한과 자격 증명은 기존 설정을 재사용한다.
+`EntryRedisScriptExecutor`는 응모 전용 Lettuce 연결에 autoReconnect=false와 REJECT_COMMANDS를 사용하고 EVAL을 한 번 전송한다. 공유 Redis 연결과 비응모 동작을 유지한다. commons-pool2 의존성 추가로 Boot가 공유 연결까지 자동 풀링하지 않도록 YAML에서 기본 자동 풀링은 끄고 응모 전용 풀만 직접 구성한다. 요청 평가 연결은 전용 풀에서 최대 8개를 대여·반납하고 대여·반납 시 닫힌 연결을 폐기한다. 풀 대기는 기존 명령 시간 제한 이내로 제한한다. 연결 재사용과 EVAL 재전송은 별개이며 같은 HTTP 요청의 EVAL을 재실행하지 않는다. 원본 단일 Redis 구성이 대상이며 Cluster·Sentinel은 지원하지 않는다. 접속·명령 시간 제한과 자격 증명은 기존 설정을 재사용한다.
 
 메모리 모드는 주입된 TimeProvider와 사용자 단위 임계 구역에서 같은 제한·차단 판단을 제공한다. 서버별 상태이며 재시작 시 사라지고 Redis 저널·DB 저장 대기를 만들지 않는다. 관리자 이력까지 연결하는 GD-291 생산 경로는 Redis 모드가 전제다. 기존 비응모 메모리 제한은 변경하지 않는다.
 
@@ -45,7 +45,7 @@ GD-291 연결 전에는 Redis 모드의 GD-144 운영 배포를 보류한다. �
 
 저널·사용자 인덱스·대기 항목에는 차단 기간 TTL을 걸지 않는다. PREPARED → 사용자 인덱스 → 전역 인덱스 → 대기 등록 후, 단일 HSET으로 ACTIVE와 최초 payload를 확정한다. 실패한 미활성 후보는 같은 평가에서 정리를 시도한다. Redis 부분 실패로 정리하지 못한 PREPARED는 작업자가 저장하지 않고 정리해야 한다. 활성 캐시는 두지 않으며 빠른 조회와 재평가 모두 사용자 인덱스의 실제 ACTIVE 저널을 읽는다.
 
-payload 필드는 id·userId·eventId(nullable)·sourceType·detectionType·detectionReason·occurredAt·detectedAt·blockedAt·blockedUntil·evidence다. sourceType·탐지 유형·사유는 서버 고정값이다. occurredAt은 요청 평가 진입 시각의 UTC ISO 문자열이며 마이크로초로 한 번 정규화한다. Redis TIME으로 확정한 detectedAt=blockedAt 및 blockedUntil, evidence.windowStartedAt·windowEndsAt은 내부 JSON에서 epoch 밀리초 정수다. GD-291은 이를 Instant.ofEpochMilli로 변환하고 DB에 UTC로 저장한다. API의 UTC instant 문자열이나 DB evidence 문자열로 변환할 때 현재 시각·현재 설정으로 재계산하지 않는다. 나머지 evidence 필드명과 타입은 공용 계약과 같다.
+payload 필드는 id·userId·eventId(nullable)·sourceType·detectionType·detectionReason·occurredAt·detectedAt·blockedAt·blockedUntil·evidence다. sourceType·탐지 유형·사유는 서버 고정값이다. occurredAt은 요청 평가 진입 시각의 UTC ISO 문자열이며 마이크로초로 한 번 정규화한다. Redis TIME으로 확정한 detectedAt=blockedAt 및 blockedUntil, evidence.windowStartedAt·windowEndsAt은 내부 JSON에서 epoch 밀리초 정수다. GD-291은 이를 Instant.ofEpochMilli로 변환하고 DB에 UTC로 저장한다. API의 UTC instant 문자열이나 DB evidence 문자열로 변환할 때 현재 시각·현재 설정으로 재계산하지 않는다. 나머지 evidence 필드명과 타입은 공용 계약과 같다. 두 거절 임계값을 동시에 충족하면 [공용 evidence 계약](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/05-api/abuse.md)에 따라 차단 한 건과 USER 대표 근거만 생성한다. 이때 evidence에는 USER의 구간·일반 한도·거절 횟수·임계값을 기록하며, GD-291 재전달·저장 재시도에서도 이 최초 근거를 그대로 보존한다.
 
 후속 소비자는 다음 경계를 구현해야 한다. 이 문서가 저장 작업자 구현 완료를 뜻하지 않는다.
 
