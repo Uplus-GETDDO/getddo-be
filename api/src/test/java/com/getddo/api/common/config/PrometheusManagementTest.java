@@ -8,6 +8,7 @@ import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
+import java.util.regex.Pattern;
 
 import javax.sql.DataSource;
 
@@ -90,6 +91,10 @@ class PrometheusManagementTest {
 				.doesNotContain("test_other_timer_seconds_bucket", "unknown-one", "unknown-two");
 			assertThat(metrics.lines().filter(line -> line.startsWith("tomcat_threads_busy_threads")))
 				.anyMatch(line -> line.contains("http-nio-auto-"));
+			for (String metric : new String[] {"http_server_requests_seconds_bucket", "jvm_memory_used_bytes",
+				"tomcat_threads_busy_threads", "hikaricp_connections_max"}) {
+				assertThat(hasFiniteSample(metrics, metric)).as(metric).isTrue();
+			}
 			CloudWatchMeterRegistry cloudWatch = context.getBean(CloudWatchMeterRegistry.class);
 			assertThat(cloudWatch.find("http.server.requests").timer()).isNull();
 			assertThat(cloudWatch.get("hikaricp.connections.active").gauge().getId().getTag("environment")).isEqualTo("dev");
@@ -99,6 +104,29 @@ class PrometheusManagementTest {
 				&& line.contains("status=\"404\"")).count();
 			assertThat(bucketCount).isBetween(2L, 100L);
 		}
+	}
+
+	@Test
+	@DisplayName("필수 지표의 주석·이름·잘못된 숫자·무한대는 정상 샘플로 인정하지 않는다")
+	void finiteSampleValidation() {
+		// given / when / then
+		for (String sample : new String[] {"# HELP test_metric description", "test_metric",
+			"test_metric 1..2", "test_metric 1e999", "test_metric NaN", "test_metric +Inf"}) {
+			assertThat(hasFiniteSample(sample, "test_metric")).as(sample).isFalse();
+		}
+		assertThat(hasFiniteSample("test_metric{pool=\"api\"} 1.25e+2", "test_metric")).isTrue();
+		assertThat(hasFiniteSample("test_metric 0", "test_metric")).isTrue();
+	}
+
+	/** 필수 지표의 실제 샘플 행에 문법상 올바른 유한 숫자가 있는지 확인한다. */
+	private boolean hasFiniteSample(String metrics, String metricName) {
+		Pattern samplePattern = Pattern.compile("^" + Pattern.quote(metricName)
+			+ "(?:\\{.*\\})?\\s+([-+]?(?:[0-9]+\\.?[0-9]*|\\.[0-9]+)(?:[eE][-+]?[0-9]+)?)(?:\\s+[0-9]+)?$");
+		return metrics.lines()
+			.map(String::trim)
+			.map(samplePattern::matcher)
+			.filter(matcher -> matcher.matches())
+			.anyMatch(matcher -> Double.isFinite(Double.parseDouble(matcher.group(1))));
 	}
 
 	private HttpResponse<String> get(int port, String path) throws Exception {
