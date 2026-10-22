@@ -258,11 +258,11 @@ class DrawSnapshotIntegrationTest {
 		assertThat(count("draw_candidates")).isZero();
 	}
 
-	/** 어뷰징 검토 상태와 관계없이 정상 응모를 후보로 포함하고 검토 기록을 보존하는지 검증한다. */
+	/** 자동 차단 이력의 만료 여부와 관계없이 정상 응모와 이력 자체를 보존하는지 검증한다. */
 	@ParameterizedTest
-	@ValueSource(strings = {"PENDING", "CONFIRMED"})
-	@DisplayName("기존 어뷰징 기록으로 같은 사용자의 정상 응모나 다른 유효 응모자를 제거하지 않는다")
-	void existingAbuseRecordsDoNotRemoveValidParticipants(String reviewStatus) {
+	@ValueSource(booleans = {false, true})
+	@DisplayName("자동 차단 이력으로 같은 사용자의 정상 응모나 다른 유효 응모자를 제거하지 않는다")
+	void existingAbuseRecordsDoNotRemoveValidParticipants(boolean expired) {
 		// given
 		UUID participant = addParticipant(0);
 		UUID otherUser = UUID.randomUUID();
@@ -272,21 +272,18 @@ class DrawSnapshotIntegrationTest {
 			""", bytes(otherUser), utc(NOW), utc(NOW));
 		UUID otherParticipant = addParticipant(0, otherUser);
 		UUID record = UUID.randomUUID();
-		boolean confirmed = reviewStatus.equals("CONFIRMED");
-		UUID reviewer = UUID.randomUUID();
+		Instant blockedAt = NOW.minusSeconds(expired ? 700 : 100);
+		Instant blockedUntil = blockedAt.plusSeconds(600);
 		jdbc.update("""
-			insert into users (id, name, role, status, membership, created_at, updated_at)
-			values (?, '검토 관리자', 'ADMIN', 'ACTIVE', 'VIP', ?, ?)
-			""", bytes(reviewer), utc(NOW), utc(NOW));
-		// 현재 스키마의 기존 기록을 보존하는 검증이다. 새 지급 차단 저장소를 구현하지 않는다.
-		jdbc.update("""
-			insert into abuse_cases (id, event_id, user_id, request_id, detection_key, detection_type,
-				detection_reason, evidence, occurred_at, detected_at, review_status, reviewed_by, reviewed_at, review_reason)
-			values (?, ?, ?, ?, ?, 'INVALID_REWARD_REQUEST', '거절된 지급 요청', '{"issued":false}', ?, ?, ?, ?, ?, ?)
-			""", bytes(record), bytes(eventId), bytes(userId), record.toString(), record.toString(),
-				utc(NOW.minusSeconds(100)), utc(NOW.minusSeconds(100)), reviewStatus,
-				confirmed ? bytes(reviewer) : null, confirmed ? utc(NOW.minusSeconds(90)) : null,
-				confirmed ? "기존 확인 기록" : null);
+			insert into abuse_cases (id, event_id, user_id, source_type, detection_type,
+				detection_reason, evidence, occurred_at, detected_at, blocked_at, blocked_until)
+			values (?, ?, ?, 'ENTRY', 'REPEATED_RATE_LIMIT_EXCEEDED',
+				'응모 요청 한도 초과가 반복되어 일시 차단되었습니다.',
+				JSON_OBJECT('ruleVersion', 'v1', 'triggerScope', 'USER',
+				  'windowStartedAt', ?, 'windowEndsAt', ?, 'requestLimit', 20,
+				  'rejectedCount', 20, 'rejectionThreshold', 20), ?, ?, ?, ?)
+			""", bytes(record), bytes(eventId), bytes(userId), blockedAt.minusSeconds(30).toString(),
+				blockedAt.plusSeconds(30).toString(), utc(blockedAt), utc(blockedAt), utc(blockedAt), utc(blockedUntil));
 
 		// when
 		DrawSnapshot snapshot = service.prepareInitial(eventId);
@@ -302,8 +299,8 @@ class DrawSnapshotIntegrationTest {
 		});
 		assertThat(count("draw_candidates")).isEqualTo(2);
 		assertThat(count("draw_results")).isZero();
-		assertThat(jdbc.queryForObject("select review_status from abuse_cases where id = ?",
-				String.class, bytes(record))).isEqualTo(reviewStatus);
+		assertThat(jdbc.queryForObject("select count(*) from abuse_cases where id = ?",
+				Long.class, bytes(record))).isEqualTo(1L);
 		assertThat(service.prepareInitial(eventId)).isEqualTo(snapshot);
 	}
 

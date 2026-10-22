@@ -35,3 +35,5 @@ Flyway 버전 번호는 중복될 수 없지만 연속일 필요는 없다. 예�
 - [검증 오류 코드](https://documentation.red-gate.com/fd/validate-error-codes-287015530.html)
 
 GD-87의 운영 미적용 [V019 실행 제어 필드](../../storage/db/src/main/resources/db/migration/drawing/V019__add_draw_execution_control.sql)는 신규 테이블 없이 기존 draw_runs의 4개 nullable 필드·제약·인덱스를 확장한다. 이 워크트리의 DBML에는 해당 구현안을 표시했으며 운영 DB 적용 완료를 의미하지 않는다. V019는 Testcontainers 임시 MySQL에서 적용·검증했다. 2026-10-12 확인한 원격 dev b2be294에는 V019가 반영되어 있으며 GD-138 브랜치의 V019와 파일 경로·SQL 내용이 동일하다. 사용자 요청으로 GD-170의 V020과 충돌하던 GD-138 신규 마이그레이션 번호를 미사용 V022로 변경했고 SQL 내용은 유지했다. V017/V019와 [V022 취소 멱등 키](../../storage/db/src/main/resources/db/migration/drawing/V022__add_award_cancellation_request_key.sql)를 포함한 최초 검증에서는 마이그레이션 17개를 확인했다. 최신 dev의 V021을 함께 보존한 병합에서는 18개이며, 병합 후 재검증은 GD-72 코드의 컴파일 오류로 실행되지 못했다. V022의 nullable request_key·UNIQUE는 임시 MySQL에 적용했고 운영 DB에는 적용하지 않았다. 공유·운영 DB 적용 순서는 별도로 확인한다.
+
+- [응모 차단 이력 전환·수동 시드](../06-runbook/entry-abuse-migration.md): GD-142 새 마이그레이션 적용 전제와 실패 확인.
