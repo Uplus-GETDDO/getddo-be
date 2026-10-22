@@ -37,6 +37,7 @@ class EntryRedisScriptExecutor {
 	String execute(byte[] script, List<String> keys, List<String> args) {
 		byte[][] values = java.util.stream.Stream.concat(keys.stream(), args.stream())
 				.map(value -> value.getBytes(StandardCharsets.UTF_8)).toArray(byte[][]::new);
+		// 타임아웃은 미실행을 뜻하지 않는다. 카운터 증가가 끝난 뒤 응답만 유실될 수 있어 재전송하지 않는다.
 		byte[] result = connectionTemplate().execute((RedisCallback<byte[]>) connection ->
 				connection.scriptingCommands().eval(script, ReturnType.VALUE, keys.size(), values));
 		if (result == null) {
@@ -84,6 +85,7 @@ class EntryRedisScriptExecutor {
 		pool.setTestOnReturn(true);
 		pool.setBlockWhenExhausted(true);
 		pool.setMaxWait(current.getCommandTimeout());
+		// 연결 복구 뒤 대기 명령이 다시 전송되는 것을 막는다. 끊어진 연결은 이후 요청에서 풀을 통해 교체한다.
 		ClientOptions options = current.getClientOptions().orElseGet(ClientOptions::create)
 				.mutate().autoReconnect(false)
 				.disconnectedBehavior(ClientOptions.DisconnectedBehavior.REJECT_COMMANDS).build();
@@ -96,6 +98,7 @@ class EntryRedisScriptExecutor {
 		current.getRedisCredentialsProviderFactory().ifPresent(builder::redisCredentialsProviderFactory);
 		if (current.isUseSsl()) {
 			LettuceClientConfiguration.LettuceSslClientConfigurationBuilder ssl = builder.useSsl();
+			// FULL·CA·NONE을 그대로 복사해 원본 Redis 연결과 인증서 검증 수준을 맞춘다.
 			ssl.verifyPeer(current.getVerifyMode());
 			if (current.isStartTls()) {
 				ssl.startTls();

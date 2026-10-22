@@ -39,6 +39,7 @@ public class EntryRateLimitHandler {
 				.filter(users::supportsParameter).findFirst()
 				.orElseThrow(() -> new IllegalStateException("응모 제한 handler에 CurrentUser가 필요하다."));
 		ServletWebRequest web = new ServletWebRequest(request);
+		// 기존 차단 조회도 헤더 형식 검증 뒤에 수행한다. 여기서는 사용자 DB를 조회하지 않는다.
 		UUID userId = users.validateHeaders(parameter, web);
 		Optional<EntryLimitDecision> active;
 		try {
@@ -49,11 +50,14 @@ public class EntryRateLimitHandler {
 			users.resolveArgument(parameter, null, web, null);
 			return true;
 		}
+		// 최초 DB 문맥 검증을 거쳐 활성화된 차단만 반환되므로, 차단 중 반복 요청은 DB 없이 거절한다.
 		if (active.isPresent()) {
 			throw new RateLimitExceededException(active.get().getRetryAfterSeconds());
 		}
 		// 미등록·불일치·사용자 DB 장애는 fail-open catch에 포함하지 않는다.
+		// 검증 결과는 기존 resolver가 요청에 보관하므로 Controller 인자 해석에서 같은 사용자를 다시 조회하지 않는다.
 		users.resolveArgument(parameter, null, web, null);
+		// scope는 집계 키일 뿐 실재 이벤트를 보장하지 않는다. 이력의 FK 연결용 ID만 별도로 확인한다.
 		UUID verifiedEvent = null;
 		if (scope != null) {
 			try {
@@ -66,9 +70,11 @@ public class EntryRateLimitHandler {
 		try {
 			decision = limiter.evaluateEntry(userId, scope, verifiedEvent, received, policy, settings);
 		} catch (RuntimeException failure) {
+			// 응답 유실 시 Redis에서 이미 반영됐을 수도 있다. 같은 요청을 재평가하면 중복 집계되므로 통과시킨다.
 			warn("EVALUATION", failure);
 			return true;
 		}
+		// 일반 한도 초과가 확인된 뒤 기록만 실패한 경우에는, 판정 자체를 모르는 장애와 달리 원래 429를 유지한다.
 		if (decision.getRecordingStatus() == EntryRecordingStatus.DENY_RECORDING_FAILED) {
 			log.warn("응모 일반 429 유지: 차단 근거 기록에 실패했다.");
 		}

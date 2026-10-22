@@ -33,6 +33,7 @@ final class RedisEntryRateLimiter {
 			RateLimitProperties.Policy policy, EntryBlockProperties settings) {
 		settings.validateWindow(policy.window());
 		UUID candidate = UUID.randomUUID();
+		// KEYS·ARGV의 순서는 entry-evaluate.lua와 한 계약이다. 후보 ID는 실제 차단이 시작될 때만 저널로 남는다.
 		List<String> keys = List.of(userIndex(userId), PREFIX + "counters:" + userId,
 				PREFIX + "journal:" + candidate, PREFIX + "journal-ids", PREFIX + "pending");
 		List<String> args = List.of(userId.toString(), scope == null ? "" : scope.toString(),
@@ -62,12 +63,14 @@ final class RedisEntryRateLimiter {
 		}
 	}
 
+	/** Redis 내부 시각은 epoch 밀리초다. HTTP의 instant 문자열 형식과 구분해 복원한다. */
 	private EntryWindowSnapshot window(JsonNode node) {
 		return node == null || node.isNull() ? null : new EntryWindowSnapshot(
 				Instant.ofEpochMilli(node.get("startedAt").asLong()),
 				Instant.ofEpochMilli(node.get("endsAt").asLong()), node.get("rejectedCount").asInt());
 	}
 
+	/** 최초 저장 근거를 복원한다. occurredAt만 요청 수신 시각 문자열이며 나머지 차단 시각은 Redis 기준이다. */
 	private EntryBlock block(JsonNode node) {
 		if (node == null || node.isNull()) {
 			return null;

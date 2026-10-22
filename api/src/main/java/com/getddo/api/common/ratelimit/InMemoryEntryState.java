@@ -26,6 +26,7 @@ final class InMemoryEntryState {
 		}
 	}
 
+	/** 고정 개수의 잠금을 공유해 사용자별 잠금 객체가 계속 쌓이는 것을 피한다. */
 	private Object lock(UUID id) {
 		return locks[(id.hashCode() & Integer.MAX_VALUE) % locks.length];
 	}
@@ -48,6 +49,7 @@ final class InMemoryEntryState {
 		synchronized (lock(id)) {
 			Instant now = time.now().truncatedTo(ChronoUnit.MILLIS);
 			State state = users.computeIfAbsent(id, ignored -> new State());
+			// 조회와 평가 사이 다른 요청이 차단했을 수 있으므로 잠금 안에서 다시 확인한다.
 			if (state.block != null && now.isBefore(state.block.getBlockedUntil())) {
 				return EntryLimitDecision.blocked(state.block, now);
 			}
@@ -62,11 +64,13 @@ final class InMemoryEntryState {
 			user.count = Math.min((long) policy.limit() + 1, user.count + 1);
 			boolean denied = user.count > policy.limit();
 			Instant retryAt = user.end;
+			// 기존 일반 제한처럼 전체 한도를 넘으면 이벤트 일반 카운터는 증가시키지 않는다.
 			if (!denied && scoped != null && policy.scopedLimit() != null) {
 				scoped.count = Math.min((long) policy.scopedLimit() + 1, scoped.count + 1);
 				denied = scoped.count > policy.scopedLimit();
 				retryAt = scoped.end;
 			}
+			// 어느 일반 한도에서 거절됐든 같은 요청을 전체·해당 이벤트 거절 횟수에 각각 한 번 반영한다.
 			if (denied) {
 				user.denied = (int) Math.min(Integer.MAX_VALUE, (long) user.denied + 1);
 				if (scoped != null) {
@@ -76,6 +80,7 @@ final class InMemoryEntryState {
 				boolean perEvent = scoped != null && policy.scopedLimit() != null
 						&& scoped.denied >= settings.eventThreshold();
 				if (overall || perEvent) {
+					// 두 기준이 동시에 충족되면 USER 근거로 차단 한 건만 생성한다.
 					Window representative = overall ? user : scoped;
 					AbuseEvidence evidence = new AbuseEvidence(settings.ruleVersion(),
 							overall ? AbuseTriggerScope.USER : AbuseTriggerScope.EVENT,
@@ -114,6 +119,7 @@ final class InMemoryEntryState {
 		}
 	}
 
+	/** 최초 요청의 종료 시각을 유지하고, 만료 뒤 다음 요청에서만 새 구간을 연다. */
 	private static Window window(Window old, Instant now, RateLimitProperties.Policy policy) {
 		return old == null || !now.isBefore(old.end) ? new Window(now, now.plusMillis(policy.window().toMillis())) : old;
 	}
