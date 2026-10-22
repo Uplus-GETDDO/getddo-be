@@ -42,6 +42,10 @@ public class NotificationAdminRepositoryImpl implements NotificationAdminReposit
 		json_unquote(json_extract(j.payload, '$.generationStoppedBy')) as stopped_by
 		from notification_jobs j left join events e on e.id = j.event_id
 		""";
+	private static final String DELIVERY_COLUMNS = """
+		select n.*, u.name as user_name
+		from notifications n join users u on u.id = n.user_id
+		""";
 	private final JdbcTemplate jdbc;
 
 	/** 선택 필터와 생성 시각 역순·ID 역순으로 작업 페이지를 조회한다. */
@@ -90,17 +94,17 @@ public class NotificationAdminRepositoryImpl implements NotificationAdminReposit
 	public PageResult<AdminNotification> findDeliveries(NotificationDeliveryQuery query) {
 		StringBuilder where = new StringBuilder(" where 1=1");
 		List<Object> args = new ArrayList<>();
-		filter(where, args, "user_id = ?", bytes(query.getUserId()));
-		filter(where, args, "event_id = ?", bytes(query.getEventId()));
-		filter(where, args, "job_id = ?", bytes(query.getJobId()));
-		filter(where, args, "mock_delivery_status = ?", query.getMockDeliveryStatus() == null ? null : query.getMockDeliveryStatus().name());
-		filter(where, args, "created_at >= ?", filterTime(query.getFrom()));
-		filter(where, args, "created_at < ?", filterTime(query.getTo()));
-		long count = jdbc.queryForObject("select count(*) from notifications" + where, Long.class, args.toArray());
+		filter(where, args, "n.user_id = ?", bytes(query.getUserId()));
+		filter(where, args, "n.event_id = ?", bytes(query.getEventId()));
+		filter(where, args, "n.job_id = ?", bytes(query.getJobId()));
+		filter(where, args, "n.mock_delivery_status = ?", query.getMockDeliveryStatus() == null ? null : query.getMockDeliveryStatus().name());
+		filter(where, args, "n.created_at >= ?", filterTime(query.getFrom()));
+		filter(where, args, "n.created_at < ?", filterTime(query.getTo()));
+		long count = jdbc.queryForObject("select count(*) from notifications n" + where, Long.class, args.toArray());
 		PageQuery page = query.getPage();
 		args.add(page.getSize());
 		args.add(page.offset());
-		List<AdminNotification> items = jdbc.query("select * from notifications" + where + " order by created_at desc, id desc limit ? offset ?",
+		List<AdminNotification> items = jdbc.query(DELIVERY_COLUMNS + where + " order by n.created_at desc, n.id desc limit ? offset ?",
 				(row, index) -> delivery(row), args.toArray());
 		return new PageResult<>(items, page.getPage(), page.getSize(), count);
 	}
@@ -108,7 +112,7 @@ public class NotificationAdminRepositoryImpl implements NotificationAdminReposit
 	/** 복구 조건을 다시 확인할 수 있도록 해당 알림 행을 잠근다. */
 	@Override
 	public Optional<AdminNotification> lockDelivery(UUID id) {
-		return jdbc.query("select * from notifications where id = ? for update",
+		return jdbc.query(DELIVERY_COLUMNS + " where n.id = ? for update of n",
 				(row, index) -> delivery(row), bytes(id)).stream().findFirst();
 	}
 
@@ -116,7 +120,7 @@ public class NotificationAdminRepositoryImpl implements NotificationAdminReposit
 	@Override
 	public Optional<AdminNotification> findDelivery(UUID id) {
 		// 복구 직후에도 호출자 이전 스냅샷 대신 현재 행의 읽음 상태를 반환한다.
-		return jdbc.query("select * from notifications where id = ? for share",
+		return jdbc.query(DELIVERY_COLUMNS + " where n.id = ? for share of n",
 				(row, index) -> delivery(row), bytes(id)).stream().findFirst();
 	}
 
@@ -175,7 +179,7 @@ public class NotificationAdminRepositoryImpl implements NotificationAdminReposit
 
 	/** DB 행을 읽음·발송 정보와 복구 기준 차수를 가진 도메인으로 변환한다. */
 	private static AdminNotification delivery(ResultSet row) throws SQLException {
-		return new AdminNotification(uuid(row.getBytes("id")), uuid(row.getBytes("job_id")), uuid(row.getBytes("user_id")),
+		return new AdminNotification(uuid(row.getBytes("id")), uuid(row.getBytes("job_id")), uuid(row.getBytes("user_id")), row.getString("user_name"),
 				uuid(row.getBytes("event_id")), row.getString("title"), row.getString("body"), row.getString("link_url"),
 				instant(row, "created_at"), row.getBoolean("is_read"), MockDeliveryStatus.valueOf(row.getString("mock_delivery_status")),
 				instant(row, "mock_sent_at"), row.getInt("delivery_attempt_count"), row.getInt("delivery_attempt_base"),

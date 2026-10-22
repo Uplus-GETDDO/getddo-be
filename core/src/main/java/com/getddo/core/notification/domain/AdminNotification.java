@@ -12,6 +12,8 @@ public final class AdminNotification {
 	private final UUID id;
 	private final UUID jobId;
 	private final UUID userId;
+	/** 조회 시점의 사용자 이름. 업무 기록에 이름을 복제해 저장하지 않는다. */
+	private final String userName;
 	private final UUID eventId;
 	private final String title;
 	private final String body;
@@ -33,6 +35,7 @@ public final class AdminNotification {
 	public AdminNotification(UUID id,
 			UUID jobId,
 			UUID userId,
+			String userName,
 			UUID eventId,
 			String title,
 			String body,
@@ -48,6 +51,7 @@ public final class AdminNotification {
 		this.id = Objects.requireNonNull(id, "id");
 		this.jobId = Objects.requireNonNull(jobId, "jobId");
 		this.userId = Objects.requireNonNull(userId, "userId");
+		this.userName = Objects.requireNonNull(userName, "userName");
 		this.eventId = eventId;
 		this.title = Objects.requireNonNull(title, "title");
 		this.body = Objects.requireNonNull(body, "body");

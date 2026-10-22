@@ -26,6 +26,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import com.getddo.core.common.exception.BusinessException;
 import com.getddo.core.common.pagination.PageResult;
 import com.getddo.core.audit.repository.AuditLogRepository;
+import com.getddo.core.notification.domain.AdminNotification;
 import com.getddo.core.notification.domain.AdminNotificationJob;
 import com.getddo.core.notification.domain.AdminNotificationJobResult;
 import com.getddo.core.notification.domain.NotificationDelivery;
@@ -86,6 +87,58 @@ class NotificationAdminIntegrationTest {
 		}
 		for (UUID event : events) jdbc.update("delete from events where id = ?", bytes(event));
 		jdbc.update("delete from users where id in (?, ?)", bytes(actor.getId()), bytes(recipient));
+	}
+
+	@Test
+	@DisplayName("관리자 알림 목록은 수신자의 현재 이름을 읽고 원본 내용·읽음·발송 상태를 바꾸지 않는다")
+	void returnsCurrentRecipientNameWithoutChangingNotification() {
+		// given
+		UUID job = job(NotificationType.RESULT_PUBLISHED, null);
+		UUID notification = prepareNotification(job);
+		NotificationDeliveryQuery query = new NotificationDeliveryQuery(1, 1, recipient, null, job, null, null, null);
+		AdminNotification before = admin.findDeliveries(actor, query).getItems().getFirst();
+		jdbc.update("update users set name = ? where id = ?", "이름 변경 수신자", bytes(recipient));
+
+		// when
+		PageResult<AdminNotification> page = admin.findDeliveries(actor, query);
+		AdminNotification after = page.getItems().getFirst();
+
+		// then
+		assertThat(before.getUserName()).isEqualTo("알림 운영 테스트");
+		assertThat(after.getUserName()).isEqualTo("이름 변경 수신자");
+		assertThat(after.getUserId()).isEqualTo(recipient);
+		assertThat(after.getId()).isEqualTo(notification);
+		assertThat(page.getTotalElements()).isEqualTo(1);
+		assertThat(after.getBody()).isEqualTo(before.getBody());
+		assertThat(after.isRead()).isEqualTo(before.isRead());
+		assertThat(after.getMockDeliveryStatus()).isEqualTo(before.getMockDeliveryStatus());
+		assertThat(after.getDeliveryAttemptCount()).isEqualTo(before.getDeliveryAttemptCount());
+		assertThat(admin.findDeliveries(actor,
+				new NotificationDeliveryQuery(2, 1, recipient, null, job, null, null, null)).getItems()).isEmpty();
+	}
+
+	@Test
+	@DisplayName("발송 재시도 응답에도 처리자가 아닌 수신자의 현재 이름을 반환하고 읽음·원본을 보존한다")
+	void returnsRecipientNameOnDeliveryRetry() {
+		// given
+		UUID job = job(NotificationType.RESULT_PUBLISHED, null);
+		UUID notification = prepareNotification(job);
+		jdbc.update("update users set name = ? where id = ?", "수신자 현재 이름", bytes(recipient));
+		jdbc.update("update users set name = ? where id = ?", "재처리 관리자", bytes(actor.getId()));
+		jdbc.update("update notifications set is_read = true, mock_delivery_status = 'FAILED', "
+				+ "delivery_attempt_count = 4, next_delivery_attempt_at = null where id = ?", bytes(notification));
+
+		// when
+		AdminNotification accepted = admin.retryDelivery(actor, notification);
+
+		// then
+		assertThat(accepted.getUserName()).isEqualTo("수신자 현재 이름");
+		assertThat(accepted.getUserId()).isEqualTo(recipient);
+		assertThat(accepted.isRead()).isTrue();
+		assertThat(accepted.getDeliveryAttemptCount()).isEqualTo(4);
+		assertThat(accepted.getMockDeliveryStatus().name()).isEqualTo("PENDING");
+		assertThat(accepted.getBody()).isEqualTo(repository.findRequest(job).getBody());
+		assertThat(auditCount(notification)).isEqualTo(1);
 	}
 
 	/** 최종 생성 실패 복구는 기존 알림을 보존하고 오래된 워커를 차단한다 */

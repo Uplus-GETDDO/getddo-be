@@ -89,12 +89,13 @@ class AdminNotificationControllerTest {
 	void acceptsDeliveryRetry() throws Exception {
 		// given
 		UUID id = UUID.randomUUID();
-		when(service.retryDelivery(any(), eq(id))).thenReturn(new AdminNotification(id, UUID.randomUUID(), UUID.randomUUID(),
+		when(service.retryDelivery(any(), eq(id))).thenReturn(new AdminNotification(id, UUID.randomUUID(), UUID.randomUUID(), "수신자",
 				null, "제목", "내용", null, NOW, true, MockDeliveryStatus.PENDING, null, 4, 4, NOW, null));
 		// when / then
 		mvc.perform(post("/api/v1/admin/notifications/" + id + "/delivery-retries")
 				.header("X-User-ID", ADMIN_ID).header("X-User-Role", "ADMIN"))
-				.andExpect(status().isAccepted()).andExpect(jsonPath("$.data.isRead").value(true))
+				.andExpect(status().isAccepted()).andExpect(jsonPath("$.data.userName").value("수신자"))
+				.andExpect(jsonPath("$.data.isRead").value(true))
 				.andExpect(jsonPath("$.data.deliveryAttemptCount").value(4));
 	}
 
@@ -154,7 +155,7 @@ class AdminNotificationControllerTest {
 	void returnsDeliveryPage() throws Exception {
 		// given
 		UUID id = UUID.randomUUID();
-		AdminNotification item = new AdminNotification(id, UUID.randomUUID(), UUID.randomUUID(), null,
+		AdminNotification item = new AdminNotification(id, UUID.randomUUID(), UUID.randomUUID(), "수신자", null,
 				"제목", "내용", "/events/test", NOW, true, MockDeliveryStatus.FAILED, null, 4, 0, null, "NOTIFICATION-005");
 		when(service.findDeliveries(any(), any())).thenReturn(new PageResult<>(List.of(item), 1, 20, 21));
 		// when / then
@@ -162,6 +163,8 @@ class AdminNotificationControllerTest {
 				.andExpect(status().isOk()).andExpect(jsonPath("$.data.totalElements").value(21))
 				.andExpect(jsonPath("$.data.items[0].id").value(id.toString()))
 				.andExpect(jsonPath("$.data.items[0].jobId").value(item.getJobId().toString()))
+				.andExpect(jsonPath("$.data.items[0].userId").value(item.getUserId().toString()))
+				.andExpect(jsonPath("$.data.items[0].userName").value("수신자"))
 				.andExpect(jsonPath("$.data.items[0].isRead").value(true))
 				.andExpect(jsonPath("$.data.items[0].mockDeliveryStatus").value("FAILED"))
 				.andExpect(jsonPath("$.data.items[0].lastDeliveryError").value("NOTIFICATION-005"))
