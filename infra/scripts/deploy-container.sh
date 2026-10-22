@@ -79,11 +79,21 @@ healthy() {
 metrics_ready() {
   # 이전 산출물/롤백에는 Prometheus endpoint를 요구하지 않는다.
   grep -q 'API_PRIVATE_IP' "$release/compose.deploy.yaml" || return 0
-  local attempt metrics
+  local attempt
   for ((attempt = 0; attempt < 15; attempt++)); do
-    if metrics=$(curl --disable --fail --silent --noproxy '*' --max-time 5 "http://$api_private_ip:9091/actuator/prometheus") &&
-       [[ $metrics == *http_server_requests_seconds_bucket* && $metrics == *jvm_memory_used_bytes* &&
-          $metrics == *tomcat_threads_busy_threads* && $metrics == *hikaricp_connections_max* ]]; then
+    if curl --disable --fail --silent --noproxy '*' --max-time 5 "http://$api_private_ip:9091/actuator/prometheus" | python3 -c '
+import math
+import re
+import sys
+required = {"http_server_requests_seconds_bucket", "jvm_memory_used_bytes",
+            "tomcat_threads_busy_threads", "hikaricp_connections_max"}
+found = set()
+for line in sys.stdin:
+    sample = re.fullmatch(r"([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{.*\})?\s+([-+]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)(?:\s+[0-9]+)?", line.strip())
+    if sample and sample[1] in required and math.isfinite(float(sample[2])):
+        found.add(sample[1])
+sys.exit(0 if found == required else 1)
+'; then
       return 0
     fi
     sleep 4
@@ -166,9 +176,10 @@ if grep -q 'API_PRIVATE_IP' "$release/compose.deploy.yaml" ||
     --request PUT --header 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
     http://169.254.169.254/latest/api/token) || { echo 'IMDSv2 token 조회 실패' >&2; exit 1; }
   [[ -n $metadata_token && $metadata_token != *$'\r'* && $metadata_token != *$'\n'* ]] || exit 1
-  api_private_ip=$(curl --disable --fail --silent --show-error --noproxy '*' --connect-timeout 2 --max-time 5 \
-    --header "X-aws-ec2-metadata-token: $metadata_token" \
-    http://169.254.169.254/latest/meta-data/local-ipv4) || { echo 'IMDSv2 private IP 조회 실패' >&2; exit 1; }
+  # 헤더는 stdin으로 전달해 프로세스 명령행에 token을 남기지 않는다.
+  api_private_ip=$(printf 'X-aws-ec2-metadata-token: %s\n' "$metadata_token" | \
+    curl --disable --fail --silent --show-error --noproxy '*' --connect-timeout 2 --max-time 5 \
+    --header @- http://169.254.169.254/latest/meta-data/local-ipv4) || { echo 'IMDSv2 private IP 조회 실패' >&2; exit 1; }
   unset metadata_token
   python3 - "$api_private_ip" <<'PYIP'
 import ipaddress

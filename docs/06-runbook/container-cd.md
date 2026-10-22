@@ -71,7 +71,7 @@ GitHub **Settings → Environments → production → Variables**에 기본 단�
 - 배포 후 새 컨테이너 ID의 stream에 기동 로그와 이후 요청 로그가 들어오는지 확인한다. HTTP 기동 확인만으로 로그 수집 성공을 판단하지 않는다. 실패 시 로그 그룹·리전·역할 권한·네트워크를 확인한다.
 - 실패 복구는 이전 release의 Compose를 사용한다. 이전 파일이 `json-file`이면 복구 시 로그 드라이버도 되돌아가므로 CloudWatch 수집 유지 여부를 별도로 확인한다.
 
-오프라인에서는 비밀값 없는 임시 env 파일을 `APP_ENV_FILE`로 지정하고 `APP_IMAGE`를 설정한 뒤 `docker compose --project-name getddo --env-file /dev/null --file compose.deploy.yaml config --format json`으로 드라이버·옵션·raw env 보존을 검사한다. 이 검사는 AWS 권한·네트워크·실제 로그 도착을 검증하지 않는다. 실제 재배포 후 수집 확인은 별도 운영 검증으로 남는다.
+오프라인에서는 비밀값 없는 임시 env 파일을 `APP_ENV_FILE`로 지정하고 `APP_IMAGE`와 검증용 `API_PRIVATE_IP=10.0.1.20`을 설정한 뒤 `docker compose --project-name getddo --env-file /dev/null --file compose.deploy.yaml config --format json`으로 드라이버·옵션·raw env 보존을 검사한다. 검증용 IP는 오프라인 렌더링에만 사용하며 운영 배포의 IP는 호스트 IMDSv2에서 결정한다. 이 검사는 AWS 권한·네트워크·실제 로그 도착을 검증하지 않는다. 실제 재배포 후 수집 확인은 별도 운영 검증으로 남는다.
 
 설정 근거: [Docker awslogs 드라이버](https://docs.docker.com/engine/logging/drivers/awslogs/), [non-blocking 버퍼 동작](https://docs.docker.com/engine/logging/configure/#configure-the-delivery-mode-of-log-messages-from-container-to-log-driver).
 

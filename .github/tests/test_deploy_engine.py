@@ -14,7 +14,7 @@ OLD = 'sha256:' + 'd' * 64
 
 
 class DeploymentEngineTest(unittest.TestCase):
-    def execute(self, previous=True, fail_new=False, fail_stop=False, fail_cleanup=False, metadata="10.0.1.20", fail_metadata=False, fail_metrics=False, legacy=False, previous_monitoring=False):
+    def execute(self, previous=True, fail_new=False, fail_stop=False, fail_cleanup=False, metadata="10.0.1.20", fail_metadata=False, fail_metrics=False, legacy=False, previous_monitoring=False, metrics_response="samples"):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             host = base / 'opt/getddo'
@@ -79,12 +79,23 @@ if '169.254.169.254' in url:
         assert '--request' in sys.argv and 'PUT' in sys.argv
         print('test-metadata-token')
     else:
-        assert 'X-aws-ec2-metadata-token: test-metadata-token' in sys.argv
+        assert 'test-metadata-token' not in ' '.join(sys.argv)
+        assert sys.argv[sys.argv.index('--header')+1] == '@-'
+        assert sys.stdin.read() == 'X-aws-ec2-metadata-token: test-metadata-token\\n'
         print(os.environ['METADATA_IP'])
 elif url.endswith('/actuator/prometheus'):
     assert url.startswith('http://' + os.environ['METADATA_IP'] + ':9091/')
     if os.environ['FAIL_METRICS']=='1': sys.exit(22)
-    print('http_server_requests_seconds_bucket jvm_memory_used_bytes tomcat_threads_busy_threads hikaricp_connections_max')
+    names = ['http_server_requests_seconds_bucket', 'jvm_memory_used_bytes', 'tomcat_threads_busy_threads', 'hikaricp_connections_max']
+    mode = os.environ['METRICS_RESPONSE']
+    if mode == 'names':
+        print(' '.join(names))
+    elif mode == 'comments':
+        print('\\n'.join('# HELP ' + name + ' test' for name in names))
+    else:
+        if mode == 'missing': names.pop()
+        for name in names:
+            print(name + '{test="sample"} 1.0')
 else:
     print('200')
 ''')
@@ -98,7 +109,7 @@ else:
             if fail_cleanup:
                 sync.write_text('#!/usr/bin/env python3\nimport os,sys\nsys.exit(1 if sys.argv[-1] == os.environ["CONFIG_DIR"] else 0)\n')
             environment = dict(os.environ, PATH=str(mock_bin) + ':' + os.environ['PATH'],
-                               API_PRIVATE_IP='0.0.0.0', METADATA_IP=metadata, FAIL_METADATA=str(int(fail_metadata)),
+                               METRICS_RESPONSE=metrics_response, API_PRIVATE_IP='0.0.0.0', METADATA_IP=metadata, FAIL_METADATA=str(int(fail_metadata)),
                                FAIL_METRICS=str(int(fail_metrics)), FAIL_NEW=str(int(fail_new)), FAIL_STOP=str(int(fail_stop)),
                                STATE_FILE=str(base/'state'), CONFIG_DIR=str(config),
                                NEW_IMAGE=NEW, SOURCE_SHA=SHA, GETDDO_DEPLOY_SERVER='c',
@@ -169,6 +180,16 @@ else:
         self.assertEqual('old', current.name)
         self.assertFalse(marker)
         self.assertEqual('PREVIOUS=raw$"value\nGETDDO_METRICS_SERVER=a\n', env)
+
+    def test_metric_names_comments_and_missing_samples_never_commit_new_release(self):
+        for response in ('names', 'comments', 'missing'):
+            with self.subTest(response=response):
+                result, env, marker, current = self.execute(metrics_response=response)
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn('ROLLBACK_CONFIRMED_HEALTHY:', result.stdout)
+                self.assertEqual('old', current.name)
+                self.assertFalse(marker)
+                self.assertEqual('PREVIOUS=raw$"value\nGETDDO_METRICS_SERVER=a\n', env)
 
     def test_legacy_release_still_prepares_ip_for_monitoring_previous_compose(self):
         result, env, marker, current = self.execute(legacy=True, previous_monitoring=True, fail_metadata=True)
