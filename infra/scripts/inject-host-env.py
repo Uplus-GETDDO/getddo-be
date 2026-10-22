@@ -6,7 +6,9 @@ from pathlib import Path
 import stat
 
 
-def inject(path, server, enabled):
+def inject(path, server, enabled, environment="dev"):
+    if environment not in ("dev", "staging"):
+        raise ValueError("environment must be dev or staging")
     if server not in ("a", "c"):
         raise ValueError("server must be a or c")
     if enabled not in ("true", "false"):
@@ -15,7 +17,7 @@ def inject(path, server, enabled):
     if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.geteuid():
         raise ValueError("env must be an owned regular 600 file")
     settings = {"GETDDO_METRICS_SERVER": server, "GETDDO_METRICS_ENABLED": enabled,
-                "GETDDO_METRICS_ENVIRONMENT": "dev", "GETDDO_METRICS_NAMESPACE": "GETDDO/API",
+                "GETDDO_METRICS_ENVIRONMENT": environment, "GETDDO_METRICS_NAMESPACE": "GETDDO/API",
                 "GETDDO_METRICS_STEP": "60s"}
     content = path.read_text()
     if any(line.split("=", 1)[0] in settings for line in content.splitlines()):
@@ -34,5 +36,6 @@ if __name__ == "__main__":
     parser.add_argument("--file", type=Path, required=True)
     parser.add_argument("--server", choices=("a", "c"), required=True)
     parser.add_argument("--enabled", choices=("true", "false"), required=True)
+    parser.add_argument("--environment", choices=("dev", "staging"), default="dev")
     args = parser.parse_args()
-    inject(args.file, args.server, args.enabled)
+    inject(args.file, args.server, args.enabled, args.environment)

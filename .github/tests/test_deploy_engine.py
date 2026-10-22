@@ -14,7 +14,7 @@ OLD = 'sha256:' + 'd' * 64
 
 
 class DeploymentEngineTest(unittest.TestCase):
-    def execute(self, previous=True, fail_new=False, fail_stop=False, fail_cleanup=False, metadata="10.0.1.20", fail_metadata=False, fail_metrics=False, legacy=False, previous_monitoring=False, metrics_response="samples", fail_metadata_ip=False):
+    def execute(self, previous=True, fail_new=False, fail_stop=False, fail_cleanup=False, metadata="10.0.1.20", fail_metadata=False, fail_metrics=False, legacy=False, previous_monitoring=False, metrics_response="samples", fail_metadata_ip=False, deploy_environment="dev"):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             host = base / 'opt/getddo'
@@ -46,6 +46,7 @@ class DeploymentEngineTest(unittest.TestCase):
 import os, pathlib, sys
 args=sys.argv[1:]
 if args[0]=='compose':
+    assert os.environ.get('GETDDO_API_LOG_GROUP') == '/getddo/' + os.environ['GETDDO_DEPLOY_ENVIRONMENT'] + '/api'
     if not os.environ.get('API_PRIVATE_IP') and 'API_PRIVATE_IP' in pathlib.Path(args[args.index('--file')+1]).read_text(): sys.exit(2)
     if 'config' in args: sys.exit(0)
     if 'ps' in args:
@@ -114,7 +115,7 @@ else:
                                FAIL_METRICS=str(int(fail_metrics)), FAIL_NEW=str(int(fail_new)), FAIL_STOP=str(int(fail_stop)),
                                STATE_FILE=str(base/'state'), CONFIG_DIR=str(config),
                                NEW_IMAGE=NEW, SOURCE_SHA=SHA, GETDDO_DEPLOY_SERVER='c',
-                               GETDDO_DEPLOY_METRICS_ENABLED='true')
+                               GETDDO_DEPLOY_METRICS_ENABLED='true', GETDDO_DEPLOY_ENVIRONMENT=deploy_environment)
             result = subprocess.run(['bash', str(release/'deploy-container.sh'), SHA, 'ap-northeast-2'],
                                     env=environment, capture_output=True, text=True, timeout=20)
             result.deployment_started = (base / 'state').exists()
@@ -130,6 +131,25 @@ else:
         self.assertNotIn('API_PRIVATE_IP', env)
         self.assertNotIn('SPRING_PROFILES_INCLUDE', env)
         self.assertEqual('new', current.name)
+
+    def test_stage_success_injects_stage_labels_and_failed_update_restores_prior_env(self):
+        result, env, marker, current = self.execute(deploy_environment='staging')
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn('GETDDO_METRICS_ENVIRONMENT=staging\n', env)
+        self.assertIn('GETDDO_METRICS_SERVER=c\n', env)
+        self.assertFalse(marker)
+        result, env, marker, current = self.execute(deploy_environment='staging', fail_new=True)
+        self.assertNotEqual(0, result.returncode)
+        self.assertEqual('PREVIOUS=raw$"value\nGETDDO_METRICS_SERVER=a\n', env)
+        self.assertIn('ROLLBACK_CONFIRMED_HEALTHY:', result.stdout)
+        self.assertEqual('old', current.name)
+        self.assertFalse(marker)
+
+    def test_invalid_environment_rejected_before_touching_app(self):
+        result, env, marker, current = self.execute(deploy_environment='prod')
+        self.assertNotEqual(0, result.returncode)
+        self.assertFalse(result.deployment_started)
+        self.assertEqual('old', current.name)
 
     def test_failed_update_restores_full_env_and_emits_confirmed_health_only_after_cleanup(self):
         result, env, marker, current = self.execute(fail_new=True)
