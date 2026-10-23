@@ -83,16 +83,18 @@ class PrometheusManagementTest {
 					assertThat(get(managementPort, path).statusCode()).isEqualTo(404);
 				}
 			}
+			// GC pause 타이머는 첫 GC 알림 후 등록되므로, GC 없이도 등록되는 할당량으로 GC binder를 검증한다.
 			assertThat(metrics).contains("http_server_requests_seconds_count", "http_server_requests_seconds_sum",
 				"http_server_requests_seconds_bucket", "hikaricp_connections_active", "hikaricp_connections_idle",
 				"hikaricp_connections_max", "hikaricp_connections_pending", "hikaricp_connections_acquire_seconds",
 				"hikaricp_connections_timeout_total", "tomcat_threads_busy_threads", "tomcat_threads_current_threads",
-				"tomcat_threads_config_max_threads", "jvm_memory_used_bytes", "jvm_threads_live_threads", "jvm_gc_pause_seconds")
+				"tomcat_threads_config_max_threads", "jvm_memory_used_bytes", "jvm_threads_live_threads",
+				"jvm_gc_memory_allocated_bytes_total")
 				.doesNotContain("test_other_timer_seconds_bucket", "unknown-one", "unknown-two");
 			assertThat(metrics.lines().filter(line -> line.startsWith("tomcat_threads_busy_threads")))
 				.anyMatch(line -> line.contains("http-nio-auto-"));
 			for (String metric : new String[] {"http_server_requests_seconds_bucket", "jvm_memory_used_bytes",
-				"tomcat_threads_busy_threads", "hikaricp_connections_max"}) {
+				"tomcat_threads_busy_threads", "hikaricp_connections_max", "jvm_gc_memory_allocated_bytes_total"}) {
 				assertThat(hasFiniteSample(metrics, metric)).as(metric).isTrue();
 			}
 			CloudWatchMeterRegistry cloudWatch = context.getBean(CloudWatchMeterRegistry.class);
