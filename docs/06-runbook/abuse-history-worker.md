@@ -54,3 +54,5 @@ pending과 batch의 점수는 다음 처리 시각이며 선점 중에는 소유
 - batch started/finished는 실행 여부와 처리 시도 건수를 나타내며 전부 저장 성공했다는 뜻이 아니다. interrupted와 다음 날 적체를 함께 확인한다.
 - unreadable 경고는 원본·재시도 상태 확인이 필요하다. 로그에 사용자 ID·payload·예외 원문을 출력하지 않는다.
 - Redis 전체 유실을 복원하는 DB outbox는 없다. 연결 풀·eviction·메모리와 배포 전 실제 확인은 [기존 운영 경계](entry-abuse-migration.md#gd-144-redis-생산-경로-운영-경계)를 따른다. 경보 임계값은 실제 용량·유입량 측정 후 인프라 담당자와 확정한다.
+
+재예약 시 소유권이 만료됐으면 강제 갱신하지 않고 `reschedule skipped after ownership loss` 경고를 남긴다. 최초 실패 상태가 아직 저장되지 않은 건은 재시도 예산이 다시 시작될 수 있으므로, 이 경고가 반복되면 DB 연결 대기·쿼리·트랜잭션 소요 시간을 확인하고 `ABUSE_HISTORY_LEASE`를 실제 최악 처리 시간보다 길게 조정한다. 경고 추가만으로 10분 예산의 엄격한 보장을 주장하지 않는다. `batch skipped`는 이전 배치가 끝나지 않아 다음 트리거를 건너뛴 상태이며 DB 지연과 배치 적체를 함께 확인한다.

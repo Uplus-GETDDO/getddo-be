@@ -50,6 +50,7 @@ public class AbuseHistoryWorker implements DisposableBean {
 	@Scheduled(cron = "0 0 6 * * *", zone = "Asia/Seoul")
 	public void batch() {
 		if (!batchRunning.compareAndSet(false, true)) {
+			log.warn("Abuse history batch skipped: previous batch is still running");
 			return;
 		}
 		try {

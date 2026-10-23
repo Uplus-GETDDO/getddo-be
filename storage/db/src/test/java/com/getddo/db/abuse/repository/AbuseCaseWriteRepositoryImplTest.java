@@ -8,6 +8,8 @@ import java.time.Instant;
 import java.util.UUID;
 
 import jakarta.persistence.EntityManager;
+
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import com.getddo.core.abuse.domain.AbuseEvidence;
@@ -27,10 +29,13 @@ class AbuseCaseWriteRepositoryImplTest {
 			new AbuseEvidence("entry-v1", AbuseTriggerScope.USER, now, now.plusSeconds(60), 20, 20, 20));
 
 	@Test
+	@DisplayName("모든 최초 저장 값이 같은 경우에만 중복 전달로 인정한다")
 	void onlyFullOriginalContentIsConsideredSameDelivery() {
-		var expected = entity(evidence.toJson(block.getEvidence()), now.plusSeconds(600));
+		// given
+		AbuseCaseEntity expected = entity(evidence.toJson(block.getEvidence()), now.plusSeconds(600));
 		when(mapper.toEntity(block)).thenReturn(expected);
 		when(manager.find(AbuseCaseEntity.class, block.getId())).thenReturn(expected);
+		// when / then
 		assertThat(repository.isSameStored(block)).isTrue();
 		when(manager.find(AbuseCaseEntity.class, block.getId())).thenReturn(entity(expected.getEvidence(), now.plusSeconds(601)));
 		assertThat(repository.isSameStored(block)).isFalse();
@@ -39,12 +44,16 @@ class AbuseCaseWriteRepositoryImplTest {
 	}
 
 	@Test
+	@DisplayName("같은 PK의 기존 행이 없으면 중복 전달 성공이 아니다")
 	void differentPrimaryKeyIsNotAConfirmedDuplicate() {
+		// when / then
 		assertThat(repository.isSameStored(block)).isFalse();
 	}
 
 	@Test
+	@DisplayName("JSON 순서는 무시하되 추가 근거는 다른 내용으로 판단한다")
 	void jsonFieldOrderDoesNotMatterButAdditionalEvidenceDoes() {
+		// when / then
 		assertThat(evidence.sameContent("{\"a\":1,\"b\":2}", "{\"b\":2,\"a\":1}")).isTrue();
 		assertThat(evidence.sameContent("{\"a\":1,\"b\":2}", "{\"a\":1}")).isFalse();
 	}

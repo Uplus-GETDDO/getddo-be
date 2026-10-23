@@ -22,6 +22,7 @@ final class RedisEntryRateLimiter {
 	static final String PREFIX = "getddo:entry-block:";
 	private final EntryRedisScriptExecutor executor;
 	private final JsonMapper json = JsonMapper.builder().build();
+	private final EntryBlockPayloadMapper payloads = new EntryBlockPayloadMapper();
 	private final byte[] activeScript = EntryRedisScriptExecutor.script("entry-active");
 	private final byte[] evaluateScript = EntryRedisScriptExecutor.script("entry-evaluate");
 
@@ -82,7 +83,7 @@ final class RedisEntryRateLimiter {
 		if (node == null || node.isNull()) {
 			return null;
 		}
-		return new EntryBlockPayloadMapper().read(node);
+		return payloads.read(node);
 	}
 
 	void destroy() {

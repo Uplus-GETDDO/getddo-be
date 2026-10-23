@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
@@ -66,18 +67,21 @@ class EntryAbuseHistoryIntegrationTest {
 	}
 
 	@Test
+	@DisplayName("응모 차단 이력을 저장한 뒤 관리자 조회를 제공하고 차단을 유지한다")
 	void blockedRequestEventuallyAppearsInBothAdminApisWithoutUnblockingUser() throws Exception {
+		// given
 		insertUser(user, "USER");
 		insertUser(admin, "ADMIN");
 		UUID missingEvent = UUID.randomUUID();
 		// 실재 이벤트가 없으므로 event FK는 null이다. 첫 요청은 업무 404, 두 번째는 자동 차단 429다.
+		// when / then
 		mvc.perform(post("/api/v1/events/{event}/entries", missingEvent).header("X-User-ID", user).header("X-User-Role", "USER").header("X-User-Membership", "excellent")
 				.header("Idempotency-Key", UUID.randomUUID()).contentType(MediaType.APPLICATION_JSON).content("{}"))
 				.andExpect(status().isNotFound());
 		mvc.perform(post("/api/v1/events/{event}/entries", missingEvent).header("X-User-ID", user).header("X-User-Role", "USER").header("X-User-Membership", "excellent")
 				.header("Idempotency-Key", UUID.randomUUID()).contentType(MediaType.APPLICATION_JSON).content("{}"))
 				.andExpect(status().isTooManyRequests());
-		var service = new AbuseHistoryService(journals, saves,
+		AbuseHistoryService service = new AbuseHistoryService(journals, saves,
 				new AbuseHistoryRetryPolicy(Duration.ofMinutes(10), List.of(Duration.ofSeconds(10), Duration.ofMinutes(2))),
 				Duration.ofSeconds(30), 100);
 		assertThat(service.processNext()).isTrue();

@@ -3,6 +3,8 @@ package com.getddo.redis.ratelimit;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -11,6 +13,7 @@ import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.ScanOptions;
+import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Repository;
 import tools.jackson.databind.JsonNode;
@@ -110,23 +113,32 @@ public class RedisAbuseHistoryJournalRepository implements AbuseHistoryJournalRe
 	@Override
 	public AbuseHistoryBacklog recover(int scanSize) {
 		ScanOptions options = ScanOptions.scanOptions().count(scanSize).build();
-		try (var ids = redis.opsForSet().scan(GLOBAL, options)) {
-			ids.forEachRemaining(this::recoverOne);
+		// SCAN 자체 중복과 전역 인덱스와의 중복을 한 복구 주기 안에서 제거한다.
+		Set<String> processed = new HashSet<>();
+		try (Cursor<String> ids = redis.opsForSet().scan(GLOBAL, options)) {
+			ids.forEachRemaining(id -> recoverOnce(id, processed));
 		}
 		// 전역 SET 자체가 사라져도 저널은 살아 있다. KEYS나 전역 인덱스만으로 복구하지 않는다.
-		try (var keys = redis.scan(ScanOptions.scanOptions().match(PREFIX + "journal:*").count(scanSize).build())) {
-			keys.forEachRemaining(key -> recoverOne(key.substring((PREFIX + "journal:").length())));
+		try (Cursor<String> keys = redis.scan(ScanOptions.scanOptions().match(PREFIX + "journal:*").count(scanSize).build())) {
+			keys.forEachRemaining(key -> recoverOnce(key.substring((PREFIX + "journal:").length()), processed));
 		}
-		try (var keys = redis.scan(ScanOptions.scanOptions().match(PREFIX + "user:*").count(scanSize).build())) {
+		try (Cursor<String> keys = redis.scan(ScanOptions.scanOptions().match(PREFIX + "user:*").count(scanSize).build())) {
 			keys.forEachRemaining(key -> {
 				String userId = key.substring((PREFIX + "user:").length());
-				try (var ids = redis.opsForSet().scan(key, options)) {
+				try (Cursor<String> ids = redis.opsForSet().scan(key, options)) {
 					ids.forEachRemaining(id -> executor.execute(ORPHAN, List.of(journal(id), key), List.of(id, userId)));
 				}
 			});
 		}
 		return new AbuseHistoryBacklog(size(redis.opsForZSet().zCard(PENDING)), size(redis.opsForZSet().zCard(BATCH)),
 				size(redis.opsForSet().size(GLOBAL)));
+	}
+
+	/** 누락된 전역 항목은 실제 키 스캔에서 처리하되 이미 처리한 원본은 다시 읽지 않는다. */
+	private void recoverOnce(String id, Set<String> processed) {
+		if (processed.add(id)) {
+			recoverOne(id);
+		}
 	}
 
 	private void recoverOne(String id) {

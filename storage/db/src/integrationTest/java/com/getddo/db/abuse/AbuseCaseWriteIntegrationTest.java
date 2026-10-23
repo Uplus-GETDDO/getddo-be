@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.time.Instant;
 import java.util.UUID;
 
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
@@ -46,12 +47,16 @@ class AbuseCaseWriteIntegrationTest {
 	private JdbcTemplate jdbc;
 
 	@Test
+	@DisplayName("동일 전달은 한 행을 유지하고 다른 PK의 복합 제약 충돌은 거절한다")
 	void identicalRedeliveryIsOneRowButDifferentPkUniqueCollisionStillFails() {
+		// given
 		UUID user = new TicketGrantSeeds(jdbc).user();
 		EntryBlock block = block(UUID.randomUUID(), user, Instant.parse("2026-10-22T20:00:00.123Z"));
 		try {
+			// when
 			saves.save(block);
 			saves.save(block);
+			// then
 			assertThat(jdbc.queryForObject("select count(*) from abuse_cases where user_id = ?", Long.class, bytes(user))).isEqualTo(1);
 			assertThatThrownBy(() -> saves.save(block(UUID.randomUUID(), user, block.getBlockedAt())))
 					.isInstanceOf(DataIntegrityViolationException.class);
@@ -62,11 +67,14 @@ class AbuseCaseWriteIntegrationTest {
 	}
 
 	@Test
+	@DisplayName("변경된 원본과 FK 실패를 중복 저장 성공으로 인정하지 않는다")
 	void changedOriginalAndForeignKeyFailureAreNotAcknowledgedAsDuplicate() {
+		// given
 		UUID user = new TicketGrantSeeds(jdbc).user();
 		EntryBlock block = block(UUID.randomUUID(), user, Instant.parse("2026-10-22T20:00:00.123Z"));
 		try {
 			saves.save(block);
+			// when / then
 			assertThatThrownBy(() -> saves.save(block(block.getId(), user, block.getBlockedAt().plusSeconds(1))))
 					.isInstanceOf(DataIntegrityViolationException.class);
 			assertThatThrownBy(() -> saves.save(block(UUID.randomUUID(), UUID.randomUUID(), block.getBlockedAt())))
