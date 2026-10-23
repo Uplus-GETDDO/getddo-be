@@ -1,3 +1,3 @@
 # Preserve the downloaded Locust CSV evidence byte-for-byte, including CRLF.
-2026-10-23-staging-ui-stats.csv -text
-2026-10-23-staging-cli-stats.csv -text
+2026-10-23-staging-ui-stats.csv -text whitespace=cr-at-eol
+2026-10-23-staging-cli-stats.csv -text whitespace=cr-at-eol

@@ -742,9 +742,9 @@ flowchart LR
 
 | 검증 범위 | 실행 기록일·관련 작업 | 결과 |
 | --- | --- | --- |
-| 실제 응모·차감과 후보 스냅샷 | 2026-10-15, GD-131 | 관련 MySQL 검증 17개 성공 |
-| 공개 명단·본인 결과·마스킹 | 2026-10-15, GD-140 | 관련 검증 26개 성공 |
-| 공개·취소·재추첨·사용자 조회 | 2026-10-15~16, GD-199 구현본 | 관련 MySQL 검증 39개 성공, 전체 테스트·빌드 2,215개 성공 |
+| 실제 응모·차감과 후보 스냅샷 | 2026-10-15 | 관련 MySQL 검증 17개 성공 |
+| 공개 명단·본인 결과·마스킹 | 2026-10-15 | 관련 검증 26개 성공 |
+| 공개·취소·재추첨·사용자 조회 | 2026-10-15~16 검증 코드 | 관련 MySQL 검증 39개 성공, 전체 테스트·빌드 2,215개 성공 |
 
 가중치 구간 경계, 후보 부족, 잘못된 수량·가중치·자리, 실제 잠금 경합, 동시 확정과 저장 실패 롤백을 검증했습니다. 전체 테스트 수는 프로젝트 전체 집계이며 이번 README 수정에서는 테스트를 재실행하지 않았습니다.
 
@@ -858,7 +858,7 @@ flowchart LR
 
 #### 검증 결과
 
-**실행 기준**: 2026-10-16 KST, 최신 확인 dev `88833cef`를 반영한 `docs/GD-212`의 코드 `2d2f1664`. Java 21·Testcontainers MySQL 8.4에서 담당 테스트만 필터링해 새로 실행했습니다.
+**실행 기준**: 2026-10-16 KST, dev 기준 `88833cef`를 반영한 검증 코드 `2d2f1664`. Java 21·Testcontainers MySQL 8.4에서 담당 테스트만 필터링해 새로 실행했습니다.
 
 | 검증 종류 | 실행 수 | 결과 |
 | --- | ---: | --- |
@@ -995,7 +995,7 @@ flowchart LR
 
 #### 검증 결과
 
-**실행 기준**: 2026-10-16 KST, 최신 확인 dev `88833cef`를 반영한 `docs/GD-212`의 코드 `2d2f1664`. Java 21·Testcontainers MySQL 8.4에서 담당 테스트만 필터링해 새로 실행했습니다.
+**실행 기준**: 2026-10-16 KST, dev 기준 `88833cef`를 반영한 검증 코드 `2d2f1664`. Java 21·Testcontainers MySQL 8.4에서 담당 테스트만 필터링해 새로 실행했습니다.
 
 | 검증 종류 | 실행 수 | 결과 |
 | --- | ---: | --- |
@@ -1107,7 +1107,7 @@ DB의 이미지 키 + 공개 주소 설정 → 응답의 imageUrl
 
 #### 검증 결과
 
-**관리자 사용자 조회·알림 운영** — 2026-10-16 KST, `docs/GD-212`의 코드 `2d2f1664`에서 위 [담당 범위 공통 명령](#gd212-owned-test-command)으로 검증했습니다.
+**관리자 사용자 조회·알림 운영** — 2026-10-16 KST, 검증 코드 `2d2f1664`에서 위 [담당 범위 공통 명령](#gd212-owned-test-command)으로 검증했습니다.
 
 | 검증 범위 | 단위·MVC | MySQL 통합 | 결과 |
 | --- | ---: | ---: | --- |
@@ -1116,7 +1116,7 @@ DB의 이미지 키 + 공개 주소 설정 → 응답의 imageUrl
 
 실패·오류·건너뜀은 0개입니다. 관리자 알림 운영 수치는 위 알림 합계에 포함되는 하위 집계이며 중복 합산하지 않습니다. 사용자 조회는 권한, AND 필터, `%·_·!`의 문자 검색, 안정 정렬, 큰 페이지, 응답 7개 필드, UTC 시각과 조회 전후 데이터 불변을 확인했습니다.
 
-**배너** — 2026-10-16 KST, [PR #110](https://github.com/Uplus-GETDDO/getddo-be/pull/110)의 코드 `28e4ed05`에서 별도로 새로 실행했습니다. 배너 기능은 위 dev 기준 코드에 포함되지 않습니다.
+**배너** — 2026-10-16 KST, [배너 검증 기준](https://github.com/Uplus-GETDDO/getddo-be/pull/110)의 코드 `28e4ed05`에서 별도로 새로 실행했습니다. 배너 기능은 위 dev 기준 코드에 포함되지 않습니다.
 
 | 검증 종류 | 실행 수 | 결과 |
 | --- | ---: | --- |
@@ -1194,11 +1194,11 @@ DB 이름이나 계정을 바꿨다면 환경변수도 `.env`와 맞춥니다.
 
 ### AWS Staging 부하 테스트
 
-Stage 이미지 생성·배포 경로는 [PR #164](https://github.com/Uplus-GETDDO/getddo-be/pull/164)로 `dev`에 반영됐습니다. 같은 저장소 PR의 CI에서 만든 고정 SHA 이미지 산출물을 검증한 Stage a/c에 순차 배포하며, 운영 main 전용 CD 조건과 기본 설정은 유지합니다. Stage의 Parameter Store·로그·지표 환경과 배포 잠금은 운영과 분리합니다.
+Stage 이미지 생성·배포 경로는 [Stage 배포 기능](https://github.com/Uplus-GETDDO/getddo-be/pull/164)로 `dev`에 반영됐습니다. 같은 저장소 PR의 CI에서 만든 고정 SHA 이미지 산출물을 검증한 Stage a/c에 순차 배포하며, 운영 main 전용 CD 조건과 기본 설정은 유지합니다. Stage의 Parameter Store·로그·지표 환경과 배포 잠금은 운영과 분리합니다.
 
 - [백엔드 Stage 이미지·대상 검증·배포·복구](docs/06-runbook/staging-deployment.md)
 - [인프라 환경 생성·Locust UI/CLI·Grafana·결과 수집·삭제](https://github.com/Uplus-GETDDO/getddo-infra/blob/main/docs/staging-loadtest.md)
-- 인프라 구현은 [Infra PR #5](https://github.com/Uplus-GETDDO/getddo-infra/pull/5)로 `main`에 병합됐습니다. **인프라는 비공개 저장소이므로 읽기 권한이 필요하며, 권한 없는 GitHub 계정에는 404로 보입니다.** 권한이 있는 조직 계정으로 인프라 저장소의 `docs/staging-loadtest.md`를 확인합니다.
+- 인프라 구현은 [임시 인프라 구현](https://github.com/Uplus-GETDDO/getddo-infra/pull/5)로 `main`에 병합됐습니다. **인프라는 비공개 저장소이므로 읽기 권한이 필요하며, 권한 없는 GitHub 계정에는 404로 보입니다.** 권한이 있는 조직 계정으로 인프라 저장소의 `docs/staging-loadtest.md`를 확인합니다.
 
 환경 up/destroy는 인프라 저장소의 `scripts/staging.py`가 맡습니다. `ready` 이후 Locust 웹 UI 또는 CLI로 부하를 시작하고 기존 Grafana의 Staging 폴더에서 관측합니다. **UI Stop은 부하만 멈추며, 서버·DB 삭제에는 인프라 destroy가 필요합니다.** 비밀번호는 Parameter Store에서 본인 권한으로 조회하고 문서·명령 인자에 기록하지 않습니다.
 
