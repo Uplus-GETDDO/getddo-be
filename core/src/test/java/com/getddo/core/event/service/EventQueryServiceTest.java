@@ -339,7 +339,7 @@ class EventQueryServiceTest {
 	}
 
 	private EventView view(UUID id) {
-		RegisteredEvent event = new RegisteredEvent(id, "이벤트", "설명", null, EventType.NO_TICKET,
+		RegisteredEvent event = new RegisteredEvent(id, "이벤트", "설명", null, null, EventType.NO_TICKET,
 				false, null, MembershipRule.excellent, Instant.EPOCH, Instant.EPOCH.plusSeconds(60),
 				EventStatus.OPEN, Instant.EPOCH, Instant.EPOCH, List.of());
 		return new EventView(event, EventStatus.OPEN, null);

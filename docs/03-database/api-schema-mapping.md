@@ -39,6 +39,7 @@
 | [V028](../../storage/db/src/main/resources/db/migration/event/V028__link_banner_events_and_catalog_lock.sql) | `banners.event_id`, `banner_catalog_lock` | GD-209 이벤트 연결·빈 목록 쓰기 잠금. 기존 URL·행·CHECK·UNIQUE 보존. 실제 DB 적용은 미실행 |
 | [V029](../../storage/db/src/main/resources/db/migration/ticket/V029__add_platinum_ticket_grade.sql) | `tickets.grade`·`reward_policies.reward_ticket_type` ENUM에 `PLATINUM`, `event_entries.requested_platinum_count`와 등급별 요청 장수 CHECK | GD-228 플래티넘 응모권 등급(ADR-025). 기존 행·기존 등급의 비음수 검증 의미·UNIQUE 보존. `chk_entry_requested_grades`는 플래티넘을 포함해 재정의하고 기존 응모의 플래티넘 요청 장수는 0. GD-228의 실제 DB 검증 결과는 해당 PR #126의 기록을 별도로 확인하며, GD-230의 통합 테스트는 미완료 |
 | [V030](../../storage/db/src/main/resources/db/migration/abuse/V030__convert_abuse_cases_to_entry_blocks.sql) | `abuse_cases`의 자동 차단 필드·복합 UNIQUE·CHECK·조회 인덱스 | GD-142 AR01 목록과 GD-143 AR02 상세의 공통 기반. 기존 검토 필드는 빈 테이블에서만 제거하며 행이 있으면 중단. [전환 절차](../06-runbook/entry-abuse-migration.md). 실제 DB 적용·통합 검증은 미실행 |
+| [V031](../../storage/db/src/main/resources/db/migration/event/V031__add_event_detail_image_key.sql) | `events.detail_image_key` | GD-321 상세 설명 이미지 1장의 선택 S3 키. `VARCHAR(500) NULL DEFAULT NULL`이며 기존 썸네일·텍스트·경품은 유지. [BE 응답·수정 계약](../02-api/event-images.md#이벤트-상세-설명-이미지--gd-321). 배포 DB 적용은 별도 |
 
 ## 응모 API 현행 매핑 (GD-134, GD-145, GD-200)
 

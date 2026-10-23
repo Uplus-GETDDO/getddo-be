@@ -37,6 +37,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class EventRegistrationServiceTest {
@@ -54,7 +55,7 @@ class EventRegistrationServiceTest {
 		auditLogs = mock(AuditLogService.class);
 		when(events.create(any(), any())).thenAnswer(invocation -> {
 			EventRegistration input = invocation.getArgument(0);
-			return new RegisteredEvent(UUID.randomUUID(), input.getTitle(), input.getDescription(), input.getImageKey(),
+			return new RegisteredEvent(UUID.randomUUID(), input.getTitle(), input.getDescription(), input.getImageKey(), input.getDetailImageKey(),
 					input.getEventType(), input.isWeightingEnabled(), input.getMaxTicketsPerUser(), input.getMembershipRule(),
 					input.getStartsAt(), input.getEndsAt(), invocation.getArgument(1), NOW, NOW,
 					input.getPrizes().stream().map(prize -> new RegisteredEvent.Prize(UUID.randomUUID(), prize.getRank(),
@@ -96,6 +97,29 @@ class EventRegistrationServiceTest {
 		assertThat(prize.get("rank")).isEqualTo(1);
 		assertThat(prize.get("name")).isEqualTo("경품 A");
 		assertThat(prize.get("winnerCount")).isEqualTo(1);
+	}
+
+	@ParameterizedTest
+	@ValueSource(ints = {500, 501})
+	@DisplayName("상세 이미지 키는 500자까지 저장·감사에 전달하고 초과하면 저장 전에 거절한다")
+	void validatesAndPreservesDetailImageKey(int length) {
+		// given
+		EventRegistration source = validRegistration();
+		EventRegistration input = new EventRegistration(source.getActorId(), source.getTitle(), source.getDescription(),
+				source.getImageKey(), "x".repeat(length), source.getEventType(), source.isWeightingEnabled(),
+				source.getMaxTicketsPerUser(), source.getMembershipRule(), source.getStartsAt(), source.getEndsAt(), source.getPrizes());
+		// when / then
+		if (length > 500) {
+			assertThatThrownBy(() -> service.register(input)).isInstanceOfSatisfying(EventException.class,
+					error -> assertThat(error.getErrorCode()).isEqualTo(EventErrorCode.INVALID_DETAILS));
+			verifyNoInteractions(events, auditLogs);
+			return;
+		}
+		RegisteredEvent saved = service.register(input);
+		assertThat(saved.getDetailImageKey()).isEqualTo(input.getDetailImageKey());
+		ArgumentCaptor<AuditLogCommand> command = ArgumentCaptor.forClass(AuditLogCommand.class);
+		verify(auditLogs).record(command.capture());
+		assertThat(command.getValue().getAfterData()).containsEntry("detailImageKey", input.getDetailImageKey());
 	}
 
 	@Test
@@ -168,7 +192,7 @@ class EventRegistrationServiceTest {
 	void noTicketEventUsesNoWeightingAndNoTicketLimit() {
 		EventRegistration source = validRegistration();
 		EventRegistration noTicket = new EventRegistration(source.getActorId(), source.getTitle(),
-				source.getDescription(), source.getImageKey(), EventType.NO_TICKET, false,
+				source.getDescription(), source.getImageKey(), source.getDetailImageKey(), EventType.NO_TICKET, false,
 				null, source.getMembershipRule(), source.getStartsAt(), source.getEndsAt(), source.getPrizes());
 
 		service.register(noTicket);
@@ -180,7 +204,7 @@ class EventRegistrationServiceTest {
 	void adminCanRegisterUnlimitedWeightedEventRegardlessOfPeriod() {
 		EventRegistration source = validRegistration();
 		EventRegistration unlimited = new EventRegistration(source.getActorId(), source.getTitle(),
-				source.getDescription(), source.getImageKey(), EventType.TICKET, true,
+				source.getDescription(), source.getImageKey(), source.getDetailImageKey(), EventType.TICKET, true,
 				null, source.getMembershipRule(), source.getStartsAt(), source.getEndsAt(), source.getPrizes());
 
 		service.register(unlimited);
@@ -194,7 +218,7 @@ class EventRegistrationServiceTest {
 		// given
 		EventRegistration source = validRegistration();
 		EventRegistration invalid = new EventRegistration(source.getActorId(), source.getTitle(),
-				source.getDescription(), source.getImageKey(), source.getEventType(), source.isWeightingEnabled(),
+				source.getDescription(), source.getImageKey(), source.getDetailImageKey(), source.getEventType(), source.isWeightingEnabled(),
 				source.getMaxTicketsPerUser(), source.getMembershipRule(), source.getStartsAt(), source.getEndsAt(),
 				List.of(new EventRegistration.Prize(UUID.randomUUID(), 1, "기존 경품", null, null, 1)));
 		// when / then
@@ -208,7 +232,7 @@ class EventRegistrationServiceTest {
 	void duplicatePrizeRankFailsBeforeAnyWrite() {
 		EventRegistration source = validRegistration();
 		EventRegistration duplicate = new EventRegistration(source.getActorId(), source.getTitle(),
-				source.getDescription(), source.getImageKey(), source.getEventType(), source.isWeightingEnabled(),
+				source.getDescription(), source.getImageKey(), source.getDetailImageKey(), source.getEventType(), source.isWeightingEnabled(),
 				source.getMaxTicketsPerUser(), source.getMembershipRule(), source.getStartsAt(), source.getEndsAt(),
 				List.of(source.getPrizes().getFirst(),
 						new EventRegistration.Prize(1, "다른 경품", null, null, 2)));
@@ -224,7 +248,7 @@ class EventRegistrationServiceTest {
 	void incompatibleTicketRuleFailsBeforeAnyWrite() {
 		EventRegistration source = validRegistration();
 		EventRegistration invalid = new EventRegistration(source.getActorId(), source.getTitle(),
-				source.getDescription(), source.getImageKey(), EventType.NO_TICKET, true,
+				source.getDescription(), source.getImageKey(), source.getDetailImageKey(), EventType.NO_TICKET, true,
 				5, source.getMembershipRule(), source.getStartsAt(), source.getEndsAt(), source.getPrizes());
 
 		assertThatThrownBy(() -> service.register(invalid))
@@ -245,7 +269,7 @@ class EventRegistrationServiceTest {
 		// when / then
 		for (List<EventRegistration.Prize> prizes : invalidLists) {
 			EventRegistration invalid = new EventRegistration(source.getActorId(), source.getTitle(),
-					source.getDescription(), source.getImageKey(), source.getEventType(), source.isWeightingEnabled(),
+					source.getDescription(), source.getImageKey(), source.getDetailImageKey(), source.getEventType(), source.isWeightingEnabled(),
 					source.getMaxTicketsPerUser(), source.getMembershipRule(), source.getStartsAt(), source.getEndsAt(),
 					prizes);
 			assertThatThrownBy(() -> service.register(invalid))
@@ -319,7 +343,7 @@ class EventRegistrationServiceTest {
 	private EventRegistration withDescriptions(String description, String prizeDescription) {
 		EventRegistration source = validRegistration();
 		EventRegistration.Prize prize = source.getPrizes().getFirst();
-		return new EventRegistration(source.getActorId(), source.getTitle(), description, source.getImageKey(),
+		return new EventRegistration(source.getActorId(), source.getTitle(), description, source.getImageKey(), source.getDetailImageKey(),
 				source.getEventType(), source.isWeightingEnabled(), source.getMaxTicketsPerUser(), source.getMembershipRule(),
 				source.getStartsAt(), source.getEndsAt(),
 				List.of(new EventRegistration.Prize(prize.getRank(), prize.getName(), prizeDescription,
@@ -327,7 +351,7 @@ class EventRegistrationServiceTest {
 	}
 
 	private EventRegistration validRegistration() {
-		return new EventRegistration(ADMIN_ID, "가을 이벤트", "경품 응모", null,
+		return new EventRegistration(ADMIN_ID, "가을 이벤트", "경품 응모", null, null,
 				EventType.TICKET, true, 5, MembershipRule.vip,
 				NOW.plusSeconds(3600), NOW.plusSeconds(7200),
 				List.of(new EventRegistration.Prize(1, "경품 A", null, null, 1),
@@ -335,7 +359,7 @@ class EventRegistrationServiceTest {
 	}
 
 	private EventRegistration withPeriod(EventRegistration source, Instant startsAt, Instant endsAt) {
-		return new EventRegistration(source.getActorId(), source.getTitle(), source.getDescription(), source.getImageKey(),
+		return new EventRegistration(source.getActorId(), source.getTitle(), source.getDescription(), source.getImageKey(), source.getDetailImageKey(),
 				source.getEventType(), source.isWeightingEnabled(), source.getMaxTicketsPerUser(), source.getMembershipRule(),
 				startsAt, endsAt, source.getPrizes());
 	}

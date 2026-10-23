@@ -20,13 +20,13 @@ final class EventWriteValidator {
 
 	static EventRegistration normalizeAndValidate(EventRegistration input) {
 		EventRegistration settings = new EventRegistration(input.getActorId(), input.getTitle(), input.getDescription(),
-				input.getImageKey(), input.getEventType(), input.isWeightingEnabled(), input.getMaxTicketsPerUser(),
+				input.getImageKey(), input.getDetailImageKey(), input.getEventType(), input.isWeightingEnabled(), input.getMaxTicketsPerUser(),
 				input.getMembershipRule(),
 				input.getStartsAt() == null ? null : input.getStartsAt().truncatedTo(ChronoUnit.MICROS),
 				input.getEndsAt() == null ? null : input.getEndsAt().truncatedTo(ChronoUnit.MICROS), input.getPrizes());
 		if (blankOrTooLong(settings.getTitle(), 200) || settings.getDescription() == null
 				|| settings.getDescription().isBlank() || descriptionTooLong(settings.getDescription())
-				|| tooLong(settings.getImageKey(), 500)) {
+				|| tooLong(settings.getImageKey(), 500) || tooLong(settings.getDetailImageKey(), 500)) {
 			throw new EventException(EventErrorCode.INVALID_DETAILS);
 		}
 		if (!EventTimeRange.contains(settings.getStartsAt()) || !EventTimeRange.contains(settings.getEndsAt())

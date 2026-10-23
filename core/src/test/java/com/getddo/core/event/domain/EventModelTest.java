@@ -92,12 +92,12 @@ class EventModelTest {
 	}
 
 	private EventRegistration registration(List<EventRegistration.Prize> prizes) {
-		return new EventRegistration(ID, "이벤트", "설명", null, EventType.NO_TICKET, false, null,
+		return new EventRegistration(ID, "이벤트", "설명", null, null, EventType.NO_TICKET, false, null,
 				MembershipRule.excellent, Instant.EPOCH, Instant.EPOCH.plusSeconds(60), prizes);
 	}
 
 	private RegisteredEvent registered(List<RegisteredEvent.Prize> prizes) {
-		return new RegisteredEvent(ID, "이벤트", "설명", null, EventType.NO_TICKET, false, null,
+		return new RegisteredEvent(ID, "이벤트", "설명", null, null, EventType.NO_TICKET, false, null,
 				MembershipRule.excellent, Instant.EPOCH, Instant.EPOCH.plusSeconds(60), EventStatus.SCHEDULED,
 				Instant.EPOCH, Instant.EPOCH, prizes);
 	}

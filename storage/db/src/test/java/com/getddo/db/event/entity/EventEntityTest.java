@@ -23,7 +23,7 @@ class EventEntityTest {
 		// given
 		Instant deletedAt = Instant.parse("2026-10-14T00:00:00Z");
 		Instant start = deletedAt.plusSeconds(3600);
-		EventEntity event = new EventEntity(new EventRegistration(UUID.randomUUID(), "이벤트", "설명", null,
+		EventEntity event = new EventEntity(new EventRegistration(UUID.randomUUID(), "이벤트", "설명", null, null,
 				EventType.NO_TICKET, false, null, MembershipRule.vip, start, start.plusSeconds(3600),
 				List.of(new EventRegistration.Prize(1, "경품", null, null, 1))), EventStatus.SCHEDULED);
 		event.markDeleted(deletedAt);
@@ -41,7 +41,7 @@ class EventEntityTest {
 	void rejectsNonPositiveTemporaryRanksWithoutChangingPrize() {
 		// given
 		Instant start = Instant.parse("2099-10-12T00:00:00Z");
-		EventEntity event = new EventEntity(new EventRegistration(UUID.randomUUID(), "이벤트", "설명", null,
+		EventEntity event = new EventEntity(new EventRegistration(UUID.randomUUID(), "이벤트", "설명", null, null,
 				EventType.NO_TICKET, false, null, MembershipRule.vip, start, start.plusSeconds(3600),
 				List.of(new EventRegistration.Prize(2, "경품", null, null, 1))), EventStatus.SCHEDULED);
 		EventPrizeEntity prize = event.getPrizes().getFirst();
@@ -58,7 +58,7 @@ class EventEntityTest {
 	void rejectsUnknownPrizeIdBeforeChangingCollection() {
 		// given
 		Instant start = Instant.parse("2099-10-12T00:00:00Z");
-		EventEntity event = new EventEntity(new EventRegistration(UUID.randomUUID(), "이벤트", "설명", null,
+		EventEntity event = new EventEntity(new EventRegistration(UUID.randomUUID(), "이벤트", "설명", null, null,
 				EventType.NO_TICKET, false, null, MembershipRule.vip, start, start.plusSeconds(3600), List.of(
 						new EventRegistration.Prize(1, "첫 경품", null, null, 1),
 						new EventRegistration.Prize(2, "둘째 경품", null, null, 1))), EventStatus.SCHEDULED);
