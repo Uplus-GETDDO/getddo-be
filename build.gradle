@@ -14,7 +14,7 @@ allprojects {
 }
 
 // storage는 경로 구분용 프로젝트이며, 실제 Java 모듈만 설정한다.
-configure([project(':api'), project(':core'), project(':storage:db'), project(':storage:s3')]) {
+configure([project(':api'), project(':core'), project(':storage:db'), project(':storage:s3'), project(':storage:redis')]) {
 	apply plugin: 'java'
 	apply plugin: 'io.spring.dependency-management'
 
@@ -40,8 +40,8 @@ configure([project(':api'), project(':core'), project(':storage:db'), project(':
 	}
 }
 
-// DB 연결이 필요한 테스트만 실제 MySQL에서 실행한다.
-configure([project(':api'), project(':storage:db')]) {
+// 저장소별 실제 연결 테스트를 일반 단위 테스트와 분리한다.
+configure([project(':api'), project(':storage:db'), project(':storage:redis')]) {
 	sourceSets {
 		integrationTest {
 			compileClasspath += sourceSets.main.output
@@ -55,13 +55,11 @@ configure([project(':api'), project(':storage:db')]) {
 	}
 
 	dependencies {
-		integrationTestImplementation(testFixtures(project(':storage:db')))
-		integrationTestImplementation 'org.testcontainers:testcontainers-mysql'
 		integrationTestImplementation 'org.testcontainers:testcontainers-junit-jupiter'
 	}
 
 	def integrationTest = tasks.register('integrationTest', Test) {
-		description = 'MySQL에서 DB 연결이 필요한 통합 테스트를 실행한다.'
+		description = '각 모듈의 실제 저장소 연결 통합 테스트를 실행한다.'
 		group = 'verification'
 		testClassesDirs = sourceSets.integrationTest.output.classesDirs
 		classpath = sourceSets.integrationTest.runtimeClasspath
@@ -71,5 +69,13 @@ configure([project(':api'), project(':storage:db')]) {
 
 	tasks.named('check') {
 		dependsOn integrationTest
+	}
+}
+
+// Redis 모듈은 MySQL 테스트 픽스처·드라이버에 의존하지 않는다.
+configure([project(':api'), project(':storage:db')]) {
+	dependencies {
+		integrationTestImplementation(testFixtures(project(':storage:db')))
+		integrationTestImplementation 'org.testcontainers:testcontainers-mysql'
 	}
 }

@@ -8,10 +8,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
-import com.getddo.api.common.ratelimit.InMemoryRateLimiter;
-import com.getddo.api.common.ratelimit.RateLimiter;
-import com.getddo.api.common.ratelimit.RedisRateLimiter;
+import com.getddo.api.common.ratelimit.EntryRateLimitHandler;
+import com.getddo.core.common.ratelimit.InMemoryRateLimiter;
+import com.getddo.core.common.ratelimit.RateLimiter;
 import com.getddo.core.common.time.TimeProvider;
+import com.getddo.redis.ratelimit.RedisRateLimiter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -20,6 +21,8 @@ class RateLimitConfigTest {
 
 	private final ApplicationContextRunner runner = new ApplicationContextRunner()
 			.withBean(TimeProvider.class, () -> new TimeProvider(Clock.system(ZoneOffset.UTC)))
+			.withBean(EntryRateLimitHandler.class,
+				() -> mock(EntryRateLimitHandler.class))
 			.withUserConfiguration(RateLimitConfig.class);
 
 	@Test
@@ -83,4 +86,13 @@ class RateLimitConfigTest {
 		runner.withPropertyValues("getddo.rate-limit.store=redis")
 				.run(context -> assertThat(context).hasFailed());
 	}
+	@Test
+	@DisplayName("응모 집계 시간이 차단 시간보다 길면 부팅 단계에서 거절한다")
+	void invalidEntryWindow() {
+		// given / when / then
+		runner.withPropertyValues("getddo.rate-limit.policies.entry.limit=20",
+				"getddo.rate-limit.policies.entry.window=11m", "getddo.rate-limit.entry-block.duration=10m")
+				.run(context -> assertThat(context).hasFailed());
+	}
+
 }

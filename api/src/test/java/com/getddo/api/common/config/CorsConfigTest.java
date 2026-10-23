@@ -11,10 +11,12 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.Mockito;
 import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.ComponentScan.Filter;
 import org.springframework.context.annotation.Import;
@@ -28,6 +30,7 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 
 import com.getddo.api.common.context.CurrentUserArgumentResolver;
 import com.getddo.api.common.exception.GlobalExceptionHandler;
+import com.getddo.api.common.ratelimit.EntryRateLimitHandler;
 import com.getddo.api.user.controller.UserController;
 import com.getddo.core.user.domain.Membership;
 import com.getddo.core.user.domain.User;
@@ -290,6 +293,11 @@ class CorsConfigTest {
 	@Import({UserController.class, CurrentUserArgumentResolver.class, UserService.class,
 			GlobalExceptionHandler.class, PublicController.class})
 	static class TestApplication {
+		/** CORS 전용 컨텍스트에서 응모의 DB·Redis 연결을 요구하지 않도록 의존성 경계만 대역으로 둔다. */
+		@Bean
+		EntryRateLimitHandler entryRateLimitHandler() {
+			return Mockito.mock(EntryRateLimitHandler.class);
+		}
 	}
 
 	@RestController

@@ -51,11 +51,10 @@ public class CurrentUserArgumentResolver implements HandlerMethodArgumentResolve
 	public User resolveArgument(MethodParameter parameter, ModelAndViewContainer container,
 			NativeWebRequest request, WebDataBinderFactory binderFactory) {
 		boolean membershipRequired = parameter.getParameterAnnotation(CurrentUser.class).membershipRequired();
-		// 잘못된 형식은 DB 조회 전에 거절한다. 선택 멤버십도 전달하면 형식을 검사한다.
-		UUID id = parseId(header(request, "X-User-ID", true));
-		UserRole role = parseRole(header(request, "X-User-Role", true));
-		Membership membership = parseMembership(header(request, "X-User-Membership",
-				membershipRequired && role == UserRole.USER));
+		ContextHeaders headers = readHeaders(parameter, request);
+		UUID id = headers.id;
+		UserRole role = headers.role;
+		Membership membership = headers.membership;
 		// DB 조회는 요청당 한 번 재사용하되 파라미터별 멤버십 조건은 매번 확인한다.
 		User user = (User) request.getAttribute(CURRENT_USER_ATTRIBUTE, RequestAttributes.SCOPE_REQUEST);
 		if (user == null) {
@@ -79,6 +78,31 @@ public class CurrentUserArgumentResolver implements HandlerMethodArgumentResolve
 		// 모든 대조가 끝난 뒤 보관한다. ADMIN의 반환 멤버십도 헤더가 아닌 DB 값을 유지한다.
 		request.setAttribute(CURRENT_USER_ATTRIBUTE, user, RequestAttributes.SCOPE_REQUEST);
 		return user;
+	}
+
+	/** 응모의 읽기 전용 ACTIVE 조회 전에 기존과 같은 헤더 형식만 검증한다. DB를 조회하지 않는다. */
+	public UUID validateHeaders(MethodParameter parameter, NativeWebRequest request) {
+		return readHeaders(parameter, request).id;
+	}
+
+	private ContextHeaders readHeaders(MethodParameter parameter, NativeWebRequest request) {
+		boolean required = parameter.getParameterAnnotation(CurrentUser.class).membershipRequired();
+		UUID id = parseId(header(request, "X-User-ID", true));
+		UserRole role = parseRole(header(request, "X-User-Role", true));
+		Membership membership = parseMembership(header(request, "X-User-Membership", required && role == UserRole.USER));
+		return new ContextHeaders(id, role, membership);
+	}
+
+	private static final class ContextHeaders {
+		private final UUID id;
+		private final UserRole role;
+		private final Membership membership;
+
+		private ContextHeaders(UUID id, UserRole role, Membership membership) {
+			this.id = id;
+			this.role = role;
+			this.membership = membership;
+		}
 	}
 
 	/**
