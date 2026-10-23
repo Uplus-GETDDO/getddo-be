@@ -1,6 +1,8 @@
-package com.getddo.api.common.ratelimit;
+package com.getddo.core.common.ratelimit;
 
 import java.time.Duration;
+
+import lombok.Getter;
 
 /**
  * 키별 요청 횟수를 세고 한도를 넘었는지 판정한다.
@@ -19,24 +21,27 @@ public interface RateLimiter {
 	 */
 	Decision tryAcquire(String key, int limit, Duration window);
 
-	/**
-	 * 판정 결과.
-	 *
-	 * @param allowed 허용 여부
-	 * @param retryAfterSeconds 거절일 때 다시 시도하기까지 남은 초(1 이상). 허용이면 0
-	 */
-	record Decision(boolean allowed, long retryAfterSeconds) {
+	/** 일반 제한의 허용 여부와 재시도 시간을 함께 보관한다. */
+	@Getter
+	final class Decision {
+		private final boolean allowed;
+		private final long retryAfterSeconds;
 
-		public Decision {
+		/** 허용은 대기 0, 거절은 대기 1초 이상이라는 불변식을 유지한다. */
+		public Decision(boolean allowed, long retryAfterSeconds) {
 			if (allowed ? retryAfterSeconds != 0 : retryAfterSeconds < 1) {
 				throw new IllegalArgumentException("허용은 재시도 시간이 0, 거절은 1초 이상이어야 한다.");
 			}
+			this.allowed = allowed;
+			this.retryAfterSeconds = retryAfterSeconds;
 		}
 
+		/** 집계 한도 안의 요청을 허용한다. */
 		public static Decision allow() {
 			return new Decision(true, 0);
 		}
 
+		/** 초 단위 재시도 시간이 포함된 일반 거절을 만든다. */
 		public static Decision deny(long retryAfterSeconds) {
 			return new Decision(false, Math.max(1, retryAfterSeconds));
 		}

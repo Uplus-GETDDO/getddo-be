@@ -82,11 +82,13 @@ flowchart LR
     API["api"] --> Core["core"]
     API --> DB["storage:db"]
     API --> S3["storage:s3"]
+    API --> Redis["storage:redis"]
     DB --> Core
     S3 --> Core
+    Redis --> Core
 ```
 
-`api`만 실행 가능한 Spring Boot JAR을 만들고, `core`·`storage:db`·`storage:s3`는 라이브러리로 함께 실행합니다. `core`는 HTTP DTO와 JPA Entity에 의존하지 않고 Repository 인터페이스로 저장 기능을 사용합니다.
+`api`만 실행 가능한 Spring Boot JAR을 만들고, `core`·`storage:db`·`storage:s3`·`storage:redis`는 라이브러리로 함께 실행합니다. `core`는 HTTP DTO와 JPA Entity에 의존하지 않고 Repository 인터페이스로 저장 기능을 사용합니다.
 
 | 모듈 | 역할·사용 이유 |
 | --- | --- |
@@ -94,6 +96,7 @@ flowchart LR
 | core | 도메인 모델·업무 규칙·Service·트랜잭션과 Repository 계약을 관리 |
 | storage:db | JPA·JDBC 저장 구현, Entity·Mapper와 Flyway 마이그레이션을 관리 |
 | storage:s3 | 이벤트·경품 이미지의 S3 저장과 AWS SDK 설정을 업무 규칙에서 분리 |
+| storage:redis | 요청 제한·응모 차단의 Redis 접근, 연결 풀과 Lua 실행을 HTTP 처리에서 분리 |
 
 ### 패키지 구조
 
@@ -130,7 +133,8 @@ getddo-be/
 │       │       ├── repository/                  # 조회·저장 인터페이스
 │       │       └── exception/                   # 도메인 오류 코드(ErrorCode 구현)
 │       └── test/                                # 도메인 규칙·Service 테스트
-├── storage/                                     # 영속성 모듈의 경로 구분
+├── storage/                                     # 저장소 구현 모듈의 경로 구분
+│   ├── redis/                                   # Redis 제한기·Lua·연결 풀 및 Redis 전용 테스트
 │   ├── s3/                                      # 이벤트·경품 이미지 S3 저장 어댑터
 │   │   ├── build.gradle                         # AWS SDK 의존성
 │   │   └── src/main/java/com/getddo/s3/event/    # S3 클라이언트 설정·저장 구현

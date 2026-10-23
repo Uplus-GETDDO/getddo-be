@@ -113,6 +113,27 @@ class CloudWatchMetricsConfigTest {
 		});
 	}
 
+	@ParameterizedTest
+	@ValueSource(strings = {"a", "c"})
+	@DisplayName("Stage 배포 환경변수로 시작하고 선택한 환경과 서버 차원을 사용한다")
+	void startsWithStagingDeploymentProperties(String server) {
+		// given
+		CloudWatchAsyncClient client = client();
+		// when / then
+		runner.withPropertyValues("GETDDO_METRICS_ENABLED=true", "GETDDO_METRICS_SERVER=" + server,
+			"GETDDO_METRICS_ENVIRONMENT=staging", "GETDDO_METRICS_NAMESPACE=GETDDO/API",
+			"GETDDO_METRICS_STEP=60s", "AWS_REGION=ap-northeast-2")
+			.withBean(CloudWatchAsyncClient.class, () -> client).run(context -> {
+				assertThat(context).hasNotFailed().hasSingleBean(CloudWatchMeterRegistry.class);
+				CloudWatchMeterRegistry registry = context.getBean(CloudWatchMeterRegistry.class);
+				Gauge gauge = Gauge.builder("hikaricp.connections.active", () -> 2)
+					.tags("pool", "getddo", "environment", "dev").register(registry);
+				assertThat(gauge.getId().getTag("environment")).isEqualTo("staging");
+				assertThat(gauge.getId().getTag("server")).isEqualTo(server);
+				verifyNoInteractions(client);
+			});
+	}
+
 	@Test
 	@DisplayName("publisher 시작 실패를 격리하고 예약 자원을 정리하며 종료 전송도 하지 않는다")
 	void publisherStartupFailureIsIsolated() {
@@ -189,11 +210,27 @@ class CloudWatchMetricsConfigTest {
 	}
 
 	@ParameterizedTest
-	@ValueSource(strings = {"getddo.metrics.environment=prod", "getddo.metrics.namespace=other", "getddo.metrics.step=1s"})
-	@DisplayName("합의된 namespace·환경·60초 간격을 벗어나는 설정을 거부한다")
+	@ValueSource(strings = {"getddo.metrics.namespace=other", "getddo.metrics.step=1s"})
+	@DisplayName("dev와 staging 모두 합의된 namespace·60초 간격을 벗어나는 설정을 거부한다")
 	void rejectsContractDrift(String property) {
 		// when / then
-		enabled(client()).withPropertyValues(property).run(context -> assertThat(context).hasFailed());
+		for (String environment : List.of("dev", "staging")) {
+			enabled(client()).withPropertyValues("GETDDO_METRICS_ENVIRONMENT=" + environment, property)
+				.run(context -> assertThat(context).hasFailed());
+		}
+	}
+
+	@ParameterizedTest
+	@ValueSource(strings = {"", "prod", "STAGING", "dev,staging"})
+	@DisplayName("dev와 staging 이외의 지표 환경은 시작 시 거부한다")
+	void rejectsUnsupportedEnvironment(String environment) {
+		// given
+		CloudWatchAsyncClient client = client();
+		// when / then
+		enabled(client).withPropertyValues("GETDDO_METRICS_ENVIRONMENT=" + environment).run(context -> {
+			assertThat(context).hasFailed().getFailure().hasRootCauseInstanceOf(IllegalArgumentException.class);
+			verify(client, never()).putMetricData(any(PutMetricDataRequest.class));
+		});
 	}
 
 	@Test
@@ -228,18 +265,20 @@ class CloudWatchMetricsConfigTest {
 		});
 	}
 
-	@Test
-	@DisplayName("CloudWatch 요청의 이름·전체 차원·단위·60초 전송 계약을 검증한다")
-	void exportedWireContract() {
+	@ParameterizedTest
+	@ValueSource(strings = {"dev", "staging"})
+	@DisplayName("CloudWatch 요청의 이름·선택한 환경의 전체 차원·단위·60초 전송 계약을 검증한다")
+	void exportedWireContract(String environment) {
 		// given
 		CloudWatchAsyncClient client = client();
-		enabled(client).run(context -> {
+		enabled(client).withPropertyValues("GETDDO_METRICS_ENVIRONMENT=" + environment).run(context -> {
 			CloudWatchMeterRegistry registry = context.getBean(CloudWatchMeterRegistry.class);
 			registry.stop();
 			MockClock clock = new MockClock();
 			// Step meter 생성 전 시계를 고정해 60초를 실제로 기다리지 않는다.
 			ReflectionTestUtils.setField(registry, "clock", clock);
-			Gauge.builder("hikaricp.connections.active", () -> 2).tag("pool", "getddo").register(registry);
+			Gauge.builder("hikaricp.connections.active", () -> 2)
+				.tags("pool", "getddo", "environment", "dev").register(registry);
 			Timer.builder("hikaricp.connections.acquire").tag("pool", "getddo").register(registry)
 				.record(20, TimeUnit.MILLISECONDS);
 			registry.counter("hikaricp.connections.timeout", "pool", "getddo").increment();
@@ -264,11 +303,11 @@ class CloudWatchMetricsConfigTest {
 				assertThat(datum.storageResolution()).isEqualTo(60);
 				if (datum.metricName().startsWith("jvm.gc.pause")) {
 					assertThat(datum.dimensions()).extracting(dimension -> dimension.name() + "=" + dimension.value())
-						.containsExactlyInAnyOrder("environment=dev", "server=a", "action=end of minor GC",
+						.containsExactlyInAnyOrder("environment=" + environment, "server=a", "action=end of minor GC",
 							"cause=Allocation Failure", "gc=G1 Young Generation");
 				} else {
 					assertThat(datum.dimensions()).extracting(dimension -> dimension.name() + "=" + dimension.value())
-						.containsExactlyInAnyOrder("environment=dev", "server=a", "pool=getddo");
+						.containsExactlyInAnyOrder("environment=" + environment, "server=a", "pool=getddo");
 				}
 			});
 			assertThat(request.metricData()).filteredOn(datum -> datum.metricName().endsWith("acquire.sum"))

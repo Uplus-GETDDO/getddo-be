@@ -6,6 +6,8 @@ import java.util.Map;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
+import com.getddo.core.common.ratelimit.RateLimitPolicy;
+
 /**
  * {@code getddo.rate-limit} 설정을 바인딩하는 불변 설정 객체다.
  *
@@ -36,10 +38,12 @@ public record RateLimitProperties(
 			Integer scopedLimit) {
 
 		public Policy {
-			if (limit < 1 || window == null || window.isNegative() || window.isZero()
-					|| (scopedLimit != null && scopedLimit < 1)) {
-				throw new IllegalArgumentException("빈도 제한 정책은 한도 1 이상, 창 0보다 큼이어야 한다.");
-			}
+			new RateLimitPolicy(limit, window, scopedLimit);
+		}
+
+		/** 설정 값을 저장소와 공유하는 순수 정책으로 변환한다. */
+		public RateLimitPolicy toDomain() {
+			return new RateLimitPolicy(limit, window, scopedLimit);
 		}
 	}
 }

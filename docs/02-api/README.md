@@ -24,6 +24,8 @@ GD-226의 관리자 목록 정렬·가중치·등록일 필터와 사용자 목�
 
 GD-146의 요청 빈도 제한(429)과 한도 설정은 [요청 빈도 제한](rate-limit.md)에 정리합니다.
 
+GD-144의 응모 자동 일시 차단·Redis 저장 대기 등록은 [응모 자동 차단 구현과 GD-291 인계](entry-auto-blocking.md)에 정리합니다.
+
 GD-156의 색깔 게임 시작 처리·저장 정보·테스트 및 연동 준비는 [게임 시작 구현](game-play-start.md)에 정리합니다.
 
 GD-155의 활성 게임 목록·상세 공개 규칙과 조회 오류·테스트는 [게임 조회 구현](game-query.md)에 정리합니다.
@@ -85,4 +87,4 @@ GD-209의 배너 구현·FE 연결·검증 상태는 [배너 안내](banners.md)
 
 GD-227의 이벤트·경품 이미지 업로드 API, 5MB 제한과 S3Mock 실행 방법은 [이벤트 이미지 업로드](event-images.md)에 정리합니다.
 
-GD-142의 AR01 차단 이력 목록은 기존 사용자 문맥·ResponseEnvelope·PageResult를 재사용합니다. `AbuseCaseQueryService`가 활성 관리자 권한을 먼저 확인하고, 저장소에서 사용자 닉네임·선택 이벤트 제목을 조인합니다. 공개 계약은 [SPEC 어뷰징 API](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/05-api/abuse.md), 신규 DB 전환·시드와 미실행 검증은 [차단 이력 전환 절차](../06-runbook/entry-abuse-migration.md)를 따릅니다. GD-143은 같은 기반으로 AR02 상세와 허용 evidence 변환을 연결합니다. 구현 경계는 [관리자 차단 이력 조회](abuse-cases.md)를 참고합니다. Redis 차단·저장 작업자는 후속입니다.
+GD-142의 AR01 차단 이력 목록은 기존 사용자 문맥·ResponseEnvelope·PageResult를 재사용합니다. `AbuseCaseQueryService`가 활성 관리자 권한을 먼저 확인하고, 저장소에서 사용자 닉네임·선택 이벤트 제목을 조인합니다. 공개 계약은 [SPEC 어뷰징 API](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/05-api/abuse.md), 신규 DB 전환·시드와 미실행 검증은 [차단 이력 전환 절차](../06-runbook/entry-abuse-migration.md)를 따릅니다. GD-143은 같은 기반으로 AR02 상세와 허용 evidence 변환을 연결합니다. 구현 경계는 [관리자 차단 이력 조회](abuse-cases.md)를 참고합니다. Redis 차단·저장 대기 등록은 GD-144에서 구현했고, DB 저장 작업자는 GD-291 후속입니다.
