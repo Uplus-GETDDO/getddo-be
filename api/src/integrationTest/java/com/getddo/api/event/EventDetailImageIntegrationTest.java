@@ -96,6 +96,14 @@ class EventDetailImageIntegrationTest {
 				Long.class, bytes(event))).isEqualTo(1);
 		modify(null);
 		assertThat(storedKey()).isNull();
+		mvc.perform(get("/api/v1/events/" + event).header("X-User-ID", user)
+				.header("X-User-Role", "USER").header("X-User-Membership", "vip"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.detailImageUrl").value(nullValue()));
+		mvc.perform(get("/api/v1/admin/events/" + event).header("X-User-ID", admin).header("X-User-Role", "ADMIN"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.detailImageKey").value(nullValue()))
+				.andExpect(jsonPath("$.data.detailImageUrl").value(nullValue()));
 		assertThat(jdbc.queryForObject("select image_key from events where id=?", String.class, bytes(event)))
 				.isEqualTo("events/thumbnail.png");
 		assertThat(jdbc.queryForObject("select count(*) from notification_jobs where event_id=?", Long.class, bytes(event)))
