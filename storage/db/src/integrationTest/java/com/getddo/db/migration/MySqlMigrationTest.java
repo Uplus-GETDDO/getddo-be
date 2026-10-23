@@ -67,6 +67,17 @@ class MySqlMigrationTest {
 		assertThat(flyway.info().pending()).isEmpty();
 		assertThat(indexColumns("award_cancellations", "uq_award_cancellations_request", 0)).containsExactly("request_key");
 		flyway.validate();
+		try (Connection connection = connect();
+				ResultSet rows = connection.createStatement().executeQuery("""
+						select column_type, is_nullable, column_default, column_comment from information_schema.columns
+						where table_schema=database() and table_name='events' and column_name='detail_image_key'
+						""")) {
+			assertThat(rows.next()).isTrue();
+			assertThat(rows.getString("column_type")).isEqualTo("varchar(500)");
+			assertThat(rows.getString("is_nullable")).isEqualTo("YES");
+			assertThat(rows.getObject("column_default")).isNull();
+			assertThat(rows.getString("column_comment")).isEqualTo("이벤트 상세 설명 이미지의 S3 저장 키");
+		}
 		assertNullableDeletedAtColumn("events");
 		assertThat(indexColumns("events", "idx_events_list", 1))
 				.containsExactly("deleted_at", "created_at", "id");

@@ -28,6 +28,8 @@ public record AdminEventResponse(
 		Integer maxTicketsPerUser,
 		List<PrizeResponse> prizes,
 		String imageKey,
+		String detailImageKey,
+		String detailImageUrl,
 		Instant createdAt,
 		Instant updatedAt,
 		Instant canceledAt,
@@ -55,7 +57,7 @@ public record AdminEventResponse(
 				event.getMembershipRule(), event.getStartsAt(), event.getEndsAt(), event.getStatus(),
 				event.getDrawScheduledAt(), serverTime,
 				event.getDescription(), event.getMaxTicketsPerUser(), event.getPrizes().stream().map(prize -> PrizeResponse.from(prize, imageUrls)).toList(),
-				event.getImageKey(), event.getCreatedAt(), event.getUpdatedAt(),
+				event.getImageKey(), event.getDetailImageKey(), imageUrls.apply(event.getDetailImageKey()), event.getCreatedAt(), event.getUpdatedAt(),
 				canceledAt, event.getPrizes().stream().map(PrizeImage::from).toList());
 	}
 

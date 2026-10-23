@@ -171,7 +171,7 @@ class EventModificationServiceTest {
 	@DisplayName("중복 경품 ID는 등수가 서로 달라도 거절한다")
 	void rejectsDuplicatePrizeIds() {
 		// given
-		EventRegistration input = new EventRegistration(ADMIN, "변경", "설명", null, EventType.NO_TICKET, false,
+		EventRegistration input = new EventRegistration(ADMIN, "변경", "설명", null, null, EventType.NO_TICKET, false,
 				null, MembershipRule.vip, START, START.plusSeconds(3600), List.of(
 					new EventRegistration.Prize(PRIZE, 1, "경품", null, null, 1),
 					new EventRegistration.Prize(PRIZE, 2, "경품", null, null, 1)));
@@ -204,12 +204,12 @@ class EventModificationServiceTest {
 	}
 
 	private EventRegistration settings(Instant start, String title, UUID prizeId) {
-		return new EventRegistration(ADMIN, title, "설명", null, EventType.NO_TICKET, false, null, MembershipRule.vip,
+		return new EventRegistration(ADMIN, title, "설명", null, null, EventType.NO_TICKET, false, null, MembershipRule.vip,
 				start, START.plusSeconds(3600), List.of(new EventRegistration.Prize(prizeId, 1, "경품", null, null, 1)));
 	}
 
 	private RegisteredEvent saved(EventStatus status, Instant start, String title) {
-		return new RegisteredEvent(EVENT, title, "설명", null, EventType.NO_TICKET, false, null, MembershipRule.vip,
+		return new RegisteredEvent(EVENT, title, "설명", null, null, EventType.NO_TICKET, false, null, MembershipRule.vip,
 				start, START.plusSeconds(3600), status, NOW, NOW,
 				List.of(new RegisteredEvent.Prize(PRIZE, 1, "경품", null, null, 1)));
 	}

@@ -279,7 +279,7 @@ class EventLifecycleAndAuditIntegrationTest {
 	}
 
 	private RegisteredEvent register() {
-		RegisteredEvent result = registrations.register(new EventRegistration(admin, "등록", "설명", "events/" + admin,
+		RegisteredEvent result = registrations.register(new EventRegistration(admin, "등록", "설명", "events/" + admin, null,
 				EventType.NO_TICKET, false, null, MembershipRule.vip, NOW.plusSeconds(3600), NOW.plusSeconds(7200),
 				List.of(new EventRegistration.Prize(1, "등록 경품", null, null, 1))));
 		eventIds.add(result.getId());
@@ -287,7 +287,7 @@ class EventLifecycleAndAuditIntegrationTest {
 	}
 
 	private EventRegistration modification(RegisteredEvent event, String title, Instant startsAt) {
-		return new EventRegistration(admin, title, "변경 설명", event.getImageKey(), EventType.NO_TICKET, false, null,
+		return new EventRegistration(admin, title, "변경 설명", event.getImageKey(), event.getDetailImageKey(), EventType.NO_TICKET, false, null,
 				MembershipRule.vip, startsAt, event.getEndsAt(), event.getPrizes().stream().map(prize ->
 						new EventRegistration.Prize(prize.getId(), prize.getRank(), title + " 경품", null, null, 1)).toList());
 	}

@@ -912,6 +912,7 @@ Table events {
   title varchar(200) [not null, note: '이벤트 제목']
   description text [not null, note: '상세 설명']
   image_key varchar(500) [note: '이미지 저장소 경로']
+  detail_image_key varchar(500) [default: null, note: '이벤트 상세 설명 이미지의 S3 저장 키']
   event_type events_event_type_enum [not null, note: 'NO_TICKET=응모권 미사용 / TICKET=응모권 사용']
   weighting_enabled boolean [not null, default: 0, note: '추첨 가중치 적용 여부']
   max_tickets_per_user int [note: '사용자별 이벤트 누적 상한']

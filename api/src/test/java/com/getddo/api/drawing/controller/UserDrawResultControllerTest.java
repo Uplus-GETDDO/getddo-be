@@ -55,7 +55,7 @@ class UserDrawResultControllerTest {
 	@BeforeEach
 	void setUp() {
 		EventQueryRepository events = mock(EventQueryRepository.class);
-		RegisteredEvent event = new RegisteredEvent(eventId, "이벤트", "설명", null, EventType.NO_TICKET, false,
+		RegisteredEvent event = new RegisteredEvent(eventId, "이벤트", "설명", null, null, EventType.NO_TICKET, false,
 				null, MembershipRule.vip, NOW.minusSeconds(3600), NOW, EventStatus.DRAW_CONFIRMED, NOW, NOW,
 				List.of(new RegisteredEvent.Prize(prizeId, 1, "경품", null, null, 2),
 						new RegisteredEvent.Prize(thirdPrizeId, 3, "3등 경품", null, null, 1)));
