@@ -1,5 +1,6 @@
 package com.getddo.api.drawing.controller;
 
+import java.util.Map;
 import java.util.UUID;
 
 import jakarta.validation.constraints.Max;
@@ -21,6 +22,10 @@ import com.getddo.api.drawing.dto.DrawPublicationResponse;
 import com.getddo.api.drawing.dto.DrawResultConfirmationResponse;
 import com.getddo.core.common.pagination.PageQuery;
 import com.getddo.core.common.pagination.PageResult;
+import com.getddo.core.drawing.domain.DrawPublication;
+import com.getddo.core.drawing.domain.DrawPublicationChange;
+import com.getddo.core.drawing.domain.DrawPublicationConfirmation;
+import com.getddo.core.drawing.service.DrawAdminNameService;
 import com.getddo.core.drawing.service.DrawPublicationQueryService;
 import com.getddo.core.drawing.service.DrawResultConfirmationService;
 import com.getddo.core.user.domain.User;
@@ -30,6 +35,7 @@ import com.getddo.core.user.domain.User;
 @RequestMapping("/api/v1/admin")
 @RequiredArgsConstructor
 public class AdminDrawPublicationController {
+	private final DrawAdminNameService names;
 	private final DrawResultConfirmationService confirmations;
 	private final DrawPublicationQueryService queries;
 
@@ -37,16 +43,18 @@ public class AdminDrawPublicationController {
 	@PostMapping("/draws/{runId}/publication")
 	public ResponseEnvelope<DrawPublicationResponse> publish(@PathVariable UUID runId,
 			@CurrentUser(membershipRequired = false) User actor) {
-		return ResponseEnvelope.success(DrawPublicationResponse.from(confirmations.confirmForPublication(runId,
-				actor.getId())));
+		DrawPublication publication = confirmations.confirmForPublication(runId, actor.getId());
+		return ResponseEnvelope.success(DrawPublicationResponse.from(publication,
+				names.forActor(publication.getConfirmedBy())));
 	}
 
 	/** 검토한 최신 최초·재추첨 실행으로 최종 명단을 한 번에 확인·발표한다. */
 	@PostMapping("/draws/{runId}/result-confirmation")
 	public ResponseEnvelope<DrawResultConfirmationResponse> confirm(@PathVariable UUID runId,
 			@CurrentUser(membershipRequired = false) User actor) {
-		return ResponseEnvelope.success(DrawResultConfirmationResponse.from(confirmations.confirmBeforeInitial(runId,
-				actor.getId())));
+		DrawPublicationConfirmation result = confirmations.confirmBeforeInitial(runId, actor.getId());
+		return ResponseEnvelope.success(DrawResultConfirmationResponse.from(result,
+				names.forActor(result.getConfirmation().getConfirmedBy())));
 	}
 
 	/** 실제 공개 버전 간 변경 이력을 페이지 응답으로 변환한다. */
@@ -55,7 +63,8 @@ public class AdminDrawPublicationController {
 			@CurrentUser(membershipRequired = false) User actor,
 			@RequestParam(defaultValue = "1") @Min(1) int page,
 			@RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
-		return ResponseEnvelope.success(queries.changes(eventId, actor.getId(), new PageQuery(page, size))
-				.map(DrawPublicationChangeResponse::from));
+		PageResult<DrawPublicationChange> result = queries.changes(eventId, actor.getId(), new PageQuery(page, size));
+		Map<UUID, String> currentNames = names.forChanges(result.getItems());
+		return ResponseEnvelope.success(result.map(change -> DrawPublicationChangeResponse.from(change, currentNames)));
 	}
 }

@@ -1,7 +1,9 @@
 package com.getddo.core.mission.service;
 
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -21,9 +23,11 @@ import com.getddo.core.mission.exception.MissionErrorCode;
 import com.getddo.core.mission.exception.MissionException;
 import com.getddo.core.mission.repository.MissionRepository;
 import com.getddo.core.mission.repository.MissionRewardPolicyRepository;
+import com.getddo.core.user.domain.NamedValue;
 import com.getddo.core.user.domain.User;
 import com.getddo.core.user.domain.UserRole;
 import com.getddo.core.user.domain.UserStatus;
+import com.getddo.core.user.repository.UserNameRepository;
 
 /**
  * 관리자 미션 조회(AM01·AM02)와 등록(AM03). 활성 관리자만 호출할 수 있다.
@@ -43,16 +47,20 @@ public class AdminMissionService {
 	private final MissionRepository missionRepository;
 	private final MissionRewardPolicyRepository rewardPolicies;
 	private final AuditLogService auditLogs;
+	private final UserNameRepository userNames;
 
 	/**
-	 * 미션 목록을 운영 시작 시각 최신순으로 조회한다. 문항은 담지 않는다.
+	 * 미션 목록을 운영 시작 시각 최신순으로 조회한다. 문항은 담지 않는다. 작성자의 현재 이름을 함께 돌려준다.
 	 *
 	 * @throws MissionException 관리자가 아닌 경우({@code MISSION-006})
 	 */
 	@Transactional(readOnly = true)
-	public PageResult<Mission> findMissions(User admin, MissionSearch search, PageQuery page) {
+	public PageResult<NamedValue<Mission>> findMissions(User admin, MissionSearch search, PageQuery page) {
 		requireActiveAdmin(admin);
-		return missionRepository.search(search, page);
+		PageResult<Mission> found = missionRepository.search(search, page);
+		Map<UUID, String> names = userNames.findNamesByIds(
+				found.getItems().stream().map(Mission::getCreatedBy).collect(Collectors.toSet()));
+		return found.map(mission -> new NamedValue<>(mission, names.get(mission.getCreatedBy())));
 	}
 
 	/**
@@ -61,10 +69,12 @@ public class AdminMissionService {
 	 * @throws MissionException 관리자가 아니거나({@code MISSION-006}) 미션이 없는 경우({@code MISSION-003})
 	 */
 	@Transactional(readOnly = true)
-	public MissionDetail findMission(User admin, UUID missionId) {
+	public NamedValue<MissionDetail> findMission(User admin, UUID missionId) {
 		requireActiveAdmin(admin);
-		return missionRepository.findDetailById(missionId)
+		MissionDetail detail = missionRepository.findDetailById(missionId)
 				.orElseThrow(() -> new MissionException(MissionErrorCode.MISSION_NOT_FOUND));
+		UUID createdBy = detail.getMission().getCreatedBy();
+		return new NamedValue<>(detail, userNames.findNamesByIds(Set.of(createdBy)).get(createdBy));
 	}
 
 	/**
@@ -74,7 +84,7 @@ public class AdminMissionService {
 	 *         문항의 선택지가 2개 미만이거나 정답이 정확히 하나가 아닌 경우({@code MISSION-001})
 	 */
 	@Transactional
-	public MissionDetail register(User admin, MissionRegistration registration) {
+	public NamedValue<MissionDetail> register(User admin, MissionRegistration registration) {
 		requireActiveAdmin(admin);
 		requireAnswerableQuiz(registration);
 		UUID policyId = rewardPolicies.createFixedPolicy(admin.getId(), registration.getStartsAt());
@@ -89,7 +99,8 @@ public class AdminMissionService {
 						"startsAt", registration.getStartsAt().toString(),
 						"endsAt", registration.getEndsAt().toString()),
 				null));
-		return saved;
+		// 방금 등록한 미션의 작성자는 요청한 관리자 본인이다.
+		return new NamedValue<>(saved, admin.getName());
 	}
 
 	/** 선택형 퀴즈 문항은 사용자가 정답을 고를 수 있어야 한다. 정답이 없거나 둘 이상이면 거절한다. */

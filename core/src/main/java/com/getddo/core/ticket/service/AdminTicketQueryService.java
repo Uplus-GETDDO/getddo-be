@@ -1,6 +1,7 @@
 package com.getddo.core.ticket.service;
 
 import java.time.Instant;
+import java.util.Set;
 import java.util.UUID;
 
 import lombok.RequiredArgsConstructor;
@@ -27,6 +28,7 @@ import com.getddo.core.ticket.repository.TicketQueryRepository;
 import com.getddo.core.user.domain.User;
 import com.getddo.core.user.domain.UserRole;
 import com.getddo.core.user.domain.UserStatus;
+import com.getddo.core.user.repository.UserNameRepository;
 
 /**
  * 관리자의 응모권 지급(AO03)·처리(AO05)·반환(AO08) 이력과 정합성(AO04·AO09) 조회. 읽기 전용이며 감사 기록 대상이 아니다.
@@ -40,6 +42,7 @@ public class AdminTicketQueryService {
 	private final AdminTicketQueryRepository repository;
 	private final TicketQueryRepository queryRepository;
 	private final TimeProvider timeProvider;
+	private final UserNameRepository userNames;
 
 	/**
 	 * 응모권 지급 이력의 한 페이지를 조회한다.
@@ -88,7 +91,9 @@ public class AdminTicketQueryService {
 		}
 		Instant checkedAt = timeProvider.now();
 		long available = MyTickets.of(queryRepository.findHoldings(userId, checkedAt), checkedAt).getAvailableCount();
-		return new TicketConsistencyResult(userId, available, repository.findInconsistenciesOf(userId), checkedAt);
+		String userName = userNames.findNamesByIds(Set.of(userId)).get(userId);
+		return new TicketConsistencyResult(userId, userName, available, repository.findInconsistenciesOf(userId),
+				checkedAt);
 	}
 
 	/**

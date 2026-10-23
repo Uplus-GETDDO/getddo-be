@@ -4,6 +4,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -18,6 +19,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,9 +28,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -54,7 +60,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
-import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.doAnswer;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -62,6 +67,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @ApiIntegrationTest
+@Import(AdminEventDeletionTest.DeletionClockConfiguration.class)
+@TestPropertySource(properties = "getddo.drawing.retry-worker.enabled=false")
 class AdminEventDeletionTest {
 	private static final Instant NOW = Instant.parse("2026-10-13T00:00:00Z");
 	private static final Instant START = NOW.plusSeconds(3600);
@@ -72,7 +79,7 @@ class AdminEventDeletionTest {
 	@Autowired private PlatformTransactionManager transactions;
 	@Autowired private NotificationJobService jobs;
 	@Autowired private NotificationJobRepository jobRepository;
-	@MockitoBean private Clock clock;
+	@Autowired private DeletionClock clock;
 	@MockitoSpyBean private EventChangeNotificationService notifications;
 	@MockitoSpyBean private AuditLogRepository auditLogRepository;
 	private UUID admin;
@@ -84,8 +91,7 @@ class AdminEventDeletionTest {
 
 	@BeforeEach
 	void setUp() {
-		when(clock.instant()).thenReturn(NOW);
-		when(clock.getZone()).thenReturn(ZoneOffset.UTC);
+		clock.setInstant(NOW);
 		admin = user("ADMIN");
 		user = user("USER");
 		event = UUID.randomUUID();
@@ -159,7 +165,7 @@ class AdminEventDeletionTest {
 	void repeatedDeletionDoesNotChangeDeletionTime() throws Exception {
 		// given
 		remove(admin, "ADMIN").andExpect(status().isOk());
-		when(clock.instant()).thenReturn(NOW.plusSeconds(10));
+		clock.setInstant(NOW.plusSeconds(10));
 		// when / then
 		remove(admin, "ADMIN").andExpect(status().isNotFound())
 				.andExpect(jsonPath("$.code").value("EVENT-007"));
@@ -448,6 +454,46 @@ class AdminEventDeletionTest {
 	private long auditCount() {
 		return jdbc.queryForObject("select count(*) from audit_logs where target_type='EVENT' and target_id=?",
 				Long.class, bytes(event));
+	}
+
+	/** 초기화 때부터 유효한 시계를 제공해 mock 응답 설정과 다른 스레드의 조회가 경합하지 않게 한다. */
+	@TestConfiguration(proxyBeanMethods = false)
+	static class DeletionClockConfiguration {
+		@Bean
+		@Primary
+		DeletionClock deletionClock() {
+			return new DeletionClock(new AtomicReference<>(NOW), ZoneOffset.UTC);
+		}
+	}
+
+	/** 삭제 재요청의 시각 이동을 지원하고 동시 삭제·알림 생성 스레드가 같은 순간을 읽는 테스트 전용 시계다. */
+	static final class DeletionClock extends Clock {
+		private final AtomicReference<Instant> current;
+		private final ZoneId zone;
+
+		private DeletionClock(AtomicReference<Instant> current, ZoneId zone) {
+			this.current = current;
+			this.zone = zone;
+		}
+
+		void setInstant(Instant instant) {
+			current.set(java.util.Objects.requireNonNull(instant));
+		}
+
+		@Override
+		public ZoneId getZone() {
+			return zone;
+		}
+
+		@Override
+		public Clock withZone(ZoneId requestedZone) {
+			return new DeletionClock(current, java.util.Objects.requireNonNull(requestedZone));
+		}
+
+		@Override
+		public Instant instant() {
+			return current.get();
+		}
 	}
 
 	private byte[] bytes(UUID id) { return UuidBinary.toBytes(id); }

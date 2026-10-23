@@ -58,3 +58,11 @@ Java 21로 core·storage:db·api 컴파일과 관련 단위·API 테스트 44건
 최신 dev 병합 후 검증은 별도 결과로 기록한다. 병합 전 CodeRabbit 수정의 전체 단위 471건 성공과 병합 뒤 결과를 혼동하지 않는다. Docker 기반 통합과 전체 build는 사용자 지시에 따라 로컬에서 수행하지 않는다.
 
 GD-137 User 접근자 수정 후 관련 테스트 실행은 dev의 `NotificationAdminService` 접근자 오류 5건으로 `core:compileJava`에서 실패했다. 테스트는 시작되지 않았고 최신 병합 버전의 통과 건수는 없다. 해당 파일은 사용자 결정에 따라 GD-72 담당 수정으로 남기며 GD-137에서 변경하지 않는다. 이전 병합 전 471건 성공을 최신 코드의 성공으로 표시하지 않는다.
+
+## GD-314: 실행 감사 표시 계약과 공개 오류 문구
+
+공용 원본은 [관리자 실행 감사 표시 계약](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/05-api/drawing.md#실행-감사-표시-계약--gd-314)이다. 이번 백엔드 변경은 감사 저장·조회 코드와 응답 필드를 바꾸지 않는다. 프론트 표시 변경은 계약 반영 후 별도 적용이 필요하다.
+
+현재 `DrawExecutionControlService.claim`은 `DRAW_RUN` 대상에 `DRAW_EXECUTE` 또는 `DRAW_RESUME`을 기록한다. `beforeData`에는 시작 직전 `status`, `afterData`에는 새 시도의 `attemptId`를 담는다. `afterData`는 처리 후 성공·실패 상태가 아니다. 실제 사유 `reason`과 두 문자열 필드는 서로 독립적이다. 시스템 행위자의 ID·이름은 null일 수 있다. JSON을 화면에서 숨기는 결정은 저장 이력이나 API 필드를 삭제하는 결정이 아니다.
+
+`DrawPublicationErrorCode.NOT_CONFIRMABLE`의 `PUBLICATION-002` 메시지를 최초·재추첨 공통 문구로 정렬했다. HTTP 409·오류 코드와 기존 거절 조건은 유지한다. API 테스트에서 `publication`과 `result-confirmation` 두 경로의 코드·메시지를 함께 확인한다. 이 변경은 병합·배포 전까지 현재 배포 응답이 변경됐다는 뜻이 아니다.

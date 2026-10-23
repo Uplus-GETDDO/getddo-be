@@ -4,6 +4,7 @@ build/
 .env
 .env.*
 !.env.example
+app.env
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/

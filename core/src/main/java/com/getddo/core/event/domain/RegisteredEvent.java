@@ -13,12 +13,13 @@ import lombok.RequiredArgsConstructor;
 @Getter
 @EqualsAndHashCode
 public final class RegisteredEvent {
-	private static final Duration DRAW_DELAY = Duration.ofMinutes(5);
+	private static final Duration DRAW_DELAY = Duration.ofMinutes(1);
 
 	private final UUID id;
 	private final String title;
 	private final String description;
 	private final String imageKey;
+	private final String detailImageKey;
 	private final EventType eventType;
 	private final boolean weightingEnabled;
 	private final Integer maxTicketsPerUser;
@@ -34,6 +35,7 @@ public final class RegisteredEvent {
 			String title,
 			String description,
 			String imageKey,
+			String detailImageKey,
 			EventType eventType,
 			boolean weightingEnabled,
 			Integer maxTicketsPerUser,
@@ -48,6 +50,7 @@ public final class RegisteredEvent {
 		this.title = title;
 		this.description = description;
 		this.imageKey = imageKey;
+		this.detailImageKey = detailImageKey;
 		this.eventType = eventType;
 		this.weightingEnabled = weightingEnabled;
 		this.maxTicketsPerUser = maxTicketsPerUser;
@@ -60,7 +63,7 @@ public final class RegisteredEvent {
 		this.prizes = List.copyOf(prizes);
 	}
 
-	/** 마감 5분 후의 최초 자동 추첨 기준이다. 실제 실행·관리자 확인·수동 공개 시각은 별도다. */
+	/** 마감 1분 후의 최초 자동 추첨 기준이다. 실제 실행·관리자 확인·수동 공개 시각은 별도다. */
 	public Instant getDrawScheduledAt() {
 		return endsAt.plus(DRAW_DELAY);
 	}

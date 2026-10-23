@@ -84,6 +84,13 @@ public final class GamePlay {
 		return rulesSnapshot != null && playTokenHash != null && generatorVersion != null && generationSeed != null;
 	}
 
+	/** 호출자가 지원하는 버전과 unsigned 32-bit seed를 함께 확인한다. 과거 행은 검증 대상으로 쓰지 않는다. */
+	public boolean hasVerificationContext(String expectedRuleVersion, String expectedGeneratorVersion) {
+		return hasVerificationContext() && ruleVersion.equals(expectedRuleVersion)
+				&& generatorVersion.equals(expectedGeneratorVersion)
+				&& generationSeed >= 1 && generationSeed <= 0xffff_ffffL;
+	}
+
 	public boolean isCompleted() {
 		return completedAt != null;
 	}

@@ -1,6 +1,7 @@
 package com.getddo.api.drawing.dto.response;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import com.getddo.core.drawing.domain.DrawInspectionView;
@@ -16,7 +17,7 @@ public record DrawRulesResponse(int version, boolean weightingEnabled, String ev
 		retainedAwards = List.copyOf(retainedAwards);
 	}
 	/** 저장된 추첨 조건를 API 응답으로 변환한다. */
-	public static DrawRulesResponse from(DrawInspectionView.Run run) {
+	public static DrawRulesResponse from(DrawInspectionView.Run run, Map<UUID, String> names) {
 		DrawSnapshot.Rules rules = run.getRules();
 		DrawReplacementRulesView replacement = run.getReplacementRules();
 		return rules == null ? null : new DrawRulesResponse(rules.version(), rules.weightingEnabled(),
@@ -27,13 +28,14 @@ public record DrawRulesResponse(int version, boolean weightingEnabled, String ev
 				replacement == null ? List.of() : replacement.getTargetSlots().stream()
 				.map(slot -> new Slot(slot.getPrizeId(), slot.getRank(), slot.getSlotNumber())).toList(),
 				replacement == null ? List.of() : replacement.getRetainedAwards().stream()
-				.map(award -> new RetainedAward(award.getResultId(), award.getUserId(), award.getPrizeId(),
+				.map(award -> new RetainedAward(award.getResultId(), award.getUserId(),
+				award.getUserId() == null ? null : names.get(award.getUserId()), award.getPrizeId(),
 				award.getSlotNumber())).toList());
 	}
 	public record Prize(UUID id, int rank, int winnerCount) {
 	}
 	public record Slot(UUID prizeId, int rank, int slotNumber) {
 	}
-	public record RetainedAward(UUID resultId, UUID userId, UUID prizeId, int slotNumber) {
+	public record RetainedAward(UUID resultId, UUID userId, String userName, UUID prizeId, int slotNumber) {
 	}
 }

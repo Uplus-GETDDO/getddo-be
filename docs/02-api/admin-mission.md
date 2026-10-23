@@ -20,6 +20,7 @@
 - **초안(DRAFT) 상태 없음**: DB는 `ACTIVE`/`ENDED`만 저장하고 `Mission.register`도 등록한 미션을 바로 `ACTIVE`로 만든다. `AdminMission.status`는 `ACTIVE`/`ENDED`뿐이다. 사용자가 제출할 수 있는 기간은 `startsAt`·`endsAt`이 정한다. 시작 전 초안 수정·공개·삭제는 제공하지 않는다.
 - **`rewardTicketCount`는 항상 1**: 미션 완료 보상은 등급 응모권 1장으로 고정이다. 요청에서는 생략하거나 1만 보낼 수 있고, 다른 값은 400 `MISSION-001`이다. 응답의 값은 항상 1이다. 미션마다 수량 1의 보상 정책(`reward_policies`, `MISSION`, 등급 비움)을 함께 만들어 `rewardPolicyId`로 연결한다.
 - **목록은 문항을 담지 않는다**: AM01의 `AdminMission`에는 `questions`가 없다. 문항은 AM02·AM03 응답에만 있다.
+- **작성자 이름**: AM01·AM02·AM03 응답은 `createdBy`와 함께 작성자의 현재 이름 `createdByName`을 담는다(ADR-028). 요청 시점에 읽고 저장하지 않으며, 목록은 작성자를 모아 한 번에 읽는다. AM03 응답의 값은 요청한 관리자 본인의 이름이다.
 - 퀴즈 문항에는 `required`가 없고(퀴즈는 모든 문항을 맞혀야 완료), 설문 문항에는 `correctAnswer`와 선택지의 `isCorrect`가 없다.
 
 ## 등록 검증 (AM03)
@@ -35,10 +36,11 @@
 
 - 보상 정책 → 미션 → 퀴즈/설문 문항 → 선택지 순으로 같은 트랜잭션에서 저장하고, 중간에 실패하면 모두 취소한다. 모든 ID는 서버가 만든다.
 - 운영 중인 미션의 문항·조건·보상은 수정하지 않으므로 수정 경로를 두지 않았다. 변경은 새 미션으로 등록한다.
-- 현재 미션을 `ENDED`로 바꾸는 경로는 없다(저장된 `status`는 등록 때 `ACTIVE`로 남는다). 사용자 목록(M01)도 상태가 아니라 기간으로 진행 여부를 판단하므로 같은 방식이다.
+- 운영 종료 시각(`endsAt`)이 지난 미션은 워커가 저장 상태를 `ENDED`로 바꾼다([런북](../06-runbook/mission-end-worker.md)). 종료 시각 정각부터 종료로 보며 수정 시각(`updatedAt`)도 그때 갱신한다. 워커가 늦어도 제출은 서버가 받은 시각과 운영 기간으로 판단하므로 지난 미션은 제출을 받지 않고, 관리자 목록·상세의 `status`와 `status` 필터만 최대 폴링 간격(기본 60초)만큼 늦게 맞는다. 사용자 목록(M01)은 상태가 아니라 기간으로 진행 여부를 판단하므로 영향이 없다.
 
 ## 검증
 
-- 단위: `AdminMissionServiceTest`(권한, 보상 정책 연결, 정답 규칙, 기간), `AdminMissionControllerTest`(응답 필드, 필터, 요청 검증, 오류 코드).
-- 작업 중 로컬 MySQL로 등록→상세 조회→기간 필터 조회→보상 정책·감사 기록 저장을 한 번 확인했고 그 테스트는 저장소에 남기지 않았다. 통합 테스트는 이번 작업에 포함하지 않았다.
+- 단위: `AdminMissionServiceTest`(권한, 보상 정책 연결, 정답 규칙, 기간), `AdminMissionControllerTest`(응답 필드, 필터, 요청 검증, 오류 코드), `MissionEndServiceTest`·`MissionEndWorkerTest`(종료 처리 요청과 실패 격리).
+- 통합: `AdminMissionNamesIntegrationTest`가 목록·상세의 `createdByName`이 `users.name`과 같고 이름을 바꾸면 다음 조회에 반영되는지, 사용자 이름 일괄 조회가 없는 ID를 담지 않고 빈 입력에 빈 결과를 주는지를 실제 MySQL로 확인한다. `MissionRepositoryIntegrationTest`가 종료 시각이 지났거나 정각인 미션만 `ENDED`로 바꾸고 다시 실행하면 바꾸는 것이 없는지를 실제 MySQL로 확인한다.
+- 작업 중 로컬 MySQL로 등록→상세 조회→기간 필터 조회→보상 정책·감사 기록 저장을 한 번 확인했고 그 테스트는 저장소에 남기지 않았다. 등록·조회(GD-177) 작업에는 통합 테스트를 포함하지 않았고, 종료 워커(GD-269)의 통합 테스트는 위 항목이다.
 - 기존 통합 테스트 컨텍스트(`TicketIntegrationTestApplication`)가 미션 서비스를 함께 올리므로 새 서비스가 쓰는 감사 로그 빈을 그 컨텍스트에 추가했다.

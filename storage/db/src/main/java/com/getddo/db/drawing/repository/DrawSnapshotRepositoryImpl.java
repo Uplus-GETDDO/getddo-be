@@ -9,6 +9,7 @@ import jakarta.persistence.EntityManager;
 
 import lombok.RequiredArgsConstructor;
 
+import org.hibernate.Session;
 import org.springframework.stereotype.Repository;
 
 import com.getddo.core.common.exception.BusinessException;
@@ -28,6 +29,8 @@ import static com.getddo.core.drawing.exception.DrawingErrorCode.INVALID_RUN;
 @Repository
 @RequiredArgsConstructor
 public class DrawSnapshotRepositoryImpl implements DrawSnapshotRepository {
+	private static final int SNAPSHOT_BATCH_SIZE = 100;
+
 	private final DrawSnapshotSourceReader source;
 	private final DrawRunJpaRepository runs;
 	private final DrawCandidateJpaRepository candidates;
@@ -114,15 +117,24 @@ public class DrawSnapshotRepositoryImpl implements DrawSnapshotRepository {
 		return saveInput(run, snapshot);
 	}
 
-	/** 후보와 실행별 연결·규칙을 함께 저장한다. DB 시각 정밀도로 재조회해 첫 응답과 재요청의 스냅샷을 일치시킨다. */
+	/** 최초 후보·연결 저장에만 배치 100을 적용하고, 성공·실패 모두 호출자의 세션 설정을 복원한다. */
 	private DrawSnapshot saveInput(DrawRunEntity run, DrawSnapshot snapshot) {
-		List<DrawCandidateEntity> savedCandidates = candidates.saveAllAndFlush(snapshot.candidates().stream()
-				.map(candidate -> mapper.toEntity(run, candidate)).toList());
-		links.saveAllAndFlush(savedCandidates.stream()
-				.map(candidate -> new DrawRunCandidateEntity(run, candidate)).toList());
+		Session session = entityManager.unwrap(Session.class);
+		Integer previousBatchSize = session.getJdbcBatchSize();
+		try {
+			session.setJdbcBatchSize(SNAPSHOT_BATCH_SIZE);
+			List<DrawCandidateEntity> savedCandidates = candidates.saveAllAndFlush(snapshot.candidates().stream()
+					.map(candidate -> mapper.toEntity(run, candidate)).toList());
+			links.saveAllAndFlush(savedCandidates.stream()
+					.map(candidate -> new DrawRunCandidateEntity(run, candidate)).toList());
+		} finally {
+			// 입력 고정과 같은 서비스 트랜잭션의 후속 작업에는 호출자의 배치 설정을 사용한다.
+			session.setJdbcBatchSize(previousBatchSize);
+		}
 		mapper.fixInput(run, snapshot);
 		runs.flush();
-		// DATETIME(6)로 저장된 실제 정밀도를 첫 응답에도 사용해 재요청 결과와 일치시킨다.
+
+		// 실제 DB 정밀도로 다시 읽어 첫 응답과 재요청의 스냅샷을 일치시킨다.
 		entityManager.refresh(run);
 		return findInitial(snapshot.eventId()).orElseThrow();
 	}

@@ -7,6 +7,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -24,9 +28,11 @@ import com.getddo.core.audit.service.AuditLogService;
 import com.getddo.core.common.pagination.PageQuery;
 import com.getddo.core.common.pagination.PageResult;
 import com.getddo.core.common.time.TimeProvider;
+import com.getddo.core.user.domain.NamedValue;
 import com.getddo.core.user.domain.User;
 import com.getddo.core.user.domain.UserRole;
 import com.getddo.core.user.domain.UserStatus;
+import com.getddo.core.user.repository.UserNameRepository;
 
 /**
  * 관리자 출석 정책 조회(AP01·AP03)와 등록(AP02·AP04).
@@ -44,29 +50,36 @@ public class AdminAttendancePolicyService {
 	private static final int MIN_REWARD_TICKET_COUNT = 1;
 	private static final String DAILY_CREATE = "ATTENDANCE_DAILY_POLICY_CREATE";
 	private static final String STREAK_CREATE = "ATTENDANCE_STREAK_POLICY_CREATE";
+	private static final String DAILY_UPDATE = "ATTENDANCE_DAILY_POLICY_UPDATE";
+	private static final String STREAK_UPDATE = "ATTENDANCE_STREAK_POLICY_UPDATE";
 	private static final String TARGET_DAILY = "ATTENDANCE_DAILY_POLICY";
 	private static final String TARGET_STREAK = "ATTENDANCE_STREAK_POLICY";
 
 	private final AttendancePolicyAdminRepository repository;
 	private final TimeProvider timeProvider;
 	private final AuditLogService auditLogs;
+	private final UserNameRepository userNames;
 
 	/**
 	 * @throws AttendanceException 관리자가 아닌 경우({@code ATTENDANCE-002})
 	 */
 	@Transactional(readOnly = true)
-	public PageResult<DailyAttendancePolicy> findDailyPolicies(User admin, PageQuery page) {
+	public PageResult<NamedValue<DailyAttendancePolicy>> findDailyPolicies(User admin, PageQuery page) {
 		requireActiveAdmin(admin);
-		return repository.findDailyPolicies(page);
+		PageResult<DailyAttendancePolicy> found = repository.findDailyPolicies(page);
+		Map<UUID, String> names = namesOf(found.getItems().stream().map(DailyAttendancePolicy::getCreatedBy));
+		return found.map(policy -> new NamedValue<>(policy, names.get(policy.getCreatedBy())));
 	}
 
 	/**
 	 * @throws AttendanceException 관리자가 아닌 경우({@code ATTENDANCE-002})
 	 */
 	@Transactional(readOnly = true)
-	public PageResult<StreakPolicyRecord> findStreakPolicies(User admin, PageQuery page) {
+	public PageResult<NamedValue<StreakPolicyRecord>> findStreakPolicies(User admin, PageQuery page) {
 		requireActiveAdmin(admin);
-		return repository.findStreakPolicies(page);
+		PageResult<StreakPolicyRecord> found = repository.findStreakPolicies(page);
+		Map<UUID, String> names = namesOf(found.getItems().stream().map(StreakPolicyRecord::getCreatedBy));
+		return found.map(policy -> new NamedValue<>(policy, names.get(policy.getCreatedBy())));
 	}
 
 	/**
@@ -76,7 +89,7 @@ public class AdminAttendancePolicyService {
 	 *         ({@code ATTENDANCE-003}), 같은 적용 시점의 정책이 이미 있는 경우({@code ATTENDANCE-004})
 	 */
 	@Transactional
-	public DailyAttendancePolicy createDailyPolicy(User admin, int rewardTicketCount) {
+	public NamedValue<DailyAttendancePolicy> createDailyPolicy(User admin, int rewardTicketCount) {
 		requireActiveAdmin(admin);
 		if (rewardTicketCount < MIN_REWARD_TICKET_COUNT) {
 			throw new AttendanceException(AttendanceErrorCode.INVALID_POLICY);
@@ -99,7 +112,8 @@ public class AdminAttendancePolicyService {
 		auditLogs.record(new AuditLogCommand(admin.getId(), DAILY_CREATE, TARGET_DAILY, created.getId(), null,
 				before.isEmpty() ? null : before,
 				Map.of("rewardTicketCount", rewardTicketCount, "effectiveFrom", effectiveFrom.toString()), null));
-		return created;
+		// 방금 등록한 정책의 작성자는 요청한 관리자 본인이다.
+		return new NamedValue<>(created, admin.getName());
 	}
 
 	/**
@@ -110,7 +124,7 @@ public class AdminAttendancePolicyService {
 	 *         ({@code ATTENDANCE-003}), 같은 적용월의 정책이 이미 있는 경우({@code ATTENDANCE-005})
 	 */
 	@Transactional
-	public StreakPolicyRecord createStreakPolicy(User admin, List<MilestoneDraft> milestones) {
+	public NamedValue<StreakPolicyRecord> createStreakPolicy(User admin, List<MilestoneDraft> milestones) {
 		requireActiveAdmin(admin);
 		requireValidMilestones(milestones);
 		LocalDate effectiveMonth = timeProvider.toKst(timeProvider.now()).toLocalDate().withDayOfMonth(1)
@@ -126,7 +140,82 @@ public class AdminAttendancePolicyService {
 		}
 		auditLogs.record(new AuditLogCommand(admin.getId(), STREAK_CREATE, TARGET_STREAK, created.getId(), null, null,
 				Map.of("effectiveMonth", effectiveMonth.toString(), "milestoneCount", milestones.size()), null));
-		return created;
+		// 방금 등록한 묶음의 작성자는 요청한 관리자 본인이다.
+		return new NamedValue<>(created, admin.getName());
+	}
+
+	/**
+	 * 아직 시작하지 않은 예약 일일 정책의 보상 수량을 바꾼다. 적용 시점은 바뀌지 않는다. 정책 행을 잠근 뒤 시작 여부를
+	 * 다시 확인해 수정과 적용 시작이 겹쳐도 시작한 정책은 바뀌지 않는다.
+	 *
+	 * @throws AttendanceException 관리자가 아니거나({@code ATTENDANCE-002}), 보상 수량이 1 미만이거나
+	 *         ({@code ATTENDANCE-003}), 정책이 없거나({@code ATTENDANCE-006}), 이미 시작한 정책인 경우
+	 *         ({@code ATTENDANCE-007})
+	 */
+	@Transactional
+	public NamedValue<DailyAttendancePolicy> updateDailyPolicy(User admin, UUID policyId, int rewardTicketCount) {
+		requireActiveAdmin(admin);
+		if (rewardTicketCount < MIN_REWARD_TICKET_COUNT) {
+			throw new AttendanceException(AttendanceErrorCode.INVALID_POLICY);
+		}
+		DailyAttendancePolicy current = repository.findDailyPolicyForUpdate(policyId)
+				.orElseThrow(() -> new AttendanceException(AttendanceErrorCode.UPDATE_TARGET_POLICY_NOT_FOUND));
+		if (current.hasStartedAt(timeProvider.now())) {
+			throw new AttendanceException(AttendanceErrorCode.POLICY_ALREADY_STARTED);
+		}
+		DailyAttendancePolicy updated = repository.updateDailyRewardTicketCount(policyId, rewardTicketCount);
+		String effectiveFrom = current.getEffectiveFrom().toString();
+		auditLogs.record(new AuditLogCommand(admin.getId(), DAILY_UPDATE, TARGET_DAILY, policyId, null,
+				Map.of("rewardTicketCount", current.getRewardTicketCount(), "effectiveFrom", effectiveFrom),
+				Map.of("rewardTicketCount", rewardTicketCount, "effectiveFrom", effectiveFrom), null));
+		return new NamedValue<>(updated, nameOf(updated.getCreatedBy()));
+	}
+
+	/**
+	 * 아직 시작하지 않은 예약 연속 출석 정책 묶음의 단계를 모두 바꾼다. 적용월은 바뀌지 않는다. 묶음 행을 잠근 뒤 시작
+	 * 여부를 다시 확인한다.
+	 *
+	 * @param milestones 단계 일수 오름차순이고 중복이 없는 단계. 일수는 1~28, 보상 수량은 1 이상이다
+	 * @throws AttendanceException 관리자가 아니거나({@code ATTENDANCE-002}), 단계 규칙을 어겼거나
+	 *         ({@code ATTENDANCE-003}), 정책이 없거나({@code ATTENDANCE-006}), 이미 시작한 묶음인 경우
+	 *         ({@code ATTENDANCE-007})
+	 */
+	@Transactional
+	public NamedValue<StreakPolicyRecord> updateStreakPolicy(User admin, UUID policySetId,
+			List<MilestoneDraft> milestones) {
+		requireActiveAdmin(admin);
+		requireValidMilestones(milestones);
+		StreakPolicyRecord current = repository.findStreakPolicyForUpdate(policySetId)
+				.orElseThrow(() -> new AttendanceException(AttendanceErrorCode.UPDATE_TARGET_POLICY_NOT_FOUND));
+		if (current.hasStartedOn(timeProvider.toKst(timeProvider.now()).toLocalDate())) {
+			throw new AttendanceException(AttendanceErrorCode.POLICY_ALREADY_STARTED);
+		}
+		StreakPolicyRecord updated = repository.replaceStreakMilestones(policySetId, milestones);
+		String effectiveMonth = current.getEffectiveMonth().toString();
+		auditLogs.record(new AuditLogCommand(admin.getId(), STREAK_UPDATE, TARGET_STREAK, policySetId, null,
+				Map.of("effectiveMonth", effectiveMonth, "milestones", current.getMilestones().stream()
+						.map(m -> milestoneAudit(m.getMilestoneDays(), m.getRewardTicketCount()))
+						.toList()),
+				Map.of("effectiveMonth", effectiveMonth, "milestones", milestones.stream()
+						.map(m -> milestoneAudit(m.getMilestoneDays(), m.getRewardTicketCount()))
+						.toList()),
+				null));
+		return new NamedValue<>(updated, nameOf(updated.getCreatedBy()));
+	}
+
+	/** 정책을 만든 관리자의 현재 이름. 수정한 관리자가 아니라 작성자 이름이다. */
+	private String nameOf(UUID userId) {
+		return userNames.findNamesByIds(Set.of(userId)).get(userId);
+	}
+
+	/** 한 페이지 정책의 작성자 이름을 한 번에 조회한다. */
+	private Map<UUID, String> namesOf(Stream<UUID> userIds) {
+		return userNames.findNamesByIds(userIds.collect(Collectors.toSet()));
+	}
+
+	/** 감사 기록에 담을 연속 출석 단계 한 건. 수정 전·후가 같은 모양이 되도록 한 곳에서 만든다. */
+	private static Map<String, Integer> milestoneAudit(int milestoneDays, int rewardTicketCount) {
+		return Map.of("milestoneDays", milestoneDays, "rewardTicketCount", rewardTicketCount);
 	}
 
 	private static void requireValidMilestones(List<MilestoneDraft> milestones) {

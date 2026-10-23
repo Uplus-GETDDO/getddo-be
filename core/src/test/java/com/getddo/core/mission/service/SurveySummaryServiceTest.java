@@ -15,6 +15,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.getddo.core.common.pagination.PageQuery;
+import com.getddo.core.common.pagination.PageResult;
 import com.getddo.core.common.time.TimeProvider;
 import com.getddo.core.mission.domain.Mission;
 import com.getddo.core.mission.domain.MissionDetail;
@@ -23,6 +25,7 @@ import com.getddo.core.mission.domain.MissionType;
 import com.getddo.core.mission.domain.QuizOption;
 import com.getddo.core.mission.domain.QuizQuestion;
 import com.getddo.core.mission.domain.QuizQuestionType;
+import com.getddo.core.mission.domain.SurveyFreeTextAnswer;
 import com.getddo.core.mission.domain.SurveyOption;
 import com.getddo.core.mission.domain.SurveyQuestion;
 import com.getddo.core.mission.domain.SurveyQuestionType;
@@ -162,5 +165,91 @@ class SurveySummaryServiceTest {
 		assertThat(question.questionId()).isEqualTo(q1);
 		assertThat(question.options()).extracting(SurveySummary.OptionCount::optionId).containsExactly(o1, o2);
 		assertThat(question.options()).extracting(SurveySummary.OptionCount::count).containsExactly(3L, 0L);
+	}
+
+	private static final PageQuery PAGE = new PageQuery(2, 10);
+
+	private SurveyQuestion freeTextQuestion() {
+		return new SurveyQuestion(UUID.randomUUID(), SurveyQuestionType.FREE_TEXT, "의견", false, 2, List.of());
+	}
+
+	@Test
+	@DisplayName("자유 서술 답변 조회도 관리자가 아니면 MISSION-006으로 거절하고 저장소를 읽지 않는다")
+	void answersRejectNonAdmins() {
+		for (User caller : new User[] {null, user(UserRole.USER, UserStatus.ACTIVE),
+				user(UserRole.ADMIN, UserStatus.INACTIVE)}) {
+			assertThatThrownBy(() -> service().findFreeTextAnswers(caller, MISSION_ID, UUID.randomUUID(), FROM, TO, PAGE))
+					.satisfies(e -> assertError(e, MissionErrorCode.ADMIN_REQUIRED));
+		}
+		verifyNoInteractions(missionRepository, summaryRepository);
+	}
+
+	@Test
+	@DisplayName("자유 서술 답변 조회의 기간이 없거나 거꾸로이거나 32일째로 넘어가면 MISSION-001이다")
+	void answersRejectInvalidPeriod() {
+		UUID questionId = UUID.randomUUID();
+		assertThatThrownBy(() -> service().findFreeTextAnswers(ADMIN, MISSION_ID, questionId, null, TO, PAGE))
+				.satisfies(e -> assertError(e, MissionErrorCode.INVALID_MISSION_DEFINITION));
+		assertThatThrownBy(() -> service().findFreeTextAnswers(ADMIN, MISSION_ID, questionId, TO, FROM, PAGE))
+				.satisfies(e -> assertError(e, MissionErrorCode.INVALID_MISSION_DEFINITION));
+		assertThatThrownBy(() -> service().findFreeTextAnswers(ADMIN, MISSION_ID, questionId, FROM,
+				FROM.plusDays(31), PAGE))
+				.satisfies(e -> assertError(e, MissionErrorCode.INVALID_MISSION_DEFINITION));
+		verifyNoInteractions(missionRepository, summaryRepository);
+	}
+
+	@Test
+	@DisplayName("없는 미션은 MISSION-003, 퀴즈 미션은 MISSION-001이다")
+	void answersRejectMissingAndQuizMission() {
+		// given
+		UUID missing = UUID.randomUUID();
+		when(missionRepository.findDetailById(missing)).thenReturn(Optional.empty());
+		when(missionRepository.findDetailById(MISSION_ID)).thenReturn(Optional.of(new MissionDetail(
+				mission(MissionType.QUIZ), List.of(QuizQuestion.of(QuizQuestionType.SHORT_ANSWER, "문제", 1, "정답",
+						List.of())), List.of())));
+		// when
+		// then
+		assertThatThrownBy(() -> service().findFreeTextAnswers(ADMIN, missing, UUID.randomUUID(), FROM, TO, PAGE))
+				.satisfies(e -> assertError(e, MissionErrorCode.MISSION_NOT_FOUND));
+		assertThatThrownBy(() -> service().findFreeTextAnswers(ADMIN, MISSION_ID, UUID.randomUUID(), FROM, TO, PAGE))
+				.satisfies(e -> assertError(e, MissionErrorCode.INVALID_MISSION_DEFINITION));
+		verifyNoInteractions(summaryRepository);
+	}
+
+	@Test
+	@DisplayName("문항 ID가 없거나 이 미션의 자유 서술 문항이 아니면 MISSION-001로 거절하고 답변을 읽지 않는다")
+	void answersRejectNonFreeTextQuestion() {
+		// given
+		SurveyQuestion choice = new SurveyQuestion(UUID.randomUUID(), SurveyQuestionType.SINGLE_CHOICE, "선호", true, 1,
+				List.of(new SurveyOption(UUID.randomUUID(), "A", 1), new SurveyOption(UUID.randomUUID(), "B", 2)));
+		SurveyQuestion free = freeTextQuestion();
+		when(missionRepository.findDetailById(MISSION_ID)).thenReturn(Optional.of(
+				new MissionDetail(mission(MissionType.SURVEY), List.of(), List.of(choice, free))));
+		// when
+		// then
+		assertThatThrownBy(() -> service().findFreeTextAnswers(ADMIN, MISSION_ID, null, FROM, TO, PAGE))
+				.satisfies(e -> assertError(e, MissionErrorCode.INVALID_MISSION_DEFINITION));
+		assertThatThrownBy(() -> service().findFreeTextAnswers(ADMIN, MISSION_ID, UUID.randomUUID(), FROM, TO, PAGE))
+				.satisfies(e -> assertError(e, MissionErrorCode.INVALID_MISSION_DEFINITION));
+		assertThatThrownBy(() -> service().findFreeTextAnswers(ADMIN, MISSION_ID, choice.getId(), FROM, TO, PAGE))
+				.satisfies(e -> assertError(e, MissionErrorCode.INVALID_MISSION_DEFINITION));
+		verifyNoInteractions(summaryRepository);
+	}
+
+	@Test
+	@DisplayName("자유 서술 문항이면 KST 날짜 범위를 UTC 시각으로 바꿔 저장소 결과를 그대로 돌려준다")
+	void findsFreeTextAnswersForKstRange() {
+		// given
+		SurveyQuestion free = freeTextQuestion();
+		when(missionRepository.findDetailById(MISSION_ID)).thenReturn(Optional.of(
+				new MissionDetail(mission(MissionType.SURVEY), List.of(), List.of(free))));
+		PageResult<SurveyFreeTextAnswer> expected = new PageResult<>(
+				List.of(new SurveyFreeTextAnswer("집에 가고 싶다", START)), 2, 10, 11);
+		when(summaryRepository.findFreeTextAnswers(free.getId(), START, END, PAGE)).thenReturn(expected);
+		// when
+		PageResult<SurveyFreeTextAnswer> result = service().findFreeTextAnswers(ADMIN, MISSION_ID, free.getId(), FROM,
+				TO, PAGE);
+		// then
+		assertThat(result).isSameAs(expected);
 	}
 }

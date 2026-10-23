@@ -14,6 +14,7 @@ import org.springframework.stereotype.Repository;
 import com.getddo.core.stats.domain.DailyStats.EntryCounts;
 import com.getddo.core.stats.repository.DailyStatsRepository;
 import com.getddo.core.ticket.domain.GrantSourceType;
+import com.getddo.core.user.repository.AdminUserQueryRepository;
 
 /**
  * 관리자 일별 집계 구현. 시각은 UTC로 저장돼 있어 KST 날짜는 +9시간으로 환산해 묶는다(KST는 서머타임이 없다). 값은 모두
@@ -72,11 +73,9 @@ public class DailyStatsRepositoryImpl implements DailyStatsRepository {
 			where a.occurred_at >= :from and a.occurred_at < :to
 			group by day
 			""";
-	private static final String USER_SQL = """
-			select count(*) from users u where u.role = 'USER' and u.status = 'ACTIVE'
-			""";
 
 	private final EntityManager entityManager;
+	private final AdminUserQueryRepository users;
 
 	@Override
 	@SuppressWarnings("unchecked")
@@ -140,7 +139,7 @@ public class DailyStatsRepositoryImpl implements DailyStatsRepository {
 
 	@Override
 	public long countActiveRegularUsers() {
-		return ((Number) entityManager.createNativeQuery(USER_SQL).getSingleResult()).longValue();
+		return users.countActiveRegularUsers();
 	}
 
 	private static Map<LocalDate, Long> dailyCounts(List<Object[]> rows) {

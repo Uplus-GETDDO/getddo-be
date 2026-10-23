@@ -27,8 +27,11 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowCallbackHandler;
@@ -189,6 +192,49 @@ class DrawPublicationRepositoryImplTest {
 		assertThat(confirmation).isEqualTo(new DrawResultConfirmation(id, run, actor, NOW));
 		verify(entityManager).detach(stored);
 		verify(entityManager, never()).refresh(any());
+	}
+
+	/** 마이크로초 반올림을 흉내 낸 JPA 대역으로 정상 확인 시각의 미래 오판을 방지한다. 실제 DB 검증은 아니다. */
+	@ParameterizedTest
+	@CsvSource({
+			"2026-10-23T01:12:00.123456000Z, 2026-10-23T01:12:00.123456Z",
+			"2026-10-23T01:12:00.123456100Z, 2026-10-23T01:12:00.123456Z",
+			"2026-10-23T01:12:00.123456499Z, 2026-10-23T01:12:00.123456Z",
+			"2026-10-23T01:12:00.123456500Z, 2026-10-23T01:12:00.123456Z",
+			"2026-10-23T01:12:00.123456800Z, 2026-10-23T01:12:00.123456Z",
+			"2026-10-23T01:12:00.999999800Z, 2026-10-23T01:12:00.999999Z",
+			"2026-10-23T01:12:00.000000001Z, 2026-10-23T01:12:00Z"
+	})
+	@DisplayName("확인 시각은 DB 반올림 후에도 원래 시각을 넘지 않고 마이크로초로 보존된다")
+	void preservesConfirmationTimeWithoutRoundingIntoFuture(String requestedTime, String expectedTime) {
+		// given
+		Instant requestedAt = Instant.parse(requestedTime);
+		Instant expectedAt = Instant.parse(expectedTime);
+		UUID run = UUID.randomUUID();
+		UUID actor = UUID.randomUUID();
+		UUID id = UUID.randomUUID();
+		AtomicReference<DrawResultConfirmationEntity> reloaded = new AtomicReference<>();
+		when(confirmations.saveAndFlush(any())).thenAnswer(invocation -> {
+			DrawResultConfirmationEntity input = invocation.getArgument(0);
+			ReflectionTestUtils.setField(input, "id", id);
+			Instant inputAt = input.getConfirmedAt();
+			long roundedNanos = ((inputAt.getNano() + 500L) / 1_000L) * 1_000L;
+			Instant storedAt = inputAt.minusNanos(inputAt.getNano()).plusNanos(roundedNanos);
+			DrawResultConfirmationEntity stored = new DrawResultConfirmationEntity(
+					input.getRunId(), input.getConfirmedBy(), storedAt);
+			ReflectionTestUtils.setField(stored, "id", id);
+			reloaded.set(stored);
+			return input;
+		});
+		when(confirmations.findById(id)).thenAnswer(invocation -> Optional.of(reloaded.get()));
+
+		// when
+		DrawResultConfirmation confirmation = repository.saveConfirmation(run, actor, requestedAt);
+
+		// then
+		assertThat(confirmation).isEqualTo(new DrawResultConfirmation(id, run, actor, expectedAt));
+		assertThat(confirmation.getConfirmedAt()).isBeforeOrEqualTo(requestedAt);
+		assertThat(confirmation.getConfirmedAt()).isAfterOrEqualTo(requestedAt.minusNanos(999));
 	}
 
 	/** 페이지 조회는 최신 버전과 실제 포함 결과를 일괄 변환하고 전체 건수를 유지한다는 시나리오를 검증한다. */

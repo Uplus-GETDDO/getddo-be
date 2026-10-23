@@ -15,6 +15,8 @@ import com.getddo.core.common.pagination.PageQuery;
 import com.getddo.core.common.pagination.PageResult;
 import com.getddo.core.user.domain.AdminUserQuery;
 import com.getddo.core.user.domain.User;
+import com.getddo.core.user.domain.UserRole;
+import com.getddo.core.user.domain.UserStatus;
 import com.getddo.core.user.repository.AdminUserQueryRepository;
 import com.getddo.db.common.pagination.PageOffsets;
 import com.getddo.db.user.entity.UserEntity;
@@ -46,6 +48,15 @@ public class AdminUserQueryRepositoryImpl implements AdminUserQueryRepository {
 		List<User> items = entityManager.createQuery(select).setFirstResult((int) page.offset())
 				.setMaxResults(page.getSize()).getResultList().stream().map(mapper::toDomain).toList();
 		return new PageResult<>(items, page.getPage(), page.getSize(), total);
+	}
+
+	@Override
+	public long countActiveRegularUsers() {
+		return entityManager.createQuery(
+				"select count(u) from UserEntity u where u.role = :role and u.status = :status", Long.class)
+				.setParameter("role", UserRole.USER)
+				.setParameter("status", UserStatus.ACTIVE)
+				.getSingleResult();
 	}
 
 	private static Predicate[] predicates(AdminUserQuery query, CriteriaBuilder builder, Root<UserEntity> user) {

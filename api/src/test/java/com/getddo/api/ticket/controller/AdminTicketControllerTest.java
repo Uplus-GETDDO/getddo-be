@@ -251,13 +251,14 @@ class AdminTicketControllerTest {
 		UUID ticketId = UUID.randomUUID();
 		Instant checkedAt = Instant.parse("2026-10-15T00:00:00Z");
 		when(service.getConsistency(any(), eq(userId))).thenReturn(
-				new TicketConsistencyResult(userId, 4, List.of(new TicketInconsistencyView(ticketId, userId, "홍길동",
+				new TicketConsistencyResult(userId, "홍길동", 4, List.of(new TicketInconsistencyView(ticketId, userId, "홍길동",
 						TicketGrade.GOLD, 3, 1, TicketStatus.SPENT, TicketStatus.AVAILABLE)), checkedAt));
 		// when
 		// then
 		mvc.perform(asAdmin(get("/api/v1/admin/users/{userId}/tickets/consistency", userId)))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.userId").value(userId.toString()))
+				.andExpect(jsonPath("$.data.userName").value("홍길동"))
 				.andExpect(jsonPath("$.data.availableCount").value(4))
 				.andExpect(jsonPath("$.data.isConsistent").value(false))
 				.andExpect(jsonPath("$.data.inconsistencies[0].ticketId").value(ticketId.toString()))

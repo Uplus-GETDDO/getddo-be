@@ -20,6 +20,8 @@ import com.getddo.core.game.domain.GamePlayResult;
 import com.getddo.core.game.domain.GameResultSubmission;
 import com.getddo.core.game.domain.GameRewardClaim;
 import com.getddo.core.game.domain.TakkoRunRules;
+import com.getddo.core.game.domain.TakkoTimingRules;
+import com.getddo.core.game.domain.TakkoOrderRules;
 import com.getddo.core.game.exception.GameErrorCode;
 import com.getddo.core.game.exception.GameResultFormatException;
 import com.getddo.core.game.repository.GamePlayRepository;
@@ -38,6 +40,8 @@ public class GamePlayResultRecorder {
 	private final GamePlayRepository plays;
 	private final ColorWordValidator validator;
 	private final TakkoRunValidator takkoRunValidator;
+	private final TakkoTimingValidator takkoTimingValidator;
+	private final TakkoOrderValidator takkoOrderValidator;
 	private final GameStatisticsRepository statistics;
 	private final GameRewardClaimRepository claims;
 	private final TicketGrantService grants;
@@ -74,7 +78,8 @@ public class GamePlayResultRecorder {
 	/** 저장된 규칙으로 종류를 선택한다. 클라이언트의 입력 형태만으로 게임을 결정하지 않는다. */
 	private Long validate(GamePlay play, GameResultSubmission submission) {
 		if (ColorWordRules.RULE_VERSION.equals(play.getRuleVersion())) {
-			if (submission.getTakkoRun() != null) {
+			if (submission.getTakkoRun() != null || submission.getTakkoTiming() != null
+					|| submission.getTakkoOrder() != null) {
 				throw new GameResultFormatException();
 			}
 			return validator.validate(play, submission.getAnswers()).getScore();
@@ -85,6 +90,14 @@ public class GamePlayResultRecorder {
 			}
 			return takkoRunValidator.validate(play, submission.getTakkoRun());
 		}
+		if (TakkoTimingRules.RULE_VERSION.equals(play.getRuleVersion())) {
+			if (submission.getTakkoTiming() == null) throw new GameResultFormatException();
+			return takkoTimingValidator.validate(play, submission.getTakkoTiming());
+		}
+		if (TakkoOrderRules.RULE_VERSION.equals(play.getRuleVersion())) {
+			if (submission.getTakkoOrder() == null) throw new GameResultFormatException();
+			return takkoOrderValidator.validate(play, submission.getTakkoOrder());
+		}
 		throw new IllegalStateException("지원하는 게임의 시작 스냅샷이 필요합니다.");
 	}
 
@@ -92,6 +105,8 @@ public class GamePlayResultRecorder {
 		return switch (play.getRuleVersion()) {
 			case ColorWordRules.RULE_VERSION -> ColorWordRules.MINIMUM_REWARD_SCORE;
 			case TakkoRunRules.RULE_VERSION -> TakkoRunRules.MINIMUM_REWARD_SCORE;
+			case TakkoTimingRules.RULE_VERSION -> TakkoTimingRules.MINIMUM_REWARD_SCORE;
+			case TakkoOrderRules.RULE_VERSION -> TakkoOrderRules.MINIMUM_REWARD_SCORE;
 			default -> throw new IllegalStateException("지원하는 게임의 보상 규칙이 필요합니다.");
 		};
 	}
@@ -105,6 +120,8 @@ public class GamePlayResultRecorder {
 		String reason = switch (completed.getRuleVersion()) {
 			case ColorWordRules.RULE_VERSION -> "글자색깔 맞추기 일일 보상";
 			case TakkoRunRules.RULE_VERSION -> "타꼬런 일일 보상";
+			case TakkoTimingRules.RULE_VERSION -> "타꼬 타이밍 맞추기 일일 보상";
+			case TakkoOrderRules.RULE_VERSION -> "타꼬 주문 일일 보상";
 			default -> throw new IllegalStateException("지원하는 게임의 보상 규칙이 필요합니다.");
 		};
 		return grants.grant(new GrantCommand(completed.getUserId(), source(claim), 1, reason));

@@ -164,7 +164,7 @@ class EventDeletionServiceTest {
 	}
 
 	private RegisteredEvent saved(EventStatus status, Instant start) {
-		return new RegisteredEvent(EVENT, "삭제 이벤트", "설명", null, EventType.NO_TICKET, false, null,
+		return new RegisteredEvent(EVENT, "삭제 이벤트", "설명", null, null, EventType.NO_TICKET, false, null,
 				MembershipRule.vip, start, START.plusSeconds(3600), status, NOW, NOW, List.of());
 	}
 }

@@ -2,7 +2,9 @@ package com.getddo.core.mission.service;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import org.junit.jupiter.api.DisplayName;
@@ -31,9 +33,11 @@ import com.getddo.core.mission.exception.MissionErrorCode;
 import com.getddo.core.mission.exception.MissionException;
 import com.getddo.core.mission.repository.MissionRepository;
 import com.getddo.core.mission.repository.MissionRewardPolicyRepository;
+import com.getddo.core.user.domain.NamedValue;
 import com.getddo.core.user.domain.User;
 import com.getddo.core.user.domain.UserRole;
 import com.getddo.core.user.domain.UserStatus;
+import com.getddo.core.user.repository.UserNameRepository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -57,13 +61,15 @@ class AdminMissionServiceTest {
 	private MissionRewardPolicyRepository rewardPolicies;
 	@Mock
 	private AuditLogService auditLogs;
+	@Mock
+	private UserNameRepository userNames;
 
 	private static User user(UserRole role, UserStatus status) {
 		return new User(UUID.randomUUID(), "사용자", role, status, null, null, null, null, null, null, null);
 	}
 
 	private AdminMissionService service() {
-		return new AdminMissionService(missionRepository, rewardPolicies, auditLogs);
+		return new AdminMissionService(missionRepository, rewardPolicies, auditLogs, userNames);
 	}
 
 	private static void assertError(Throwable thrown, MissionErrorCode expected) {
@@ -106,15 +112,38 @@ class AdminMissionServiceTest {
 	}
 
 	@Test
-	@DisplayName("목록 조회는 조건을 저장소에 그대로 넘긴다")
+	@DisplayName("목록 조회는 조건을 저장소에 그대로 넘기고 작성자의 현재 이름을 함께 돌려준다")
 	void listsMissions() {
 		// given
 		MissionSearch search = new MissionSearch(MissionType.QUIZ, MissionStatus.ACTIVE, "가을", STARTS_AT, ENDS_AT);
-		PageResult<Mission> page = new PageResult<>(List.of(), 1, 20, 0);
-		when(missionRepository.search(search, FIRST_PAGE)).thenReturn(page);
+		UUID creator = UUID.randomUUID();
+		Mission mission = Mission.register(UUID.randomUUID(), creator, "가을 퀴즈", "설명", MissionType.QUIZ, STARTS_AT,
+				ENDS_AT, null);
+		when(missionRepository.search(search, FIRST_PAGE)).thenReturn(new PageResult<>(List.of(mission), 1, 20, 1));
+		when(userNames.findNamesByIds(Set.of(creator))).thenReturn(Map.of(creator, "작성자"));
 		// when
+		PageResult<NamedValue<Mission>> result = service().findMissions(ADMIN, search, FIRST_PAGE);
 		// then
-		assertThat(service().findMissions(ADMIN, search, FIRST_PAGE)).isSameAs(page);
+		assertThat(result.getItems()).extracting(NamedValue::getValue).containsExactly(mission);
+		assertThat(result.getItems()).extracting(NamedValue::getName).containsExactly("작성자");
+	}
+
+	@Test
+	@DisplayName("상세 조회는 미션과 작성자의 현재 이름을 함께 돌려준다")
+	void findsMissionWithCreatorName() {
+		// given
+		UUID creator = UUID.randomUUID();
+		Mission mission = Mission.register(UUID.randomUUID(), creator, "가을 퀴즈", "설명", MissionType.QUIZ, STARTS_AT,
+				ENDS_AT, null);
+		MissionDetail detail = new MissionDetail(mission, List.of(
+				QuizQuestion.of(QuizQuestionType.SHORT_ANSWER, "주관식", 1, "정답", List.of())), List.of());
+		when(missionRepository.findDetailById(mission.getId())).thenReturn(Optional.of(detail));
+		when(userNames.findNamesByIds(Set.of(creator))).thenReturn(Map.of(creator, "작성자"));
+		// when
+		NamedValue<MissionDetail> result = service().findMission(ADMIN, mission.getId());
+		// then
+		assertThat(result.getValue()).isSameAs(detail);
+		assertThat(result.getName()).isEqualTo("작성자");
 	}
 
 	@Test
@@ -140,8 +169,10 @@ class AdminMissionServiceTest {
 				choice(1, QuizOption.of("가", 1, true), QuizOption.of("나", 2, false)),
 				QuizQuestion.of(QuizQuestionType.SHORT_ANSWER, "주관식", 2, "정답", List.of()));
 		// when
-		MissionDetail saved = service().register(ADMIN, registration);
+		NamedValue<MissionDetail> named = service().register(ADMIN, registration);
 		// then
+		MissionDetail saved = named.getValue();
+		assertThat(named.getName()).isEqualTo(ADMIN.getName());
 		Mission mission = saved.getMission();
 		assertThat(mission.getRewardPolicyId()).isEqualTo(policyId);
 		assertThat(mission.getCreatedBy()).isEqualTo(ADMIN.getId());
@@ -162,7 +193,7 @@ class AdminMissionServiceTest {
 				ENDS_AT, "images/a.png", List.of(), List.of(
 						SurveyQuestion.of(SurveyQuestionType.FREE_TEXT, "의견", true, 1, List.of())));
 		// when
-		MissionDetail saved = service().register(ADMIN, registration);
+		MissionDetail saved = service().register(ADMIN, registration).getValue();
 		// then
 		assertThat(saved.getSurveyQuestions()).hasSize(1);
 		assertThat(saved.getMission().getImageKey()).isEqualTo("images/a.png");

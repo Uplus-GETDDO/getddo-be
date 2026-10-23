@@ -5,7 +5,9 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import org.junit.jupiter.api.DisplayName;
@@ -18,6 +20,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 
 import com.getddo.core.attendance.domain.DailyAttendancePolicy;
 import com.getddo.core.attendance.domain.MilestoneDraft;
+import com.getddo.core.attendance.domain.StreakMilestone;
 import com.getddo.core.attendance.domain.StreakPolicyRecord;
 import com.getddo.core.attendance.exception.AttendanceErrorCode;
 import com.getddo.core.attendance.exception.AttendanceException;
@@ -27,9 +30,11 @@ import com.getddo.core.audit.service.AuditLogService;
 import com.getddo.core.common.pagination.PageQuery;
 import com.getddo.core.common.pagination.PageResult;
 import com.getddo.core.common.time.TimeProvider;
+import com.getddo.core.user.domain.NamedValue;
 import com.getddo.core.user.domain.User;
 import com.getddo.core.user.domain.UserRole;
 import com.getddo.core.user.domain.UserStatus;
+import com.getddo.core.user.repository.UserNameRepository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -54,6 +59,8 @@ class AdminAttendancePolicyServiceTest {
 	private AttendancePolicyAdminRepository repository;
 	@Mock
 	private AuditLogService auditLogs;
+	@Mock
+	private UserNameRepository userNames;
 
 	private static User user(UserRole role, UserStatus status) {
 		return new User(UUID.randomUUID(), "사용자", role, status, null, null, null, null, null, null, null);
@@ -61,7 +68,7 @@ class AdminAttendancePolicyServiceTest {
 
 	private AdminAttendancePolicyService service(Instant now) {
 		return new AdminAttendancePolicyService(repository,
-				new TimeProvider(Clock.fixed(now, ZoneOffset.UTC)), auditLogs);
+				new TimeProvider(Clock.fixed(now, ZoneOffset.UTC)), auditLogs, userNames);
 	}
 
 	private static DailyAttendancePolicy daily(int count, Instant from, Instant until) {
@@ -94,14 +101,21 @@ class AdminAttendancePolicyServiceTest {
 	@DisplayName("관리자의 정책 조회는 저장소 결과를 그대로 돌려준다")
 	void listsPolicies() {
 		// given
-		PageResult<DailyAttendancePolicy> dailyPage = new PageResult<>(List.of(), 1, 20, 0);
-		PageResult<StreakPolicyRecord> streakPage = new PageResult<>(List.of(), 1, 20, 0);
-		when(repository.findDailyPolicies(FIRST_PAGE)).thenReturn(dailyPage);
-		when(repository.findStreakPolicies(FIRST_PAGE)).thenReturn(streakPage);
+		UUID creator = UUID.randomUUID();
+		DailyAttendancePolicy daily = new DailyAttendancePolicy(UUID.randomUUID(), 2, NEXT_MIDNIGHT, null, creator, NOW);
+		StreakPolicyRecord streak = new StreakPolicyRecord(UUID.randomUUID(), LocalDate.of(2026, 11, 1), List.of(),
+				creator, NOW);
+		when(repository.findDailyPolicies(FIRST_PAGE)).thenReturn(new PageResult<>(List.of(daily), 1, 20, 1));
+		when(repository.findStreakPolicies(FIRST_PAGE)).thenReturn(new PageResult<>(List.of(streak), 1, 20, 1));
+		when(userNames.findNamesByIds(Set.of(creator))).thenReturn(Map.of(creator, "작성자"));
 		// when
-		// then
-		assertThat(service(NOW).findDailyPolicies(ADMIN, FIRST_PAGE)).isSameAs(dailyPage);
-		assertThat(service(NOW).findStreakPolicies(ADMIN, FIRST_PAGE)).isSameAs(streakPage);
+		PageResult<NamedValue<DailyAttendancePolicy>> dailyResult = service(NOW).findDailyPolicies(ADMIN, FIRST_PAGE);
+		PageResult<NamedValue<StreakPolicyRecord>> streakResult = service(NOW).findStreakPolicies(ADMIN, FIRST_PAGE);
+		// then: 정책 객체는 그대로이고 작성자 이름만 덧붙는다
+		assertThat(dailyResult.getItems()).extracting(NamedValue::getValue).containsExactly(daily);
+		assertThat(dailyResult.getItems()).extracting(NamedValue::getName).containsExactly("작성자");
+		assertThat(streakResult.getItems()).extracting(NamedValue::getValue).containsExactly(streak);
+		assertThat(streakResult.getItems()).extracting(NamedValue::getName).containsExactly("작성자");
 	}
 
 	@Test
@@ -113,8 +127,10 @@ class AdminAttendancePolicyServiceTest {
 		when(repository.findOpenDailyPolicyForUpdate()).thenReturn(Optional.of(open));
 		when(repository.replaceDailyPolicy(open.getId(), 3, NEXT_MIDNIGHT, ADMIN.getId())).thenReturn(created);
 		// when
-		DailyAttendancePolicy result = service(NOW).createDailyPolicy(ADMIN, 3);
+		NamedValue<DailyAttendancePolicy> named = service(NOW).createDailyPolicy(ADMIN, 3);
+		DailyAttendancePolicy result = named.getValue();
 		// then
+		assertThat(named.getName()).isEqualTo(ADMIN.getName());
 		assertThat(result).isSameAs(created);
 		ArgumentCaptor<AuditLogCommand> audit = ArgumentCaptor.forClass(AuditLogCommand.class);
 		verify(auditLogs).record(audit.capture());
@@ -133,7 +149,8 @@ class AdminAttendancePolicyServiceTest {
 		when(repository.replaceDailyPolicy(null, 2, expectedFrom, ADMIN.getId()))
 				.thenReturn(daily(2, expectedFrom, null));
 		// when
-		DailyAttendancePolicy result = service(justAfterKstMidnight).createDailyPolicy(ADMIN, 2);
+		NamedValue<DailyAttendancePolicy> named = service(justAfterKstMidnight).createDailyPolicy(ADMIN, 2);
+		DailyAttendancePolicy result = named.getValue();
 		// then
 		assertThat(result.getEffectiveFrom()).isEqualTo(expectedFrom);
 	}
@@ -183,8 +200,10 @@ class AdminAttendancePolicyServiceTest {
 		when(repository.existsStreakPolicy(nextMonth)).thenReturn(false);
 		when(repository.saveStreakPolicy(nextMonth, milestones, ADMIN.getId())).thenReturn(created);
 		// when
-		StreakPolicyRecord result = service(NOW).createStreakPolicy(ADMIN, milestones);
+		NamedValue<StreakPolicyRecord> named = service(NOW).createStreakPolicy(ADMIN, milestones);
+		StreakPolicyRecord result = named.getValue();
 		// then
+		assertThat(named.getName()).isEqualTo(ADMIN.getName());
 		assertThat(result).isSameAs(created);
 		ArgumentCaptor<AuditLogCommand> audit = ArgumentCaptor.forClass(AuditLogCommand.class);
 		verify(auditLogs).record(audit.capture());
@@ -202,7 +221,8 @@ class AdminAttendancePolicyServiceTest {
 		when(repository.saveStreakPolicy(eq(expected), eq(milestones), any()))
 				.thenReturn(new StreakPolicyRecord(UUID.randomUUID(), expected, List.of(), ADMIN.getId(), NOW));
 		// when
-		StreakPolicyRecord result = service(kstNovember).createStreakPolicy(ADMIN, milestones);
+		NamedValue<StreakPolicyRecord> named = service(kstNovember).createStreakPolicy(ADMIN, milestones);
+		StreakPolicyRecord result = named.getValue();
 		// then
 		assertThat(result.getEffectiveMonth()).isEqualTo(expected);
 	}
@@ -251,5 +271,196 @@ class AdminAttendancePolicyServiceTest {
 		assertThatThrownBy(() -> service(NOW).createStreakPolicy(ADMIN, null))
 				.satisfies(e -> assertError(e, AttendanceErrorCode.INVALID_POLICY));
 		verifyNoInteractions(repository, auditLogs);
+	}
+
+	@Test
+	@DisplayName("관리자가 아니면 예약 정책 수정을 ATTENDANCE-002로 거절하고 저장소를 읽지 않는다")
+	void rejectsNonAdminUpdates() {
+		for (User caller : new User[] {null, user(UserRole.USER, UserStatus.ACTIVE),
+				user(UserRole.ADMIN, UserStatus.INACTIVE)}) {
+			assertThatThrownBy(() -> service(NOW).updateDailyPolicy(caller, UUID.randomUUID(), 2))
+					.satisfies(e -> assertError(e, AttendanceErrorCode.ADMIN_REQUIRED));
+			assertThatThrownBy(() -> service(NOW).updateStreakPolicy(caller, UUID.randomUUID(),
+					List.of(new MilestoneDraft(7, 1))))
+					.satisfies(e -> assertError(e, AttendanceErrorCode.ADMIN_REQUIRED));
+		}
+		verifyNoInteractions(repository, auditLogs);
+	}
+
+	@Test
+	@DisplayName("작성자 사용자가 없으면 정책 목록의 작성자 이름은 null이다")
+	void returnsNullCreatorNameInListWhenCreatorIsMissing() {
+		// given
+		UUID creator = UUID.randomUUID();
+		DailyAttendancePolicy daily = new DailyAttendancePolicy(UUID.randomUUID(), 2, NEXT_MIDNIGHT, null, creator, NOW);
+		when(repository.findDailyPolicies(FIRST_PAGE)).thenReturn(new PageResult<>(List.of(daily), 1, 20, 1));
+		when(userNames.findNamesByIds(Set.of(creator))).thenReturn(Map.of());
+		// when
+		PageResult<NamedValue<DailyAttendancePolicy>> result = service(NOW).findDailyPolicies(ADMIN, FIRST_PAGE);
+		// then: 정책은 그대로 나가고 이름만 null이다
+		assertThat(result.getItems()).extracting(NamedValue::getValue).containsExactly(daily);
+		assertThat(result.getItems()).extracting(NamedValue::getName).containsExactly((String) null);
+	}
+
+	@Test
+	@DisplayName("작성자 사용자가 없으면 정책 수정 응답의 작성자 이름은 null이다")
+	void returnsNullCreatorNameOnUpdateWhenCreatorIsMissing() {
+		// given
+		DailyAttendancePolicy scheduled = daily(1, NEXT_MIDNIGHT, null);
+		DailyAttendancePolicy updated = new DailyAttendancePolicy(scheduled.getId(), 3, NEXT_MIDNIGHT, null,
+				scheduled.getCreatedBy(), NOW);
+		when(repository.findDailyPolicyForUpdate(scheduled.getId())).thenReturn(Optional.of(scheduled));
+		when(repository.updateDailyRewardTicketCount(scheduled.getId(), 3)).thenReturn(updated);
+		when(userNames.findNamesByIds(Set.of(scheduled.getCreatedBy()))).thenReturn(Map.of());
+		// when
+		NamedValue<DailyAttendancePolicy> named = service(NOW).updateDailyPolicy(ADMIN, scheduled.getId(), 3);
+		// then
+		assertThat(named.getValue()).isSameAs(updated);
+		assertThat(named.getName()).isNull();
+	}
+
+	@Test
+	@DisplayName("아직 시작하지 않은 예약 일일 정책의 보상 수량을 바꾸고 수정 전·후 값을 감사 기록에 남긴다")
+	void updatesScheduledDailyPolicy() {
+		// given
+		DailyAttendancePolicy scheduled = daily(1, NEXT_MIDNIGHT, null);
+		DailyAttendancePolicy updated = new DailyAttendancePolicy(scheduled.getId(), 3, NEXT_MIDNIGHT, null,
+				scheduled.getCreatedBy(), NOW);
+		when(repository.findDailyPolicyForUpdate(scheduled.getId())).thenReturn(Optional.of(scheduled));
+		when(repository.updateDailyRewardTicketCount(scheduled.getId(), 3)).thenReturn(updated);
+		when(userNames.findNamesByIds(Set.of(scheduled.getCreatedBy()))).thenReturn(Map.of(scheduled.getCreatedBy(), "작성자"));
+		// when
+		NamedValue<DailyAttendancePolicy> named = service(NOW).updateDailyPolicy(ADMIN, scheduled.getId(), 3);
+		DailyAttendancePolicy result = named.getValue();
+		// then
+		assertThat(named.getName()).isEqualTo("작성자");
+		assertThat(result).isSameAs(updated);
+		ArgumentCaptor<AuditLogCommand> audit = ArgumentCaptor.forClass(AuditLogCommand.class);
+		verify(auditLogs).record(audit.capture());
+		assertThat(audit.getValue().getAction()).isEqualTo("ATTENDANCE_DAILY_POLICY_UPDATE");
+		assertThat(audit.getValue().getTargetId()).isEqualTo(scheduled.getId());
+		assertThat(audit.getValue().getBeforeData()).containsEntry("rewardTicketCount", 1);
+		assertThat(audit.getValue().getAfterData()).containsEntry("rewardTicketCount", 3);
+	}
+
+	@Test
+	@DisplayName("적용 시작 시각 정각이거나 이미 시작한 일일 정책은 ATTENDANCE-007로 거절하고 바꾸지 않는다")
+	void rejectsStartedDailyPolicy() {
+		// given
+		DailyAttendancePolicy current = daily(1, Instant.parse("2026-10-16T15:00:00Z"), null);
+		when(repository.findDailyPolicyForUpdate(current.getId())).thenReturn(Optional.of(current));
+		DailyAttendancePolicy atBoundary = daily(1, NOW, null);
+		when(repository.findDailyPolicyForUpdate(atBoundary.getId())).thenReturn(Optional.of(atBoundary));
+		// when
+		// then
+		assertThatThrownBy(() -> service(NOW).updateDailyPolicy(ADMIN, current.getId(), 3))
+				.satisfies(e -> assertError(e, AttendanceErrorCode.POLICY_ALREADY_STARTED));
+		assertThatThrownBy(() -> service(NOW).updateDailyPolicy(ADMIN, atBoundary.getId(), 3))
+				.satisfies(e -> assertError(e, AttendanceErrorCode.POLICY_ALREADY_STARTED));
+		verify(repository, never()).updateDailyRewardTicketCount(any(), anyInt());
+		verifyNoInteractions(auditLogs);
+	}
+
+	@Test
+	@DisplayName("없는 일일 정책은 ATTENDANCE-006, 보상 수량이 1 미만이면 ATTENDANCE-003으로 거절한다")
+	void rejectsMissingOrInvalidDailyUpdate() {
+		// given
+		UUID missing = UUID.randomUUID();
+		when(repository.findDailyPolicyForUpdate(missing)).thenReturn(Optional.empty());
+		// when
+		// then
+		assertThatThrownBy(() -> service(NOW).updateDailyPolicy(ADMIN, missing, 2))
+				.satisfies(e -> assertError(e, AttendanceErrorCode.UPDATE_TARGET_POLICY_NOT_FOUND));
+		assertThatThrownBy(() -> service(NOW).updateDailyPolicy(ADMIN, UUID.randomUUID(), 0))
+				.satisfies(e -> assertError(e, AttendanceErrorCode.INVALID_POLICY));
+		verify(repository, never()).updateDailyRewardTicketCount(any(), anyInt());
+		verifyNoInteractions(auditLogs);
+	}
+
+	@Test
+	@DisplayName("아직 시작하지 않은 예약 연속 출석 정책의 단계를 모두 바꾸고 수정 전·후 단계를 감사 기록에 남긴다")
+	void updatesScheduledStreakPolicy() {
+		// given
+		UUID setId = UUID.randomUUID();
+		StreakPolicyRecord scheduled = new StreakPolicyRecord(setId, LocalDate.of(2026, 11, 1),
+				List.of(new StreakMilestone(UUID.randomUUID(), 7, 1)), ADMIN.getId(), NOW);
+		List<MilestoneDraft> next = List.of(new MilestoneDraft(7, 2), new MilestoneDraft(28, 7));
+		StreakPolicyRecord updated = new StreakPolicyRecord(setId, LocalDate.of(2026, 11, 1), List.of(),
+				ADMIN.getId(), NOW);
+		when(repository.findStreakPolicyForUpdate(setId)).thenReturn(Optional.of(scheduled));
+		when(repository.replaceStreakMilestones(setId, next)).thenReturn(updated);
+		when(userNames.findNamesByIds(Set.of(ADMIN.getId()))).thenReturn(Map.of(ADMIN.getId(), "작성자"));
+		// when
+		NamedValue<StreakPolicyRecord> named = service(NOW).updateStreakPolicy(ADMIN, setId, next);
+		StreakPolicyRecord result = named.getValue();
+		// then
+		assertThat(named.getName()).isEqualTo("작성자");
+		assertThat(result).isSameAs(updated);
+		ArgumentCaptor<AuditLogCommand> audit = ArgumentCaptor.forClass(AuditLogCommand.class);
+		verify(auditLogs).record(audit.capture());
+		assertThat(audit.getValue().getAction()).isEqualTo("ATTENDANCE_STREAK_POLICY_UPDATE");
+		assertThat(audit.getValue().getTargetId()).isEqualTo(setId);
+		assertThat(audit.getValue().getBeforeData())
+				.containsEntry("effectiveMonth", "2026-11-01")
+				.containsEntry("milestones", List.of(Map.of("milestoneDays", 7, "rewardTicketCount", 1)));
+		assertThat(audit.getValue().getAfterData())
+				.containsEntry("effectiveMonth", "2026-11-01")
+				.containsEntry("milestones", List.of(Map.of("milestoneDays", 7, "rewardTicketCount", 2),
+						Map.of("milestoneDays", 28, "rewardTicketCount", 7)));
+	}
+
+	@Test
+	@DisplayName("적용월 전날 23:59:59(KST)까지는 아직 시작하지 않은 연속 출석 정책으로 보고 수정한다")
+	void updatesStreakPolicyJustBeforeKstMonthStarts() {
+		// given 2026-10-31 23:59:59 KST
+		Instant lastSecondBeforeNovember = Instant.parse("2026-10-31T14:59:59Z");
+		UUID setId = UUID.randomUUID();
+		StreakPolicyRecord november = new StreakPolicyRecord(setId, LocalDate.of(2026, 11, 1), List.of(),
+				ADMIN.getId(), NOW);
+		List<MilestoneDraft> next = List.of(new MilestoneDraft(7, 2));
+		when(repository.findStreakPolicyForUpdate(setId)).thenReturn(Optional.of(november));
+		when(repository.replaceStreakMilestones(setId, next)).thenReturn(november);
+		// when
+		NamedValue<StreakPolicyRecord> named = service(lastSecondBeforeNovember).updateStreakPolicy(ADMIN, setId, next);
+		StreakPolicyRecord result = named.getValue();
+		// then
+		assertThat(result).isSameAs(november);
+		verify(repository).replaceStreakMilestones(setId, next);
+		verify(auditLogs).record(any(AuditLogCommand.class));
+	}
+
+	@Test
+	@DisplayName("적용월 1일(KST)부터는 이미 시작한 연속 출석 정책으로 보고 ATTENDANCE-007로 거절한다")
+	void rejectsStartedStreakPolicy() {
+		// given 2026-11-01 00:30 KST
+		Instant kstNovember = Instant.parse("2026-10-31T15:30:00Z");
+		UUID setId = UUID.randomUUID();
+		StreakPolicyRecord november = new StreakPolicyRecord(setId, LocalDate.of(2026, 11, 1), List.of(),
+				ADMIN.getId(), NOW);
+		when(repository.findStreakPolicyForUpdate(setId)).thenReturn(Optional.of(november));
+		// when
+		// then
+		assertThatThrownBy(() -> service(kstNovember).updateStreakPolicy(ADMIN, setId,
+				List.of(new MilestoneDraft(7, 2))))
+				.satisfies(e -> assertError(e, AttendanceErrorCode.POLICY_ALREADY_STARTED));
+		verify(repository, never()).replaceStreakMilestones(any(), any());
+		verifyNoInteractions(auditLogs);
+	}
+
+	@Test
+	@DisplayName("없는 연속 출석 정책 묶음은 ATTENDANCE-006, 단계 규칙을 어기면 ATTENDANCE-003으로 거절하고 저장소를 바꾸지 않는다")
+	void rejectsMissingOrInvalidStreakUpdate() {
+		// given
+		UUID missing = UUID.randomUUID();
+		when(repository.findStreakPolicyForUpdate(missing)).thenReturn(Optional.empty());
+		// when
+		// then
+		assertThatThrownBy(() -> service(NOW).updateStreakPolicy(ADMIN, missing, List.of(new MilestoneDraft(7, 1))))
+				.satisfies(e -> assertError(e, AttendanceErrorCode.UPDATE_TARGET_POLICY_NOT_FOUND));
+		assertThatThrownBy(() -> service(NOW).updateStreakPolicy(ADMIN, UUID.randomUUID(),
+				List.of(new MilestoneDraft(14, 1), new MilestoneDraft(7, 1))))
+				.satisfies(e -> assertError(e, AttendanceErrorCode.INVALID_POLICY));
+		verify(repository, never()).replaceStreakMilestones(any(), any());
+		verifyNoInteractions(auditLogs);
 	}
 }

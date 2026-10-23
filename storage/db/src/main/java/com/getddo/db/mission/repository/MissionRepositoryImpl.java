@@ -1,5 +1,6 @@
 package com.getddo.db.mission.repository;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -95,6 +96,11 @@ public class MissionRepositoryImpl implements MissionRepository {
 				likePattern(search.getKeyword()), search.getStartsFrom(), search.getStartsBefore(), pageable);
 		List<Mission> items = beyondIntOffset ? List.of() : found.getContent().stream().map(mapper::toDomain).toList();
 		return new PageResult<>(items, page.getPage(), page.getSize(), found.getTotalElements());
+	}
+
+	@Override
+	public int endExpired(Instant now) {
+		return missionJpaRepository.endExpired(now);
 	}
 
 	private MissionDetail toDetail(MissionEntity mission) {

@@ -59,7 +59,7 @@ public class AwardCancellationRegistrationService {
 		DrawSnapshot source = results.lockSnapshot(target.runId()).orElseThrow(() -> new BusinessException(NOT_FOUND));
 		Instant now = time.now().truncatedTo(ChronoUnit.MICROS);
 		if (event.deleted() || event.status() == EventStatus.CANCELED || event.status() == EventStatus.SCHEDULED
-				|| now.isBefore(event.endsAt().plusSeconds(300)) || source.status() != DrawRunStatus.CONFIRMED
+				|| now.isBefore(event.endsAt().plusSeconds(60)) || source.status() != DrawRunStatus.CONFIRMED
 				|| !target.eventId().equals(source.eventId()) || target.resultType() != DrawSelectionResultType.SELECTED
 				|| cancellations.findByDrawResultId(winId).isPresent()
 				|| replacements.hasPendingReplacement(target.eventId())) throw new BusinessException(NOT_CANCELABLE);

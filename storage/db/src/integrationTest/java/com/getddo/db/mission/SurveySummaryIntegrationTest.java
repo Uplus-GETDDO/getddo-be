@@ -6,14 +6,25 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
+import com.getddo.core.common.pagination.PageQuery;
+import com.getddo.core.common.pagination.PageResult;
 import com.getddo.core.mission.domain.MissionAnswerInput;
 import com.getddo.core.mission.domain.MissionDetail;
 import com.getddo.core.mission.domain.MissionSubmissionCommand;
+import com.getddo.core.mission.domain.SurveyFreeTextAnswer;
 import com.getddo.core.mission.domain.SurveyQuestion;
 import com.getddo.core.mission.domain.SurveySummary;
 import com.getddo.core.mission.exception.MissionErrorCode;
@@ -22,6 +33,7 @@ import com.getddo.core.mission.service.SurveySummaryService;
 import com.getddo.core.user.domain.User;
 import com.getddo.core.user.domain.UserRole;
 import com.getddo.core.user.domain.UserStatus;
+import com.getddo.db.ticket.ConcurrentTasks;
 
 import static com.getddo.db.ticket.TicketGrantSeeds.bytes;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -41,6 +53,8 @@ class SurveySummaryIntegrationTest extends MissionIntegrationTestSupport {
 	private MissionSubmissionService submissionService;
 	@Autowired
 	private SurveySummaryService summaryService;
+	@Autowired
+	private PlatformTransactionManager transactionManager;
 
 	private User admin() {
 		return new User(adminId, "관리자", UserRole.ADMIN, UserStatus.ACTIVE, null, null, null, null, null, null, null);
@@ -165,5 +179,187 @@ class SurveySummaryIntegrationTest extends MissionIntegrationTestSupport {
 		assertThat(month.getDailyResponses().get(11).count()).isEqualTo(1L);
 		assertThatThrownBy(() -> summaryService.summarize(admin(), missionId, from, from.plusDays(31)))
 				.hasFieldOrPropertyWithValue("errorCode", MissionErrorCode.INVALID_MISSION_DEFINITION);
+	}
+
+	private void submitChoiceAndText(UUID user, MissionDetail survey, String text, Instant at) {
+		clock.set(at);
+		SurveyQuestion choice = survey.getSurveyQuestions().get(0);
+		SurveyQuestion free = survey.getSurveyQuestions().get(1);
+		submissionService.submit(new MissionSubmissionCommand(user, survey.getMission().getId(), UUID.randomUUID(),
+				List.of(new MissionAnswerInput(choice.getId(), choice.getOptions().get(0).getId(), null),
+						new MissionAnswerInput(free.getId(), null, text))));
+	}
+
+	@Test
+	@DisplayName("자유 서술 답변은 KST 날짜 경계로 걸러 최신순으로 돌려주고 답변 원문과 제출 시각만 담는다")
+	void listsFreeTextAnswersNewestFirstWithinKstRange() {
+		// given
+		MissionDetail survey = saveSurveyMission("서술 설문");
+		UUID missionId = survey.getMission().getId();
+		UUID freeId = survey.getSurveyQuestions().get(1).getId();
+		submitChoiceAndText(seeds.user(), survey, "전날 마지막 초", KST_FIRST_SECOND_OF_12TH.minusSeconds(1));
+		submitChoiceAndText(seeds.user(), survey, "당일 첫 초", KST_FIRST_SECOND_OF_12TH);
+		submitChoiceAndText(seeds.user(), survey, "당일 한 시간 뒤", KST_FIRST_SECOND_OF_12TH.plusSeconds(3_600));
+		submitChoiceAndText(seeds.user(), survey, "다음 날 첫 초", KST_FIRST_SECOND_OF_12TH.plusSeconds(86_400));
+		// when
+		PageResult<SurveyFreeTextAnswer> day12 = summaryService.findFreeTextAnswers(admin(), missionId, freeId, DAY_12,
+				DAY_12, new PageQuery(1, 10));
+		// then
+		assertThat(day12.getTotalElements()).isEqualTo(2L);
+		assertThat(day12.getItems()).extracting(SurveyFreeTextAnswer::getAnswerText)
+				.containsExactly("당일 한 시간 뒤", "당일 첫 초");
+		assertThat(day12.getItems()).extracting(SurveyFreeTextAnswer::getSubmittedAt)
+				.containsExactly(KST_FIRST_SECOND_OF_12TH.plusSeconds(3_600), KST_FIRST_SECOND_OF_12TH);
+	}
+
+	@Test
+	@DisplayName("자유 서술 답변은 페이지로 나누고 범위를 넘는 페이지는 빈 목록에 전체 건수를 돌려준다")
+	void pagesFreeTextAnswers() {
+		// given
+		MissionDetail survey = saveSurveyMission("서술 설문");
+		UUID missionId = survey.getMission().getId();
+		UUID freeId = survey.getSurveyQuestions().get(1).getId();
+		for (int i = 0; i < 3; i++) {
+			submitChoiceAndText(seeds.user(), survey, "답변 " + i, KST_FIRST_SECOND_OF_12TH.plusSeconds(60L * i));
+		}
+		// when
+		PageResult<SurveyFreeTextAnswer> second = summaryService.findFreeTextAnswers(admin(), missionId, freeId, DAY_12,
+				DAY_12, new PageQuery(2, 2));
+		PageResult<SurveyFreeTextAnswer> beyond = summaryService.findFreeTextAnswers(admin(), missionId, freeId,
+				DAY_12, DAY_12, new PageQuery(3, 2));
+		// then
+		assertThat(second.getTotalElements()).isEqualTo(3L);
+		assertThat(second.getItems()).extracting(SurveyFreeTextAnswer::getAnswerText).containsExactly("답변 0");
+		assertThat(beyond.getTotalElements()).isEqualTo(3L);
+		assertThat(beyond.getItems()).isEmpty();
+	}
+
+	@Test
+	@DisplayName("제출 시각이 같은 답변은 답변 ID 내림차순으로 페이지 경계에서도 겹치지 않고, 서술 답변이 없거나 answer_text가 빈 완료 제출은 담지 않는다")
+	void ordersTiesByAnswerIdAndSkipsEmptyAnswers() {
+		// given
+		MissionDetail survey = saveSurveyMission("동률 설문");
+		UUID missionId = survey.getMission().getId();
+		UUID freeId = survey.getSurveyQuestions().get(1).getId();
+		Instant sameInstant = KST_FIRST_SECOND_OF_12TH.plusSeconds(10);
+		submitChoiceAndText(seeds.user(), survey, "동시 답변 A", sameInstant);
+		submitChoiceAndText(seeds.user(), survey, "동시 답변 B", sameInstant);
+		submitChoice(seeds.user(), survey, 0, sameInstant);
+		submitChoice(seeds.user(), survey, 1, sameInstant);
+		// 선택 문항이라 서술 답변 행이 없는 완료 제출에, answer_text가 null인 행을 직접 만들어 SQL 조건을 보호한다.
+		byte[] withoutText = jdbc.queryForObject("""
+				select s.id from mission_submissions s
+				where s.mission_id = ? and not exists (
+				  select 1 from survey_answers a where a.submission_id = s.id and a.survey_question_id = ?)
+				limit 1
+				""", byte[].class, bytes(missionId), bytes(freeId));
+		jdbc.update("""
+				insert into survey_answers (id, submission_id, mission_id, survey_question_id, answer_text, created_at)
+				values (?, ?, ?, ?, null, ?)
+				""", bytes(UUID.randomUUID()), withoutText, bytes(missionId), bytes(freeId),
+				LocalDateTime.ofInstant(sameInstant, ZoneOffset.UTC));
+		List<String> byIdDescending = jdbc.queryForList("""
+				select answer_text from survey_answers
+				where survey_question_id = ? and answer_text is not null order by id desc
+				""", String.class, bytes(freeId));
+		// when
+		PageResult<SurveyFreeTextAnswer> first = summaryService.findFreeTextAnswers(admin(), missionId, freeId, DAY_12,
+				DAY_12, new PageQuery(1, 1));
+		PageResult<SurveyFreeTextAnswer> second = summaryService.findFreeTextAnswers(admin(), missionId, freeId, DAY_12,
+				DAY_12, new PageQuery(2, 1));
+		// then
+		assertThat(byIdDescending).containsExactlyInAnyOrder("동시 답변 A", "동시 답변 B");
+		assertThat(first.getTotalElements()).isEqualTo(2L);
+		assertThat(second.getTotalElements()).isEqualTo(2L);
+		assertThat(first.getItems()).extracting(SurveyFreeTextAnswer::getAnswerText).containsExactly(byIdDescending.get(0));
+		assertThat(second.getItems()).extracting(SurveyFreeTextAnswer::getAnswerText)
+				.containsExactly(byIdDescending.get(1));
+	}
+
+	@Test
+	@DisplayName("미완료 제출의 서술 답변과 다른 설문의 답변은 섞이지 않고, 선택형 문항은 거절한다")
+	void excludesIncompleteAndOtherMissionAnswers() {
+		// given
+		MissionDetail survey = saveSurveyMission("서술 설문");
+		MissionDetail other = saveSurveyMission("다른 서술 설문");
+		UUID missionId = survey.getMission().getId();
+		SurveyQuestion free = survey.getSurveyQuestions().get(1);
+		submitChoiceAndText(userId, survey, "완료된 답변", KST_FIRST_SECOND_OF_12TH);
+		submitChoiceAndText(seeds.user(), other, "다른 설문 답변", KST_FIRST_SECOND_OF_12TH);
+		UUID incomplete = UUID.randomUUID();
+		LocalDateTime at = LocalDateTime.ofInstant(KST_FIRST_SECOND_OF_12TH, ZoneOffset.UTC);
+		jdbc.update("""
+				insert into mission_submissions (id, mission_id, reward_policy_id, user_id, is_completed, created_at)
+				values (?, ?, ?, ?, false, ?)
+				""", bytes(incomplete), bytes(missionId), bytes(rewardPolicyId), bytes(seeds.user()), at);
+		jdbc.update("""
+				insert into survey_answers (id, submission_id, mission_id, survey_question_id, answer_text, created_at)
+				values (?, ?, ?, ?, ?, ?)
+				""", bytes(UUID.randomUUID()), bytes(incomplete), bytes(missionId), bytes(free.getId()),
+				"미완료 답변", at);
+		// when
+		PageResult<SurveyFreeTextAnswer> answers = summaryService.findFreeTextAnswers(admin(), missionId, free.getId(),
+				DAY_12, DAY_12, new PageQuery(1, 10));
+		// then
+		assertThat(answers.getItems()).extracting(SurveyFreeTextAnswer::getAnswerText).containsExactly("완료된 답변");
+		assertThatThrownBy(() -> summaryService.findFreeTextAnswers(admin(), missionId,
+				survey.getSurveyQuestions().get(0).getId(), DAY_12, DAY_12, new PageQuery(1, 10)))
+				.hasFieldOrPropertyWithValue("errorCode", MissionErrorCode.INVALID_MISSION_DEFINITION);
+		assertThatThrownBy(() -> summaryService.findFreeTextAnswers(admin(), missionId, other.getSurveyQuestions().get(1)
+				.getId(), DAY_12, DAY_12, new PageQuery(1, 10)))
+				.hasFieldOrPropertyWithValue("errorCode", MissionErrorCode.INVALID_MISSION_DEFINITION);
+	}
+
+	@Test
+	@DisplayName("REPEATABLE READ 트랜잭션 안에서는 다른 트랜잭션이 답변을 확정해도 전체 건수와 항목이 같은 스냅샷을 유지하고 새 트랜잭션은 새 답변을 본다")
+	void keepsSameSnapshotWhileAnotherTransactionCommitsAnswer() {
+		// given
+		MissionDetail survey = saveSurveyMission("스냅샷 설문");
+		UUID missionId = survey.getMission().getId();
+		UUID freeId = survey.getSurveyQuestions().get(1).getId();
+		submitChoiceAndText(seeds.user(), survey, "기존 답변 A", KST_FIRST_SECOND_OF_12TH);
+		submitChoiceAndText(seeds.user(), survey, "기존 답변 B", KST_FIRST_SECOND_OF_12TH.plusSeconds(60));
+		TransactionTemplate repeatableRead = new TransactionTemplate(transactionManager);
+		repeatableRead.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+		ExecutorService other = Executors.newSingleThreadExecutor();
+		try {
+			// when: 같은 REPEATABLE READ 트랜잭션의 첫 조회 뒤에 다른 트랜잭션이 답변을 확정하고 다시 조회한다
+			List<PageResult<SurveyFreeTextAnswer>> inTransaction = repeatableRead.execute(status -> {
+				PageResult<SurveyFreeTextAnswer> before = summaryService.findFreeTextAnswers(admin(), missionId, freeId,
+						DAY_12, DAY_12, new PageQuery(1, 10));
+				commitInOtherTransaction(other, () -> submitChoiceAndText(seeds.user(), survey, "스냅샷 이후 답변",
+						KST_FIRST_SECOND_OF_12TH.plusSeconds(120)));
+				PageResult<SurveyFreeTextAnswer> after = summaryService.findFreeTextAnswers(admin(), missionId, freeId,
+						DAY_12, DAY_12, new PageQuery(1, 10));
+				return List.of(before, after);
+			});
+			PageResult<SurveyFreeTextAnswer> fresh = summaryService.findFreeTextAnswers(admin(), missionId, freeId,
+					DAY_12, DAY_12, new PageQuery(1, 10));
+
+			// then: 같은 트랜잭션에서는 건수와 항목이 모두 그대로이고, 새 트랜잭션에서는 건수와 항목에 함께 반영된다
+			PageResult<SurveyFreeTextAnswer> before = inTransaction.get(0);
+			PageResult<SurveyFreeTextAnswer> after = inTransaction.get(1);
+			assertThat(before.getTotalElements()).isEqualTo(2L);
+			assertThat(after.getTotalElements()).isEqualTo(before.getTotalElements());
+			assertThat(after.getItems()).extracting(SurveyFreeTextAnswer::getAnswerText)
+					.containsExactlyElementsOf(before.getItems().stream().map(SurveyFreeTextAnswer::getAnswerText).toList());
+			assertThat(fresh.getTotalElements()).isEqualTo(3L);
+			assertThat(fresh.getItems()).extracting(SurveyFreeTextAnswer::getAnswerText)
+					.containsExactly("스냅샷 이후 답변", "기존 답변 B", "기존 답변 A");
+		} finally {
+			ConcurrentTasks.shutdownAndAwait(other);
+		}
+	}
+
+	/** 다른 스레드의 독립 트랜잭션에서 작업을 커밋하고 끝나기를 기다린다. 인터럽트되면 상태를 복원한다. */
+	private static void commitInOtherTransaction(ExecutorService executor, Runnable work) {
+		try {
+			executor.submit(work).get(30, TimeUnit.SECONDS);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException(e);
+		} catch (ExecutionException | TimeoutException e) {
+			throw new IllegalStateException(e);
+		}
 	}
 }

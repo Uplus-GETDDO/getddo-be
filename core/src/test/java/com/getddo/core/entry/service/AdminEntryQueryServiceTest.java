@@ -2,7 +2,9 @@ package com.getddo.core.entry.service;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import org.junit.jupiter.api.DisplayName;
@@ -14,6 +16,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import com.getddo.core.common.pagination.PageQuery;
 import com.getddo.core.common.pagination.PageResult;
 import com.getddo.core.entry.domain.AdminEntryFilter;
+import com.getddo.core.entry.domain.Entry;
 import com.getddo.core.entry.domain.EntryEvent;
 import com.getddo.core.entry.domain.EntryParticipant;
 import com.getddo.core.entry.domain.EntrySummary;
@@ -22,9 +25,12 @@ import com.getddo.core.entry.exception.EntryException;
 import com.getddo.core.entry.repository.EntryEventReader;
 import com.getddo.core.entry.repository.EntryParticipantRepository;
 import com.getddo.core.entry.repository.EntryRepository;
+import com.getddo.core.ticket.domain.TicketGrade;
+import com.getddo.core.user.domain.NamedValue;
 import com.getddo.core.user.domain.User;
 import com.getddo.core.user.domain.UserRole;
 import com.getddo.core.user.domain.UserStatus;
+import com.getddo.core.user.repository.UserNameRepository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -46,13 +52,15 @@ class AdminEntryQueryServiceTest {
 	private EntryParticipantRepository participantRepository;
 	@Mock
 	private EntryEventReader eventReader;
+	@Mock
+	private UserNameRepository userNames;
 
 	private static User user(UserRole role, UserStatus status) {
 		return new User(UUID.randomUUID(), "사용자", role, status, null, null, null, null, null, null, null);
 	}
 
 	private AdminEntryQueryService service() {
-		return new AdminEntryQueryService(entryRepository, participantRepository, eventReader);
+		return new AdminEntryQueryService(entryRepository, participantRepository, eventReader, userNames);
 	}
 
 	private static AdminEntryFilter anyFilter() {
@@ -60,17 +68,31 @@ class AdminEntryQueryServiceTest {
 	}
 
 	@Test
-	@DisplayName("관리자의 응모 내역 조회는 조건을 저장소에 그대로 넘기고 결과를 돌려준다")
+	@DisplayName("관리자의 응모 내역 조회는 조건을 저장소에 그대로 넘기고 응모한 사용자의 현재 이름을 함께 돌려준다")
 	void findsEntriesForAdmin() {
 		// given
-		AdminEntryFilter filter = new AdminEntryFilter(UUID.randomUUID(), EVENT_ID, null, Instant.EPOCH,
+		UUID userId = UUID.randomUUID();
+		UUID strangerId = UUID.randomUUID();
+		AdminEntryFilter filter = new AdminEntryFilter(userId, EVENT_ID, null, Instant.EPOCH,
 				Instant.EPOCH.plusSeconds(1));
-		PageResult<EntrySummary> page = new PageResult<>(List.of(), 1, 20, 0);
-		when(entryRepository.findAll(filter, FIRST_PAGE)).thenReturn(page);
+		EntrySummary mine = summaryOf(userId);
+		EntrySummary unknown = summaryOf(strangerId);
+		when(entryRepository.findAll(filter, FIRST_PAGE))
+				.thenReturn(new PageResult<>(List.of(mine, unknown), 1, 20, 2));
+		when(userNames.findNamesByIds(Set.of(userId, strangerId))).thenReturn(Map.of(userId, "홍길동"));
 		// when
-		PageResult<EntrySummary> result = service().findEntries(ADMIN, filter, FIRST_PAGE);
+		PageResult<NamedValue<EntrySummary>> result = service().findEntries(ADMIN, filter, FIRST_PAGE);
 		// then
-		assertThat(result).isSameAs(page);
+		assertThat(result.getTotalElements()).isEqualTo(2);
+		assertThat(result.getItems()).extracting(NamedValue::getValue).containsExactly(mine, unknown);
+		assertThat(result.getItems()).extracting(NamedValue::getName).containsExactly("홍길동", null);
+	}
+
+	private static EntrySummary summaryOf(UUID userId) {
+		EntryParticipant participant = new EntryParticipant(UUID.randomUUID(), EVENT_ID, userId, 1,
+				Instant.EPOCH);
+		return new EntrySummary(Entry.accepted(UUID.randomUUID(), participant, Map.of(TicketGrade.BRONZE, 1L),
+				Instant.EPOCH), "이벤트");
 	}
 
 	@Test
@@ -96,16 +118,21 @@ class AdminEntryQueryServiceTest {
 	}
 
 	@Test
-	@DisplayName("이벤트 응모자 조회는 이벤트가 있으면 응모자 페이지를 돌려준다")
+	@DisplayName("이벤트 응모자 조회는 이벤트가 있으면 응모자 페이지를 응모자 이름과 함께 돌려준다")
 	void findsParticipants() {
 		// given
-		PageResult<EntryParticipant> page = new PageResult<>(List.of(), 1, 20, 0);
+		UUID userId = UUID.randomUUID();
+		EntryParticipant participant = new EntryParticipant(UUID.randomUUID(), EVENT_ID, userId, 2, Instant.EPOCH);
 		when(eventReader.find(EVENT_ID)).thenReturn(Optional.of(mock(EntryEvent.class)));
-		when(participantRepository.findByEvent(EVENT_ID, FIRST_PAGE)).thenReturn(page);
+		when(participantRepository.findByEvent(EVENT_ID, FIRST_PAGE))
+				.thenReturn(new PageResult<>(List.of(participant), 1, 20, 1));
+		when(userNames.findNamesByIds(Set.of(userId))).thenReturn(Map.of(userId, "홍길동"));
 		// when
-		PageResult<EntryParticipant> result = service().findParticipants(ADMIN, EVENT_ID, FIRST_PAGE);
+		PageResult<NamedValue<EntryParticipant>> result = service().findParticipants(ADMIN, EVENT_ID, FIRST_PAGE);
 		// then
-		assertThat(result).isSameAs(page);
+		assertThat(result.getItems()).hasSize(1);
+		assertThat(result.getItems().get(0).getValue()).isSameAs(participant);
+		assertThat(result.getItems().get(0).getName()).isEqualTo("홍길동");
 	}
 
 	@Test

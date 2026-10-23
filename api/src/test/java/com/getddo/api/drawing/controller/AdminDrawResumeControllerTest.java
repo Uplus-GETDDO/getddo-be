@@ -3,34 +3,67 @@ package com.getddo.api.drawing.controller;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+
 import com.getddo.api.common.context.CurrentUserArgumentResolver;
 import com.getddo.api.common.exception.GlobalExceptionHandler;
 import com.getddo.core.audit.service.AuditLogService;
 import com.getddo.core.common.time.TimeProvider;
-import com.getddo.core.drawing.domain.*;
-import com.getddo.core.drawing.repository.*;
-import com.getddo.core.drawing.service.*;
+import com.getddo.core.drawing.domain.DrawConfirmation;
+import com.getddo.core.drawing.domain.DrawExecutionResult;
+import com.getddo.core.drawing.domain.DrawExecutionState;
+import com.getddo.core.drawing.domain.DrawResult;
+import com.getddo.core.drawing.domain.DrawRunStatus;
+import com.getddo.core.drawing.domain.DrawSelection;
+import com.getddo.core.drawing.domain.DrawSelectionResultType;
+import com.getddo.core.drawing.domain.DrawSnapshotSource;
+import com.getddo.core.drawing.domain.DrawType;
+import com.getddo.core.drawing.repository.DrawExecutionRepository;
+import com.getddo.core.drawing.repository.DrawFailureRepository;
+import com.getddo.core.drawing.repository.DrawResultRepository;
+import com.getddo.core.drawing.repository.DrawSnapshotRepository;
+import com.getddo.core.drawing.service.DrawAdminAuthorization;
+import com.getddo.core.drawing.service.DrawAdminNameService;
+import com.getddo.core.drawing.service.DrawExecutionAttemptService;
+import com.getddo.core.drawing.service.DrawExecutionControlService;
+import com.getddo.core.drawing.service.DrawExecutionPreparationService;
+import com.getddo.core.drawing.service.DrawExecutionService;
 import com.getddo.core.event.domain.EventStatus;
 import com.getddo.core.event.domain.EventType;
-import com.getddo.core.user.domain.*;
+import com.getddo.core.user.domain.Membership;
+import com.getddo.core.user.domain.User;
+import com.getddo.core.user.domain.UserRole;
+import com.getddo.core.user.domain.UserStatus;
+import com.getddo.core.user.repository.UserNameRepository;
 import com.getddo.core.user.repository.UserRepository;
 import com.getddo.core.user.service.UserService;
+
 import static org.hamcrest.Matchers.nullValue;
-import static org.mockito.Mockito.*;
-import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 class AdminDrawResumeControllerTest {
+	private final UserNameRepository userNames = mock(UserNameRepository.class);
 	private static final Instant NOW = Instant.parse("2026-10-12T03:00:00Z");
 	private final UUID runId = UUID.randomUUID(), eventId = UUID.randomUUID();
 	private final UUID adminId = UUID.randomUUID(), userId = UUID.randomUUID(), inactiveAdminId = UUID.randomUUID();
@@ -43,6 +76,10 @@ class AdminDrawResumeControllerTest {
 
 	/** 실제 사용자 문맥과 공통 실행 흐름을 사용하는 MVC 환경을 준비하고 영속성·확정 의존성을 대역한다. */
 	@BeforeEach void setUp() {
+		when(userNames.findNamesByIds(anyCollection())).thenAnswer(call -> {
+			Collection<UUID> ids = call.getArgument(0);
+			return ids.stream().collect(Collectors.toMap(id -> id, id -> "현재 이름"));
+		});
 		Map<UUID, User> users = Map.of(adminId, user(adminId, UserRole.ADMIN, UserStatus.ACTIVE),
 				userId, user(userId, UserRole.USER, UserStatus.ACTIVE), inactiveAdminId, user(inactiveAdminId, UserRole.ADMIN, UserStatus.INACTIVE));
 		UserRepository userRepository = id -> Optional.ofNullable(users.get(id));
@@ -50,7 +87,8 @@ class AdminDrawResumeControllerTest {
 		DrawExecutionControlService control = new DrawExecutionControlService(results, snapshots, executions,
 				mock(DrawFailureRepository.class), new DrawAdminAuthorization(userRepository), mock(AuditLogService.class), time);
 		DrawExecutionService service = new DrawExecutionService(control, attempts, preparations, time);
-		mvc = MockMvcBuilders.standaloneSetup(new AdminDrawResumeController(service))
+		mvc = MockMvcBuilders.standaloneSetup(new AdminDrawResumeController(
+				new DrawAdminNameService(userNames), service))
 				.setCustomArgumentResolvers(new CurrentUserArgumentResolver(new UserService(userRepository)))
 				.setControllerAdvice(new GlobalExceptionHandler()).build();
 		when(results.findEventId(runId)).thenReturn(Optional.of(eventId));
@@ -80,11 +118,18 @@ class AdminDrawResumeControllerTest {
 	@Test @DisplayName("확정된 최초 실행은 200과 저장 결과를 반환한다")
 	void returnsStoredConfirmation() throws Exception {
 		// given
-		when(executions.lockRun(runId)).thenReturn(Optional.of(state(DrawType.INITIAL, DrawRunStatus.CONFIRMED)));
+		DrawExecutionState confirmed = state(DrawType.INITIAL, DrawRunStatus.CONFIRMED);
+		when(executions.lockRun(runId)).thenReturn(Optional.of(confirmed));
+		DrawResult winner = new DrawResult(UUID.randomUUID(), new DrawSelection(UUID.randomUUID(), 1, 1, 1,
+				UUID.randomUUID(), userId, DrawSelectionResultType.SELECTED), NOW);
+		when(attempts.stored(confirmed)).thenReturn(new DrawExecutionResult(runId, DrawRunStatus.CONFIRMED,
+				new DrawConfirmation(runId, eventId, NOW, List.of(winner))));
 		// when / then
 		mvc.perform(post(path()).header("X-User-ID", adminId).header("X-User-Role", "ADMIN"))
 				.andExpect(status().isOk()).andExpect(jsonPath("$.data.runId").value(runId.toString()))
-				.andExpect(jsonPath("$.data.status").value("CONFIRMED")).andExpect(jsonPath("$.data.confirmation.results").isArray());
+				.andExpect(jsonPath("$.data.status").value("CONFIRMED")).andExpect(jsonPath("$.data.confirmation.results").isArray())
+				.andExpect(jsonPath("$.data.confirmation.results[0].userId").value(userId.toString()))
+				.andExpect(jsonPath("$.data.confirmation.results[0].userName").value("현재 이름"));
 		verifyNoInteractions(preparations);
 		verify(attempts, never()).execute(any(), any());
 	}

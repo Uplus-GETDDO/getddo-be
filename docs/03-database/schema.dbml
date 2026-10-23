@@ -107,12 +107,6 @@ Enum draw_publications_publication_type_enum {
   UPDATE
 }
 
-Enum abuse_cases_review_status_enum {
-  PENDING
-  ALLOWED
-  CONFIRMED
-}
-
 Enum events_event_type_enum {
   NO_TICKET
   TICKET
@@ -882,34 +876,34 @@ Table banner_catalog_lock {
 }
 
 Table abuse_cases {
-  id binary(16) [pk, not null, note: '어뷰징 탐지 ID']
-  event_id binary(16) [note: '관련 이벤트 ID']
+  id binary(16) [pk, not null, note: '차단 이력 ID. 최초 ID를 재시도에도 유지']
+  event_id binary(16) [note: '확인된 관련 이벤트. 미확인은 NULL']
   user_id binary(16) [not null, note: '사용자 ID']
-  attendance_id binary(16) [note: '원본 출석 기록 ID']
-  mission_submission_id binary(16) [note: '원본 미션 제출 ID']
-  game_play_id binary(16) [note: '원본 게임 플레이 ID']
-  reviewed_by binary(16) [note: 'ALLOWED·CONFIRMED에서 필수, PENDING에서는 NULL']
-  request_id varchar(100) [note: '관련 HTTP 요청 추적 ID']
-  detection_key varchar(160) [not null, note: '탐지 건 중복 저장 방지 키']
-  detection_type varchar(50) [not null, note: '탐지 유형 코드']
-  detection_reason text [not null, note: '탐지 사유']
-  evidence json [note: '탐지 근거']
-  occurred_at datetime(6) [not null, note: '탐지 대상 행위 발생 시각 UTC']
-  detected_at datetime(6) [not null, note: '탐지 시각 UTC']
-  review_status abuse_cases_review_status_enum [not null, note: 'PENDING=검토 전']
-  reviewed_at datetime(6) [note: 'ALLOWED·CONFIRMED에서 필수, PENDING에서는 NULL']
-  review_reason text [note: 'ALLOWED·CONFIRMED에서 필수, PENDING에서는 NULL']
+  attendance_id binary(16) [note: '기존 FK 보존. ENTRY에서는 NULL']
+  mission_submission_id binary(16) [note: '기존 FK 보존. ENTRY에서는 NULL']
+  game_play_id binary(16) [note: '기존 FK 보존. ENTRY에서는 NULL']
+  source_type varchar(40) [not null, note: '요청 기능. 현재 ENTRY']
+  detection_type varchar(50) [not null, note: 'ENTRY는 REPEATED_RATE_LIMIT_EXCEEDED']
+  detection_reason text [not null, note: '서버가 생성한 고정 차단 사유']
+  evidence json [not null, note: '최초 차단 당시 관측값·설정값. 목록에는 비노출']
+  occurred_at datetime(6) [not null, note: '임계값 도달 요청의 서버 수신 시각 UTC']
+  detected_at datetime(6) [not null, note: '최초 Redis 판정 시각 UTC. blocked_at과 동일']
+  blocked_at datetime(6) [not null, note: '최초 차단 시작 시각 UTC']
+  blocked_until datetime(6) [not null, note: '최초 차단 종료 예정 시각 UTC']
 
   indexes {
-    detection_key [unique, name: 'uq_abuse_detection_key']
+    (user_id, source_type, blocked_at) [unique, name: 'uq_abuse_user_source_blocked']
+    (blocked_at, id) [name: 'idx_abuse_blocked']
+    (user_id, blocked_at, id) [name: 'idx_abuse_user_blocked']
   }
 
-  Note: '부정행위 검토와 이벤트 제외는 동일한 상태로 단정하지 않음. 원본 FK 최대 하나, 원본 없는 요청은 request_id와 evidence 필수.'
+  Note: 'V030: 빈 테이블에서만 전환. 차단마다 행을 추가하며 만료로 수정하지 않음. 정상 응모의 추첨 제외에 사용하지 않음.'
 
   checks {
-    `(review_status = 'PENDING' AND reviewed_by IS NULL AND reviewed_at IS NULL AND review_reason IS NULL) OR (review_status IN ('ALLOWED','CONFIRMED') AND reviewed_by IS NOT NULL AND reviewed_at IS NOT NULL AND review_reason IS NOT NULL)` [name: 'chk_abuse_review_shape']
     `(attendance_id IS NOT NULL) + (mission_submission_id IS NOT NULL) + (game_play_id IS NOT NULL) <= 1` [name: 'chk_abuse_one_source']
-    `(attendance_id IS NOT NULL OR mission_submission_id IS NOT NULL OR game_play_id IS NOT NULL) OR (request_id IS NOT NULL AND evidence IS NOT NULL)` [name: 'chk_abuse_source_evidence']
+    `blocked_until > blocked_at` [name: 'chk_abuse_block_period']
+    `source_type <> 'ENTRY' OR (attendance_id IS NULL AND mission_submission_id IS NULL AND game_play_id IS NULL)` [name: 'chk_abuse_entry_sources']
+    `source_type <> 'ENTRY' OR (BINARY detection_type = BINARY 'REPEATED_RATE_LIMIT_EXCEEDED' AND BINARY detection_reason = BINARY '응모 요청 한도 초과가 반복되어 일시 차단되었습니다.')` [name: 'chk_abuse_entry_detection']
   }
 }
 
@@ -918,6 +912,7 @@ Table events {
   title varchar(200) [not null, note: '이벤트 제목']
   description text [not null, note: '상세 설명']
   image_key varchar(500) [note: '이미지 저장소 경로']
+  detail_image_key varchar(500) [default: null, note: '이벤트 상세 설명 이미지의 S3 저장 키']
   event_type events_event_type_enum [not null, note: 'NO_TICKET=응모권 미사용 / TICKET=응모권 사용']
   weighting_enabled boolean [not null, default: 0, note: '추첨 가중치 적용 여부']
   max_tickets_per_user int [note: '사용자별 이벤트 누적 상한']
@@ -1131,7 +1126,6 @@ Ref: abuse_cases.user_id > users.id
 Ref: abuse_cases.attendance_id > attendances.id
 Ref: abuse_cases.mission_submission_id > mission_submissions.id
 Ref: abuse_cases.game_play_id > game_plays.id
-Ref: abuse_cases.reviewed_by > users.id
 Ref: audit_logs.actor_id > users.id
 Ref: attendance_streaks.user_id > users.id
 Ref: attendance_streaks.policy_set_id > attendance_streak_policy_sets.id

@@ -14,6 +14,7 @@ final class EventAuditSnapshot {
 		data.put("title", event.getTitle());
 		data.put("description", event.getDescription());
 		data.put("imageKey", event.getImageKey());
+		data.put("detailImageKey", event.getDetailImageKey());
 		data.put("eventType", event.getEventType().name());
 		data.put("weightingEnabled", event.isWeightingEnabled());
 		data.put("maxTicketsPerUser", event.getMaxTicketsPerUser());

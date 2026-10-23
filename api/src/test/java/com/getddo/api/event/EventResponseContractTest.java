@@ -99,6 +99,7 @@ class EventResponseContractTest {
 		mvc.perform(get("/api/v1/events").header("X-User-ID", ACTOR_ID).header("X-User-Role", "ADMIN"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.items[0].status").value("PUBLISHED"))
+				.andExpect(jsonPath("$.data.items[0].winnerCount").value(3))
 				.andExpect(jsonPath("$.data.items[0].publicationScheduledAt").doesNotHaveJsonPath())
 				.andExpect(jsonPath("$.data.items[0].drawScheduledAt").doesNotHaveJsonPath())
 				.andExpect(jsonPath("$.data.items[0].serverTime").value(NOW.toString()))
@@ -111,12 +112,15 @@ class EventResponseContractTest {
 		mvc.perform(get("/api/v1/events/" + EVENT_ID).header("X-User-ID", ACTOR_ID).header("X-User-Role", "ADMIN"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.status").value("PUBLISHED"))
+				.andExpect(jsonPath("$.data.winnerCount").doesNotHaveJsonPath())
 				.andExpect(jsonPath("$.data.startsAt").value(STARTS_AT.toString()))
 				.andExpect(jsonPath("$.data.endsAt").value(ENDS_AT.toString()))
 				.andExpect(jsonPath("$.data.publicationScheduledAt").doesNotHaveJsonPath())
 				.andExpect(jsonPath("$.data.drawScheduledAt").doesNotHaveJsonPath())
 				.andExpect(jsonPath("$.data.serverTime").value(NOW.toString()))
 				.andExpect(jsonPath("$.data.description").value("이벤트 설명"))
+				.andExpect(jsonPath("$.data.detailImageUrl").value(nullValue()))
+				.andExpect(jsonPath("$.data.detailImageKey").doesNotHaveJsonPath())
 				.andExpect(jsonPath("$.data.maxTicketsPerUser").value(nullValue()))
 				.andExpect(jsonPath("$.data.prizes[0].id").value(PRIZE_ID.toString()))
 				.andExpect(jsonPath("$.data.prizes[0].rank").value(2))
@@ -144,6 +148,7 @@ class EventResponseContractTest {
 					.andExpect(status().isOk())
 					.andExpect(jsonPath(root + ".status").value("REDRAWING"))
 					.andExpect(jsonPath(root + ".imageKey").value("events/image.png"))
+					.andExpect(jsonPath(root + ".detailImageKey").value("events/details.png"))
 					.andExpect(jsonPath(root + ".createdBy").doesNotHaveJsonPath())
 					.andExpect(jsonPath(root + ".createdAt").value(NOW.toString()))
 					.andExpect(jsonPath(root + ".updatedAt").value(NOW.toString()))
@@ -151,7 +156,7 @@ class EventResponseContractTest {
 					.andExpect(jsonPath(root + ".suspendedAt").doesNotHaveJsonPath())
 					.andExpect(jsonPath(root + ".canceledAt").value(nullValue()))
 					.andExpect(jsonPath(root + ".publicationScheduledAt").doesNotHaveJsonPath())
-					.andExpect(jsonPath(root + ".drawScheduledAt").value("2026-10-03T09:05:00Z"))
+					.andExpect(jsonPath(root + ".drawScheduledAt").value("2026-10-03T09:01:00Z"))
 					.andExpect(jsonPath(root + ".prizes[0].winnerCount").value(3))
 					.andExpect(jsonPath(root + ".prizeImages[0].prizeId").value(PRIZE_ID.toString()))
 					.andExpect(jsonPath(root + ".prizeImages[0].imageKey").value("prizes/image.png"));
@@ -285,7 +290,7 @@ class EventResponseContractTest {
 	}
 
 	private static RegisteredEvent event(EventStatus status) {
-		return new RegisteredEvent(EVENT_ID, "이벤트", "이벤트 설명", "events/image.png",
+		return new RegisteredEvent(EVENT_ID, "이벤트", "이벤트 설명", "events/image.png", "events/details.png",
 				EventType.TICKET, true, null, MembershipRule.vip, STARTS_AT, ENDS_AT, status, NOW, NOW,
 				List.of(new RegisteredEvent.Prize(PRIZE_ID, 2, "경품", null, "prizes/image.png", 3)));
 	}
