@@ -1,4 +1,4 @@
-package com.getddo.api.common.ratelimit;
+package com.getddo.core.common.ratelimit;
 
 import java.time.Clock;
 import java.time.Duration;

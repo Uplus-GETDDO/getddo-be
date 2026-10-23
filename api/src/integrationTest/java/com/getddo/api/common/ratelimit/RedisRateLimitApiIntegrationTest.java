@@ -17,6 +17,8 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import com.getddo.api.support.ApiIntegrationTest;
+import com.getddo.core.common.ratelimit.RateLimiter;
+import com.getddo.redis.ratelimit.RedisRateLimiter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -78,7 +80,7 @@ class RedisRateLimitApiIntegrationTest {
 				.andExpect(header().exists("Retry-After"));
 		// 같은 사용자의 다른 미션은 범위별 한도가 따로 세어져 사용자 전체 한도(20) 안이면 허용된다
 		mvc.perform(submit(user, UUID.randomUUID())).andExpect(status().isUnauthorized());
-		Set<String> keys = redis.keys(RedisRateLimiter.KEY_PREFIX + "*" + user + "*");
+		Set<String> keys = redis.keys("getddo:rate-limit:" + "*" + user + "*");
 		assertThat(keys).isNotEmpty();
 	}
 }

@@ -27,8 +27,15 @@ class ConfigurationError(ValueError):
     """값을 포함하지 않는 운영용 오류 메시지."""
 
 
-def fetch(region):
+def parameter_prefix(environment):
+    if environment not in ("dev", "staging"):
+        raise ConfigurationError("지원하지 않는 배포 환경입니다.")
+    return PREFIX if environment == "dev" else "/getddo/staging/app/"
+
+
+def fetch(region, environment="dev"):
     """필수 설정을 최대 10개씩 복호화 조회하고 응답을 검증용 문서로 합친다."""
+    prefix = parameter_prefix(environment)
     # CLI 출력은 메모리로만 받는다. 원격 명령·Actions·SSM 로그에 비밀값을 쓰지 않는다.
     # 별도 profile이나 Access Key를 전달하지 않아 서버의 기본 인증 체인을 사용한다.
     # GetParameters는 한 번에 최대 10개다. 14개를 10개·4개로 조회해 모두 성공한 뒤 검증한다.
@@ -36,7 +43,7 @@ def fetch(region):
     for offset in range(0, len(KEYS), 10):
         result = subprocess.run(
             ["aws", "ssm", "get-parameters", "--names",
-             *[PREFIX + key for key in KEYS[offset:offset + 10]],
+             *[prefix + key for key in KEYS[offset:offset + 10]],
              "--with-decryption", "--region", region, "--output", "json", "--no-cli-pager"],
             capture_output=True, text=True, timeout=60,
         )
@@ -55,8 +62,9 @@ def fetch(region):
     return combined
 
 
-def validate(document, region):
+def validate(document, region, environment="dev"):
     """필수 이름·타입과 배포 설정 형식을 검사해 env에 기록할 값을 반환한다."""
+    prefix = parameter_prefix(environment)
     # 누락·중복·잘못된 타입은 기존 앱을 교체하기 전에 실패시킨다.
     if not isinstance(document, dict) or document.get("InvalidParameters"):
         raise ConfigurationError("필수 파라미터를 모두 조회하지 못했습니다.")
@@ -68,11 +76,11 @@ def validate(document, region):
         if not isinstance(parameter, dict):
             raise ConfigurationError("파라미터 항목 형식이 올바르지 않습니다.")
         name = parameter.get("Name")
-        if name not in {PREFIX + key for key in KEYS} or name in values:
+        if name not in {prefix + key for key in KEYS} or name in values:
             raise ConfigurationError("요청하지 않은 파라미터 또는 중복 항목이 있습니다.")
         # DB와 Redis 비밀번호 모두 암호화된 파라미터만 받는다.
         expected = "SecureString" if name in (
-            PREFIX + "SPRING_DATASOURCE_PASSWORD", PREFIX + "SPRING_DATA_REDIS_PASSWORD"
+            prefix + "SPRING_DATASOURCE_PASSWORD", prefix + "SPRING_DATA_REDIS_PASSWORD"
         ) else "String"
         if parameter.get("Type") != expected:
             raise ConfigurationError("파라미터 타입을 확인하세요: " + name)
@@ -81,9 +89,9 @@ def validate(document, region):
         if not isinstance(value, str) or not value.strip() or any(c in value for c in "\r\n\0"):
             raise ConfigurationError("빈 값 또는 여러 줄 값은 사용할 수 없습니다: " + name)
         values[name] = value
-    if set(values) != {PREFIX + key for key in KEYS}:
+    if set(values) != {prefix + key for key in KEYS}:
         raise ConfigurationError(f"필수 파라미터 {len(KEYS)}개가 모두 필요합니다.")
-    values = {key: values[PREFIX + key] for key in KEYS}
+    values = {key: values[prefix + key] for key in KEYS}
 
     if values["AWS_REGION"] != region:
         raise ConfigurationError("앱 리전과 설정 조회 리전이 다릅니다.")
@@ -138,9 +146,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--region", required=True, choices=["ap-northeast-2"])
     parser.add_argument("--output", required=True, type=Path, help="아직 존재하지 않는 임시 env 파일")
+    parser.add_argument("--environment", choices=("dev", "staging"), default="dev")
     args = parser.parse_args()
     try:
-        values = validate(fetch(args.region), args.region)
+        values = validate(fetch(args.region, args.environment), args.region, args.environment)
         write_env(args.output, values)
     except ConfigurationError as error:
         # 오류 메시지는 코드가 정의한 항목명·설명만 포함하며 실제 값을 넣지 않는다.

@@ -23,7 +23,7 @@ GD-143은 GD-142의 `AdminAbuseCaseController`·`AbuseCaseQueryService`·`AbuseC
 - DB 없는 Service·standalone MVC·저장소·근거 변환 단위 테스트로 권한 선확인, 상세 부재, 공통 오류, 응답 허용 필드와 저장값 보존을 검증한다.
 - 실제 사용자 문맥·V030 MySQL·Repository·MapStruct·Service·MVC를 연결하는 `AdminAbuseCaseIntegrationTest`를 추가한다. 선택 이벤트·현재 표시값 조인·저장 근거·정밀도·목록 회귀·권한·대상 제외·손상 근거를 검증하는 코드다.
 - 사용자 지시로 로컬 통합 테스트는 실행하지 않는다. 테스트 소스 컴파일과 실제 DB 실행 결과를 구분해 보고한다.
-- GD-144 자동 차단 생성과 GD-291 이력 저장·재시도·배치는 후속이다. 조회 검증은 해당 생산 경로의 완료를 대신하지 않는다.
+- GD-144는 [자동 차단·Redis 저장 대기 등록](entry-auto-blocking.md)을 연결한다. DB 이력 저장·재시도·배치는 GD-291 후속이다. 조회 검증은 해당 생산 경로의 완료를 대신하지 않는다.
 
 ## 로컬 검증 결과 — 2026-10-22
 

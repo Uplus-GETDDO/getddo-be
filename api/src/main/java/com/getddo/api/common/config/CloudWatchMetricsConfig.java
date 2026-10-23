@@ -97,8 +97,8 @@ public class CloudWatchMetricsConfig {
 		if (!Set.of("a", "c").contains(server)) {
 			throw new IllegalArgumentException("지표 전송 활성화 시 GETDDO_METRICS_SERVER는 a 또는 c여야 합니다.");
 		}
-		if (!"dev".equals(environment) || !"GETDDO/API".equals(namespace) || !"60s".equals(step)) {
-			throw new IllegalArgumentException("지표 전송 계약은 environment=dev, namespace=GETDDO/API, step=60s입니다.");
+		if (!Set.of("dev", "staging").contains(environment) || !"GETDDO/API".equals(namespace) || !"60s".equals(step)) {
+			throw new IllegalArgumentException("지표 전송 계약은 environment=dev|staging, namespace=GETDDO/API, step=60s입니다.");
 		}
 		CloudWatchConfig config = key -> "cloudwatch.enabled".equals(key)
 			? Boolean.toString(publishingEnabled.get()) : Map.of(
@@ -123,7 +123,7 @@ public class CloudWatchMetricsConfig {
 				Set<String> keys = DIMENSIONS.getOrDefault(id.getName(), Set.of());
 				return id.replaceTags(Tags.of(id.getTags().stream()
 					.filter(tag -> keys.contains(tag.getKey())).toList())
-					.and("environment", "dev", "server", server));
+					.and("environment", environment, "server", server));
 			}
 		});
 		return registry;
