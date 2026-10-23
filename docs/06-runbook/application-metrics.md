@@ -6,13 +6,13 @@ Spring Boot 4.1.1 Actuator와 Boot 관리 Micrometer 1.17.1을 사용한다. Boo
 
 기본값은 비활성화다. 로컬/테스트에서는 AWS 클라이언트와 publisher를 생성하지 않는다. 배포 도구는 `rolling`에서 `GETDDO_METRICS_ENABLED=true`, `initial-c`에서 `false`와 호스트별 서버 식별자를 주입한다. `single`은 지표 값을 추가 주입하지 않는다. 실제 전달·복구 절차는 [호스트별 지표 설정과 복구](container-cd.md#호스트별-지표-설정과-복구)를 따른다. [배포 예제 안내](../../infra/app.env.example)는 참고용이며 운영 env나 Parameter Store에 복사하지 않는다. `AWS_REGION`은 기존 Parameter Store의 필수 값을 사용한다.
 
-활성화 시 서버 a/c, 명시적 리전, 환경 dev, namespace GETDDO/API, 간격 60s를 검사한다. 다른 값은 설정 오류다. 서버별 식별자는 공유 Parameter Store 단일 값으로 덮어쓰지 않는다. 배포 코드에는 허용 목록 검증, 호스트별 env 생성, Compose 전달과 롤백 시 env 백업·복원이 구현돼 있다. 이 구현과 대역 테스트는 실제 A/C 배포 후 CloudWatch 수신 확인과 구분한다. 앱 지표의 실제 AWS 수신은 아직 확인 전이다.
+활성화 시 서버 a/c, 명시적 리전, 환경 dev 또는 staging, namespace GETDDO/API, 간격 60s를 검사한다. 환경 기본값은 dev이며 [Stage 배포](staging-deployment.md)는 GETDDO_METRICS_ENVIRONMENT=staging을 주입한다. 다른 값은 설정 오류다. 서버별 식별자는 공유 Parameter Store 단일 값으로 덮어쓰지 않는다. 배포 코드에는 허용 목록 검증, 호스트별 env 생성, Compose 전달과 롤백 시 env 백업·복원이 구현돼 있다. 이 구현과 대역 테스트는 실제 A/C 배포 후 CloudWatch 수신 확인과 구분한다. 앱 지표의 실제 AWS 수신은 아직 확인 전이다.
 
 EC2 인스턴스 역할과 SDK 기본 자격 증명 체인을 사용한다. 정적 키를 app.env에 넣지 않는다. 컨테이너의 IMDSv2 접근과 인스턴스 metadata hop limit을 확인한다. 앱 역할은 `cloudwatch:PutMetricData`와 `cloudwatch:namespace=GETDDO/API` 조건을 허용해야 한다. CWAgent 권한과 앱 전송 권한은 각각 확인한다.
 
 ## 전송 계약
 
-Namespace는 `GETDDO/API`, 공통 차원은 `environment=dev`, `server=a|c`, 간격과 storage resolution은 60초다. 다음 표는 Micrometer 이름이 아닌 **CloudWatch로 실제 전송되는 이름**이다. 표의 차원은 공통 차원 외 추가되는 전체 차원이다.
+Namespace는 `GETDDO/API`, 공통 차원은 선택한 환경의 `environment=dev|staging`, `server=a|c`, 간격과 storage resolution은 60초다. 다음 표는 Micrometer 이름이 아닌 **CloudWatch로 실제 전송되는 이름**이다. 표의 차원은 공통 차원 외 추가되는 전체 차원이다.
 
 | CloudWatch 이름 | 추가 차원 | 단위·의미 |
 | --- | --- | --- |

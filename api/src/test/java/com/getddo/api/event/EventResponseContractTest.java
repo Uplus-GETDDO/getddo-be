@@ -119,6 +119,8 @@ class EventResponseContractTest {
 				.andExpect(jsonPath("$.data.drawScheduledAt").doesNotHaveJsonPath())
 				.andExpect(jsonPath("$.data.serverTime").value(NOW.toString()))
 				.andExpect(jsonPath("$.data.description").value("이벤트 설명"))
+				.andExpect(jsonPath("$.data.detailImageUrl").value(nullValue()))
+				.andExpect(jsonPath("$.data.detailImageKey").doesNotHaveJsonPath())
 				.andExpect(jsonPath("$.data.maxTicketsPerUser").value(nullValue()))
 				.andExpect(jsonPath("$.data.prizes[0].id").value(PRIZE_ID.toString()))
 				.andExpect(jsonPath("$.data.prizes[0].rank").value(2))
@@ -146,6 +148,7 @@ class EventResponseContractTest {
 					.andExpect(status().isOk())
 					.andExpect(jsonPath(root + ".status").value("REDRAWING"))
 					.andExpect(jsonPath(root + ".imageKey").value("events/image.png"))
+					.andExpect(jsonPath(root + ".detailImageKey").value("events/details.png"))
 					.andExpect(jsonPath(root + ".createdBy").doesNotHaveJsonPath())
 					.andExpect(jsonPath(root + ".createdAt").value(NOW.toString()))
 					.andExpect(jsonPath(root + ".updatedAt").value(NOW.toString()))
@@ -287,7 +290,7 @@ class EventResponseContractTest {
 	}
 
 	private static RegisteredEvent event(EventStatus status) {
-		return new RegisteredEvent(EVENT_ID, "이벤트", "이벤트 설명", "events/image.png",
+		return new RegisteredEvent(EVENT_ID, "이벤트", "이벤트 설명", "events/image.png", "events/details.png",
 				EventType.TICKET, true, null, MembershipRule.vip, STARTS_AT, ENDS_AT, status, NOW, NOW,
 				List.of(new RegisteredEvent.Prize(PRIZE_ID, 2, "경품", null, "prizes/image.png", 3)));
 	}

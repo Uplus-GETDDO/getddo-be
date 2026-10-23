@@ -38,6 +38,9 @@ public class EventEntity extends BaseUpdatableEntity {
 	@Column(name = "image_key", length = 500)
 	private String imageKey;
 
+	@Column(name = "detail_image_key", length = 500)
+	private String detailImageKey;
+
 	@Enumerated(EnumType.STRING)
 	@Column(name = "event_type", nullable = false)
 	private EventType eventType;
@@ -78,6 +81,7 @@ public class EventEntity extends BaseUpdatableEntity {
 		title = registration.getTitle();
 		description = registration.getDescription();
 		imageKey = registration.getImageKey();
+		detailImageKey = registration.getDetailImageKey();
 		eventType = registration.getEventType();
 		weightingEnabled = registration.isWeightingEnabled();
 		maxTicketsPerUser = registration.getMaxTicketsPerUser();
@@ -121,6 +125,7 @@ public class EventEntity extends BaseUpdatableEntity {
 		title = settings.getTitle();
 		description = settings.getDescription();
 		imageKey = settings.getImageKey();
+		detailImageKey = settings.getDetailImageKey();
 		eventType = settings.getEventType();
 		weightingEnabled = settings.isWeightingEnabled();
 		maxTicketsPerUser = settings.getMaxTicketsPerUser();
@@ -160,6 +165,7 @@ public class EventEntity extends BaseUpdatableEntity {
 	public Instant getCanceledAt() { return canceledAt; }
 	public String getDescription() { return description; }
 	public String getImageKey() { return imageKey; }
+	public String getDetailImageKey() { return detailImageKey; }
 	public EventType getEventType() { return eventType; }
 	public boolean isWeightingEnabled() { return weightingEnabled; }
 	public Integer getMaxTicketsPerUser() { return maxTicketsPerUser; }

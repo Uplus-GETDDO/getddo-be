@@ -31,7 +31,7 @@ services:
       driver: awslogs
       options:
         awslogs-region: ap-northeast-2
-        awslogs-group: /getddo/dev/api
+        awslogs-group: ${GETDDO_API_LOG_GROUP:-/getddo/dev/api}
         awslogs-create-group: "false"
         # stream 이름은 생략하여 컨테이너 ID별로 자동 생성한다.
         mode: non-blocking

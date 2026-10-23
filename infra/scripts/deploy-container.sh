@@ -6,6 +6,14 @@ umask 077
 source_sha=${1:?커밋 SHA가 필요합니다}
 region=${2:?AWS 리전이 필요합니다}
 [[ $source_sha =~ ^[a-f0-9]{40}$ && $region == ap-northeast-2 ]] || exit 1
+deploy_environment=${GETDDO_DEPLOY_ENVIRONMENT:-dev}
+case "$deploy_environment" in
+  dev|staging) api_log_group="/getddo/$deploy_environment/api" ;;
+  *) echo '지원하지 않는 배포 환경' >&2; exit 1 ;;
+esac
+if [[ $deploy_environment == staging ]]; then
+  [[ ${GETDDO_DEPLOY_SERVER:-} == a || ${GETDDO_DEPLOY_SERVER:-} == c ]] || exit 1
+fi
 release=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 root=$(dirname -- "$(dirname -- "$release")")
 app_env=/etc/getddo/app.env
@@ -52,7 +60,7 @@ compose() {
   shift 4
   # 임시 설정으로 사전 검증하고 실제 실행·복구 때는 정식 app.env를 읽는다.
   # 설정값 자체를 셸 변수로 가져오거나 source로 실행하지 않는다.
-  API_PRIVATE_IP="$api_private_ip" APP_IMAGE="$selected_image" APP_ENV_FILE="$selected_env" timeout "$limit" docker compose --project-name getddo \
+  GETDDO_API_LOG_GROUP="$api_log_group" API_PRIVATE_IP="$api_private_ip" APP_IMAGE="$selected_image" APP_ENV_FILE="$selected_env" timeout "$limit" docker compose --project-name getddo \
     --env-file /dev/null --file "$directory/compose.deploy.yaml" "$@"
 }
 
@@ -217,9 +225,11 @@ image=$(cat image-id.txt)
 # app.env와 같은 파일시스템의 root 전용 임시 디렉터리를 써서 rename을 원자적으로 수행한다.
 # 파라미터가 없거나 타입·형식·복호화가 틀리면 이 단계에서 실패하고 기존 앱은 유지된다.
 env_tmp=$(mktemp -d /etc/getddo/.deploy-env.XXXXXX)
-python3 "$release/fetch-app-env.py" --region "$region" --output "$env_tmp/next.env"
+fetch_environment=()
+if [[ $deploy_environment == staging ]]; then fetch_environment=(--environment staging); fi
+python3 "$release/fetch-app-env.py" --region "$region" --output "$env_tmp/next.env" "${fetch_environment[@]}"
 if [[ -n ${GETDDO_DEPLOY_SERVER:-} ]]; then
-  python3 "$release/inject-host-env.py" --file "$env_tmp/next.env" --server "$GETDDO_DEPLOY_SERVER" --enabled "${GETDDO_DEPLOY_METRICS_ENABLED:?}"
+  python3 "$release/inject-host-env.py" --file "$env_tmp/next.env" --server "$GETDDO_DEPLOY_SERVER" --enabled "${GETDDO_DEPLOY_METRICS_ENABLED:?}" --environment "$deploy_environment"
 fi
 compose 20 "$release" "$image" "$env_tmp/next.env" config --quiet
 if [[ -z $previous && -n $(compose 10 "$release" "$image" "$env_tmp/next.env" ps --all --quiet app) ]]; then

@@ -44,7 +44,7 @@ public class EventQueryRepositoryImpl implements EventQueryRepository {
 				else e.status end
 			""";
 	private static final String SELECT = """
-			select e.id, e.title, e.description, e.image_key, e.event_type,
+			select e.id, e.title, e.description, e.image_key, e.detail_image_key, e.event_type,
 			       e.weighting_enabled, e.max_tickets_per_user, e.membership_rule,
 			       e.starts_at, e.ends_at, e.status, e.created_at, e.updated_at,
 			       e.canceled_at,
@@ -204,7 +204,7 @@ public class EventQueryRepositoryImpl implements EventQueryRepository {
 	private static EventView toView(ResultSet row) throws SQLException {
 		RegisteredEvent details = new RegisteredEvent(UuidBinary.fromBytes(row.getBytes("id")),
 				row.getString("title"),
-				row.getString("description"), row.getString("image_key"),
+				row.getString("description"), row.getString("image_key"), row.getString("detail_image_key"),
 				EventType.valueOf(row.getString("event_type")), row.getBoolean("weighting_enabled"),
 				row.getObject("max_tickets_per_user", Integer.class), MembershipRule.valueOf(row.getString("membership_rule")),
 				instant(row, "starts_at"), instant(row, "ends_at"), EventStatus.valueOf(row.getString("status")),
@@ -216,7 +216,7 @@ public class EventQueryRepositoryImpl implements EventQueryRepository {
 	private static EventView withPrizes(EventView view, List<RegisteredEvent.Prize> prizes) {
 		RegisteredEvent event = view.getDetails();
 		RegisteredEvent details = new RegisteredEvent(event.getId(), event.getTitle(),
-				event.getDescription(), event.getImageKey(), event.getEventType(), event.isWeightingEnabled(),
+				event.getDescription(), event.getImageKey(), event.getDetailImageKey(), event.getEventType(), event.isWeightingEnabled(),
 				event.getMaxTicketsPerUser(), event.getMembershipRule(), event.getStartsAt(), event.getEndsAt(),
 				event.getStatus(), event.getCreatedAt(), event.getUpdatedAt(), prizes);
 		return new EventView(details, view.getPublicStatus(), view.getCanceledAt());

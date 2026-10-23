@@ -258,15 +258,19 @@ class EventLifecycleAndAuditIntegrationTest {
 	}
 
 	@Test
-	@DisplayName("수정 감사 실패는 이벤트·경품과 일정 변경 알림을 모두 롤백한다")
+	@DisplayName("수정 감사 실패는 상세 이미지 등 이벤트·경품과 일정 변경 알림을 모두 롤백한다")
 	void modificationAuditFailureRollsBackSettingsPrizesAndNotice() {
 		// given
-		RegisteredEvent original = register();
+		String originalDetailImageKey = "events/original-detail.png";
+		RegisteredEvent original = register(originalDetailImageKey);
 		failAfterAuditAppend();
 		// when / then
-		assertThatThrownBy(() -> modifications.modify(original.getId(), modification(original, "변경", original.getStartsAt().plusSeconds(600))))
+		assertThatThrownBy(() -> modifications.modify(original.getId(), modification(original, "변경",
+				original.getStartsAt().plusSeconds(600), "events/changed-detail.png")))
 				.hasStackTraceContaining("감사 실패 주입");
 		assertThat(jdbc.queryForObject("select title from events where id=?", String.class, bytes(original.getId()))).isEqualTo("등록");
+		assertThat(jdbc.queryForObject("select detail_image_key from events where id=?", String.class, bytes(original.getId())))
+				.isEqualTo(originalDetailImageKey);
 		assertThat(jdbc.queryForObject("select starts_at from events where id=?", LocalDateTime.class, bytes(original.getId()))).isEqualTo(utc(original.getStartsAt()));
 		assertThat(jdbc.queryForObject("select name from event_prizes where event_id=?", String.class, bytes(original.getId()))).isEqualTo("등록 경품");
 		assertThat(jdbc.queryForObject("select count(*) from notification_jobs where event_id=?", Long.class, bytes(original.getId()))).isZero();
@@ -279,7 +283,11 @@ class EventLifecycleAndAuditIntegrationTest {
 	}
 
 	private RegisteredEvent register() {
-		RegisteredEvent result = registrations.register(new EventRegistration(admin, "등록", "설명", "events/" + admin,
+		return register(null);
+	}
+
+	private RegisteredEvent register(String detailImageKey) {
+		RegisteredEvent result = registrations.register(new EventRegistration(admin, "등록", "설명", "events/" + admin, detailImageKey,
 				EventType.NO_TICKET, false, null, MembershipRule.vip, NOW.plusSeconds(3600), NOW.plusSeconds(7200),
 				List.of(new EventRegistration.Prize(1, "등록 경품", null, null, 1))));
 		eventIds.add(result.getId());
@@ -287,7 +295,11 @@ class EventLifecycleAndAuditIntegrationTest {
 	}
 
 	private EventRegistration modification(RegisteredEvent event, String title, Instant startsAt) {
-		return new EventRegistration(admin, title, "변경 설명", event.getImageKey(), EventType.NO_TICKET, false, null,
+		return modification(event, title, startsAt, event.getDetailImageKey());
+	}
+
+	private EventRegistration modification(RegisteredEvent event, String title, Instant startsAt, String detailImageKey) {
+		return new EventRegistration(admin, title, "변경 설명", event.getImageKey(), detailImageKey, EventType.NO_TICKET, false, null,
 				MembershipRule.vip, startsAt, event.getEndsAt(), event.getPrizes().stream().map(prize ->
 						new EventRegistration.Prize(prize.getId(), prize.getRank(), title + " 경품", null, null, 1)).toList());
 	}

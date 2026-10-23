@@ -23,6 +23,8 @@
 
 저장소는 먼저 이벤트 행을 잠근 뒤 경품을 함께 잠금 조회한다. Hibernate 7.4의 기본 잠금 범위는 조회 루트에만 적용되어, MySQL의 REPEATABLE READ에서 경품을 이전 스냅샷으로 읽을 수 있다. 따라서 이 조회만 `INCLUDE_FETCHES` 범위를 지정한다. 실제 동시 PUT 테스트에서 이벤트·경품 양쪽 잠금과 중복 변경 안내 방지를 검증한다. 현재 범위 API는 향후 JPA 4로 전환할 때 대체해야 한다.
 
+GD-321의 선택 `detailImageKey`도 전체 설정 비교와 변경 전후 감사 스냅샷에 포함한다. 생략·null은 이미지 연결 제거이며, 유지할 때는 기존 키를 재전송한다. 응답과 업로드 방법은 [상세 설명 이미지](event-images.md#이벤트-상세-설명-이미지--gd-321)를 따른다.
+
 ## GD-70 알림 연동
 
 실제 시작 시각 연기에만 이벤트·경품 최종 flush 후 `EventChangeNotificationService.register(EventNotificationChange.scheduleChanged(...))`를 호출한다. 제목·설명·경품만 바뀌면 일정 변경 알림은 등록하지 않는다. 알림 등록 실패는 이벤트·경품과 이전 시작 작업 중지를 함께 롤백한다.
