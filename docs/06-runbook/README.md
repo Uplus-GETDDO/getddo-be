@@ -13,3 +13,5 @@
 - [Parameter Store 설정 조회·반영·복구](parameter-store.md)
 
 - [차단 이력 빈 테이블 전환](entry-abuse-migration.md)
+
+- [어뷰징 차단 이력 저장 작업자](abuse-history-worker.md): Redis 저널 소비·DB 저장·재시도·오전 6시 배치·복구 점검

@@ -15,7 +15,7 @@
 ## 2. 생성자 주입과 객체 생성
 
 - 운영 코드의 의존성은 `private final` 필드와 생성자 주입으로 명시한다. 필드 주입이나 의존성을 바꾸는 setter는 사용하지 않는다. 테스트의 Spring 필드 주입은 예외로 둔다.
-- Lombok을 사용할 수 있는 모듈에서는 `@RequiredArgsConstructor`를 사용할 수 있다. 현재 Lombok은 `api`·`core`·`storage:db`에 선언되어 있다. `api`의 알림 워커는 `@Slf4j`로 로그를 선언하고 명시적 생성자를 사용한다. `@RequiredArgsConstructor`를 전 모듈 기본 규칙으로 정하려면 별도 합의한다.
+- Lombok을 사용할 수 있는 모듈에서는 `@RequiredArgsConstructor`를 사용할 수 있다. 현재 Lombok은 `api`·`core`·`storage:db`·`storage:redis`에 선언되어 있다. `api`의 알림 워커는 `@Slf4j`로 로그를 선언하고 명시적 생성자를 사용한다. `@RequiredArgsConstructor`를 전 모듈 기본 규칙으로 정하려면 별도 합의한다.
 - Lombok `@AllArgsConstructor`는 사용하지 않는다. 생성 시 검증이 필요한 객체는 명시적 생성자나 정적 팩터리를 사용한다. 의존성 주입에는 기존 규칙대로 `@RequiredArgsConstructor`를 사용할 수 있다.
 - `core` 도메인 객체에는 `@Builder`를 사용하지 않는다. API 요청·응답 DTO를 생성할 때는 `@Builder` 사용을 적극 권장한다. 요청 DTO에 적용할 때는 JSON 역직렬화와 입력 검증이 정상 동작하는지 확인한다.
 - 최초 상태와 기본값이 있는 도메인 객체는 `User.create(...)`처럼 생성 목적을 드러내는 정적 팩터리에 초기화를 모은다. 상태가 없는 단순 값 객체까지 정적 팩터리를 강제하지 않는다. 생성 후 여러 setter를 호출해야 유효해지는 방식은 피한다.

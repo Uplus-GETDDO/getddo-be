@@ -15,7 +15,7 @@ import org.hibernate.annotations.Immutable;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
-/** 최초 차단 시각·근거를 보존하는 이력. GD-142에서는 읽기 전용으로 매핑한다. */
+/** 최초 차단 시각·근거를 보존하는 이력. 최초 삽입 이후 기존 행은 수정하지 않는다. */
 @Getter
 @Entity
 @Immutable
@@ -67,4 +67,21 @@ public class AbuseCaseEntity {
 
 	@Column(name = "blocked_until", nullable = false, updatable = false)
 	private Instant blockedUntil;
+
+	/** Mapper가 최초 저널 값을 그대로 삽입한다. 비응모 원본 식별자는 항상 null로 유지한다. */
+	public AbuseCaseEntity(UUID id, UUID userId, UUID eventId, String sourceType, String detectionType,
+			String detectionReason, String evidence, Instant occurredAt, Instant detectedAt,
+			Instant blockedAt, Instant blockedUntil) {
+		this.id = id;
+		this.userId = userId;
+		this.eventId = eventId;
+		this.sourceType = sourceType;
+		this.detectionType = detectionType;
+		this.detectionReason = detectionReason;
+		this.evidence = evidence;
+		this.occurredAt = occurredAt;
+		this.detectedAt = detectedAt;
+		this.blockedAt = blockedAt;
+		this.blockedUntil = blockedUntil;
+	}
 }

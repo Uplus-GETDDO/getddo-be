@@ -86,6 +86,18 @@ getddo:
     # 현재 쿠키를 사용하지 않는다. X-User-* 헤더 전달을 위해 true로 바꿀 필요는 없다.
     allow-credentials: false
 
+  abuse:
+    # Redis 모드에서 동작한다. 차단 자체를 끄는 설정이 아니므로 미저장 저널을 보존한다.
+    history-worker:
+      enabled: ${ABUSE_HISTORY_WORKER_ENABLED:true}
+      poll-delay: ${ABUSE_HISTORY_POLL_DELAY:1000}
+      recovery-delay: ${ABUSE_HISTORY_RECOVERY_DELAY:60000}
+      batch-size: ${ABUSE_HISTORY_BATCH_SIZE:20}
+      scan-size: ${ABUSE_HISTORY_SCAN_SIZE:100}
+      lease: ${ABUSE_HISTORY_LEASE:30s}
+      retry-budget: ${ABUSE_HISTORY_RETRY_BUDGET:10m}
+      retry-delays: ${ABUSE_HISTORY_RETRY_DELAYS:10s,30s,1m,2m}
+
   # 사용자별 요청 빈도 제한(429). 한도는 운영 수치이므로 여기서 조정한다. 정책이 없으면 제한하지 않는다.
   rate-limit:
     enabled: ${RATE_LIMIT_ENABLED:true}

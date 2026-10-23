@@ -19,6 +19,7 @@ public record EventWriteRequest(
 		@NotBlank @Size(max = 200) String title,
 		@NotBlank String description,
 		@Size(max = 500) String imageKey,
+		@Size(max = 500) String detailImageKey,
 		@NotNull EventType eventType,
 		@NotNull Boolean weightingEnabled,
 		Integer maxTicketsPerUser,
@@ -34,7 +35,7 @@ public record EventWriteRequest(
 
 	/** 수정에서는 기존 경품 ID를 보존하고 새 경품만 ID 없이 전달한다. */
 	public EventRegistration toModification(UUID actorId) {
-		return new EventRegistration(actorId, title, description, imageKey, eventType,
+		return new EventRegistration(actorId, title, description, imageKey, detailImageKey, eventType,
 				Boolean.TRUE.equals(weightingEnabled), maxTicketsPerUser, membershipRule,
 				startsAt == null ? null : startsAt.toInstant(), endsAt == null ? null : endsAt.toInstant(),
 				prizes == null ? null : prizes.stream().map(prize -> prize == null ? null : prize.toPrize()).toList());

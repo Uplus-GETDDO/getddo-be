@@ -19,6 +19,7 @@ public final class RegisteredEvent {
 	private final String title;
 	private final String description;
 	private final String imageKey;
+	private final String detailImageKey;
 	private final EventType eventType;
 	private final boolean weightingEnabled;
 	private final Integer maxTicketsPerUser;
@@ -34,6 +35,7 @@ public final class RegisteredEvent {
 			String title,
 			String description,
 			String imageKey,
+			String detailImageKey,
 			EventType eventType,
 			boolean weightingEnabled,
 			Integer maxTicketsPerUser,
@@ -48,6 +50,7 @@ public final class RegisteredEvent {
 		this.title = title;
 		this.description = description;
 		this.imageKey = imageKey;
+		this.detailImageKey = detailImageKey;
 		this.eventType = eventType;
 		this.weightingEnabled = weightingEnabled;
 		this.maxTicketsPerUser = maxTicketsPerUser;

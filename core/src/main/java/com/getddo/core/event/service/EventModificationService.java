@@ -89,6 +89,7 @@ public class EventModificationService {
 		boolean sameConfiguration = Objects.equals(event.getTitle(), settings.getTitle())
 				&& Objects.equals(event.getDescription(), settings.getDescription())
 				&& Objects.equals(event.getImageKey(), settings.getImageKey())
+				&& Objects.equals(event.getDetailImageKey(), settings.getDetailImageKey())
 				&& event.getEventType() == settings.getEventType()
 				&& event.isWeightingEnabled() == settings.isWeightingEnabled()
 				&& Objects.equals(event.getMaxTicketsPerUser(), settings.getMaxTicketsPerUser())
