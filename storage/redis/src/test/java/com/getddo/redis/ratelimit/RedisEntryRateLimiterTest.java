@@ -1,14 +1,22 @@
-package com.getddo.api.common.ratelimit;
+package com.getddo.redis.ratelimit;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
+import com.getddo.core.common.ratelimit.EntryBlockPolicy;
+import com.getddo.core.common.ratelimit.EntryLimitDecision;
+import com.getddo.core.common.ratelimit.EntryLimitResult;
+import com.getddo.core.common.ratelimit.EntryRecordingStatus;
+import com.getddo.core.common.ratelimit.RateLimitPolicy;
+
 import static org.assertj.core.api.Assertions.*;
-import static org.mockito.Mockito.*;
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 class RedisEntryRateLimiterTest {
 	private final EntryRedisScriptExecutor executor = mock(EntryRedisScriptExecutor.class);
@@ -25,8 +33,8 @@ class RedisEntryRateLimiterTest {
 			""");
 		// when
 		EntryLimitDecision result = limiter.evaluate(user, null, null, Instant.parse("2026-10-22T00:00:00Z"),
-				new RateLimitProperties.Policy(20, Duration.ofMinutes(1), 10),
-				new EntryBlockProperties(20, 10, Duration.ofMinutes(10), "v1"));
+				new RateLimitPolicy(20, Duration.ofMinutes(1), 10),
+				new EntryBlockPolicy(20, 10, Duration.ofMinutes(10), "v1"));
 		// then
 		assertThat(result.getResult()).isEqualTo(EntryLimitResult.RATE_LIMITED);
 		assertThat(result.getRecordingStatus()).isEqualTo(EntryRecordingStatus.DENY_RECORDING_FAILED);

@@ -1,4 +1,4 @@
-package com.getddo.api.common.ratelimit;
+package com.getddo.core.common.ratelimit;
 
 import java.time.Instant;
 import java.util.Optional;
@@ -12,5 +12,5 @@ public interface EntryRateLimiter extends RateLimiter {
 
 	/** 검증된 사용자만 호출한다. ACTIVE 재확인부터 최초 활성화까지 한 번에 수행하며 재호출하지 않는다. */
 	EntryLimitDecision evaluateEntry(UUID userId, UUID eventScope, UUID verifiedEventId, Instant occurredAt,
-			RateLimitProperties.Policy policy, EntryBlockProperties blockProperties);
+			RateLimitPolicy policy, EntryBlockPolicy blockProperties);
 }

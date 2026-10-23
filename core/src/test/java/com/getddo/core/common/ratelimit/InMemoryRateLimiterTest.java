@@ -1,4 +1,4 @@
-package com.getddo.api.common.ratelimit;
+package com.getddo.core.common.ratelimit;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -34,13 +34,13 @@ class InMemoryRateLimiterTest {
 		// when
 		// then
 		for (int i = 0; i < 3; i++) {
-			assertThat(limiter.tryAcquire("k", 3, MINUTE).allowed()).isTrue();
+			assertThat(limiter.tryAcquire("k", 3, MINUTE).isAllowed()).isTrue();
 			clock.advance(Duration.ofSeconds(1));
 		}
 		RateLimiter.Decision denied = limiter.tryAcquire("k", 3, MINUTE);
-		assertThat(denied.allowed()).isFalse();
+		assertThat(denied.isAllowed()).isFalse();
 		// 첫 요청 후 60초 창에서 3초가 지났으므로 57초가 남는다.
-		assertThat(denied.retryAfterSeconds()).isEqualTo(57);
+		assertThat(denied.getRetryAfterSeconds()).isEqualTo(57);
 	}
 
 	@Test
@@ -50,13 +50,13 @@ class InMemoryRateLimiterTest {
 		for (int i = 0; i < 4; i++) {
 			limiter.tryAcquire("k", 2, MINUTE);
 		}
-		assertThat(limiter.tryAcquire("k", 2, MINUTE).allowed()).isFalse();
+		assertThat(limiter.tryAcquire("k", 2, MINUTE).isAllowed()).isFalse();
 		// when
 		clock.advance(MINUTE);
 		// then
-		assertThat(limiter.tryAcquire("k", 2, MINUTE).allowed()).isTrue();
-		assertThat(limiter.tryAcquire("k", 2, MINUTE).allowed()).isTrue();
-		assertThat(limiter.tryAcquire("k", 2, MINUTE).allowed()).isFalse();
+		assertThat(limiter.tryAcquire("k", 2, MINUTE).isAllowed()).isTrue();
+		assertThat(limiter.tryAcquire("k", 2, MINUTE).isAllowed()).isTrue();
+		assertThat(limiter.tryAcquire("k", 2, MINUTE).isAllowed()).isFalse();
 	}
 
 	@Test
@@ -70,9 +70,9 @@ class InMemoryRateLimiterTest {
 		clock.advance(Duration.ofMillis(1));
 		RateLimiter.Decision atEnd = limiter.tryAcquire("k", 1, MINUTE);
 		// then
-		assertThat(justBefore.allowed()).isFalse();
-		assertThat(justBefore.retryAfterSeconds()).isEqualTo(1);
-		assertThat(atEnd.allowed()).isTrue();
+		assertThat(justBefore.isAllowed()).isFalse();
+		assertThat(justBefore.getRetryAfterSeconds()).isEqualTo(1);
+		assertThat(atEnd.isAllowed()).isTrue();
 	}
 
 	@Test
@@ -82,8 +82,8 @@ class InMemoryRateLimiterTest {
 		limiter.tryAcquire("a", 1, MINUTE);
 		// when
 		// then
-		assertThat(limiter.tryAcquire("a", 1, MINUTE).allowed()).isFalse();
-		assertThat(limiter.tryAcquire("b", 1, MINUTE).allowed()).isTrue();
+		assertThat(limiter.tryAcquire("a", 1, MINUTE).isAllowed()).isFalse();
+		assertThat(limiter.tryAcquire("b", 1, MINUTE).isAllowed()).isTrue();
 	}
 
 	@Test
@@ -94,7 +94,7 @@ class InMemoryRateLimiterTest {
 		limiter.tryAcquire("k", 1, MINUTE);
 		for (int i = 0; i < 40; i++) {
 			clock.advance(Duration.ofMillis(1_400));
-			assertThat(limiter.tryAcquire("k", 1, MINUTE).allowed()).isFalse();
+			assertThat(limiter.tryAcquire("k", 1, MINUTE).isAllowed()).isFalse();
 		}
 		// when
 		clock.set(first.plus(MINUTE).minusMillis(1));
@@ -102,8 +102,8 @@ class InMemoryRateLimiterTest {
 		clock.set(first.plus(MINUTE));
 		RateLimiter.Decision atEnd = limiter.tryAcquire("k", 1, MINUTE);
 		// then
-		assertThat(justBeforeEnd.allowed()).isFalse();
-		assertThat(atEnd.allowed()).isTrue();
+		assertThat(justBeforeEnd.isAllowed()).isFalse();
+		assertThat(atEnd.isAllowed()).isTrue();
 	}
 
 	@Test
@@ -114,8 +114,8 @@ class InMemoryRateLimiterTest {
 		// then
 		assertThatThrownBy(() -> new RateLimiter.Decision(true, 3)).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> new RateLimiter.Decision(false, 0)).isInstanceOf(IllegalArgumentException.class);
-		assertThat(RateLimiter.Decision.deny(0).retryAfterSeconds()).isEqualTo(1);
-		assertThat(RateLimiter.Decision.allow().retryAfterSeconds()).isZero();
+		assertThat(RateLimiter.Decision.deny(0).getRetryAfterSeconds()).isEqualTo(1);
+		assertThat(RateLimiter.Decision.allow().getRetryAfterSeconds()).isZero();
 	}
 
 	@Test
@@ -139,7 +139,7 @@ class InMemoryRateLimiterTest {
 						Thread.currentThread().interrupt();
 						return;
 					}
-					if (limiter.tryAcquire("shared", limit, MINUTE).allowed()) {
+					if (limiter.tryAcquire("shared", limit, MINUTE).isAllowed()) {
 						allowed.incrementAndGet();
 					}
 				}));

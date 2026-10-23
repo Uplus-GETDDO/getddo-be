@@ -4,12 +4,17 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
-import lombok.extern.slf4j.Slf4j;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.HandlerInterceptor;
 import org.springframework.web.servlet.HandlerMapping;
+
+import com.getddo.core.common.ratelimit.EntryRateLimiter;
+import com.getddo.core.common.ratelimit.RateLimiter;
+
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * {@link RateLimited}가 붙은 Controller 메서드의 요청 빈도를 제한한다.
@@ -63,15 +68,15 @@ public class RateLimitInterceptor implements HandlerInterceptor {
 		try {
 			long retryAfter = 0;
 			RateLimiter.Decision overall = rateLimiter.tryAcquire(base, policy.limit(), policy.window());
-			if (!overall.allowed()) {
-				retryAfter = overall.retryAfterSeconds();
+			if (!overall.isAllowed()) {
+				retryAfter = overall.getRetryAfterSeconds();
 			}
 			String scope = scopeOf(request, annotation);
 			if (retryAfter == 0 && scope != null && policy.scopedLimit() != null) {
 				RateLimiter.Decision scoped = rateLimiter.tryAcquire(base + ":" + scope, policy.scopedLimit(),
 						policy.window());
-				if (!scoped.allowed()) {
-					retryAfter = scoped.retryAfterSeconds();
+				if (!scoped.isAllowed()) {
+					retryAfter = scoped.getRetryAfterSeconds();
 				}
 			}
 			if (retryAfter > 0) {

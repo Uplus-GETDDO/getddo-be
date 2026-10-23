@@ -4,15 +4,23 @@ import java.time.Instant;
 import java.util.Arrays;
 import java.util.Optional;
 import java.util.UUID;
-import lombok.extern.slf4j.Slf4j;
+
 import jakarta.servlet.http.HttpServletRequest;
+
 import org.springframework.core.MethodParameter;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.ServletWebRequest;
 import org.springframework.web.method.HandlerMethod;
+
 import com.getddo.api.common.context.CurrentUserArgumentResolver;
 import com.getddo.core.abuse.service.EntryAbuseEventService;
+import com.getddo.core.common.ratelimit.EntryLimitDecision;
+import com.getddo.core.common.ratelimit.EntryLimitResult;
+import com.getddo.core.common.ratelimit.EntryRateLimiter;
+import com.getddo.core.common.ratelimit.EntryRecordingStatus;
 import com.getddo.core.common.time.TimeProvider;
+
+import lombok.extern.slf4j.Slf4j;
 
 /** 기존 문맥 검증을 집계 앞으로 연결하고 Redis 판정 오류와 사용자 검증 오류를 분리한다. */
 @Component
@@ -68,7 +76,7 @@ public class EntryRateLimitHandler {
 		}
 		EntryLimitDecision decision;
 		try {
-			decision = limiter.evaluateEntry(userId, scope, verifiedEvent, received, policy, settings);
+			decision = limiter.evaluateEntry(userId, scope, verifiedEvent, received, policy.toDomain(), settings.toDomain());
 		} catch (RuntimeException failure) {
 			// 응답 유실 시 Redis에서 이미 반영됐을 수도 있다. 같은 요청을 재평가하면 중복 집계되므로 통과시킨다.
 			warn("EVALUATION", failure);

@@ -1,9 +1,11 @@
-package com.getddo.api.common.ratelimit;
+package com.getddo.core.common.ratelimit;
 
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
+
 import com.getddo.core.abuse.domain.AbuseEvidence;
+
 import lombok.Getter;
 
 /** GD-291에 인계할 최초 차단 payload다. 재전달 때 ID·시각·근거를 다시 만들지 않는다. */

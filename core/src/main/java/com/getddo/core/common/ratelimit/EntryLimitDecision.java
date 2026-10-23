@@ -1,7 +1,8 @@
-package com.getddo.api.common.ratelimit;
+package com.getddo.core.common.ratelimit;
 
 import java.time.Instant;
 import java.util.Objects;
+
 import lombok.Getter;
 
 /** 공개 응답과 분리된 응모 원자 평가 결과다. 기존 ACTIVE이면 구간 정보 없이 차단만 반환한다. */

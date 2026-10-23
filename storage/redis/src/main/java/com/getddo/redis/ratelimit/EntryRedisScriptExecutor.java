@@ -1,11 +1,10 @@
-package com.getddo.api.common.ratelimit;
+package com.getddo.redis.ratelimit;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.stream.Stream;
-import io.lettuce.core.ClientOptions;
-import io.lettuce.core.api.StatefulConnection;
+
 import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.connection.ReturnType;
@@ -14,6 +13,9 @@ import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactor
 import org.springframework.data.redis.connection.lettuce.LettucePoolingClientConfiguration;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
+
+import io.lettuce.core.ClientOptions;
+import io.lettuce.core.api.StatefulConnection;
 
 /** 응모 쓰기는 자동 재전송 없는 전용 연결에서 EVAL 한 번으로 실행한다. */
 class EntryRedisScriptExecutor {

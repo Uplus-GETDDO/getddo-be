@@ -1,4 +1,4 @@
-package com.getddo.api.common.ratelimit;
+package com.getddo.core.common.ratelimit;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -8,6 +8,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 import com.getddo.core.common.time.TimeProvider;
+
+import lombok.Getter;
 
 /**
  * 서버 메모리에서 세는 고정 창 방식의 {@link RateLimiter}.
@@ -39,18 +41,18 @@ public class InMemoryRateLimiter implements EntryRateLimiter {
 		long windowMillis = window.toMillis();
 		// 한도를 넘은 요청은 횟수를 더 올리지 않아 공격 요청이 많아도 값이 계속 커지지 않는다.
 		Window current = windows.compute(key, (k, existing) -> {
-			if (existing == null || now >= existing.endMillis()) {
+			if (existing == null || now >= existing.getEndMillis()) {
 				return new Window(now + windowMillis, 1);
 			}
-			return existing.count() > limit ? existing : new Window(existing.endMillis(), existing.count() + 1);
+			return existing.getCount() > limit ? existing : new Window(existing.getEndMillis(), existing.getCount() + 1);
 		});
 		if (calls.incrementAndGet() % CLEANUP_EVERY == 0) {
-			windows.values().removeIf(stale -> now >= stale.endMillis());
+			windows.values().removeIf(stale -> now >= stale.getEndMillis());
 		}
-		if (current.count() <= limit) {
+		if (current.getCount() <= limit) {
 			return Decision.allow();
 		}
-		return Decision.deny((long) Math.ceil((current.endMillis() - now) / 1000.0));
+		return Decision.deny((long) Math.ceil((current.getEndMillis() - now) / 1000.0));
 	}
 
 	@Override
@@ -60,12 +62,20 @@ public class InMemoryRateLimiter implements EntryRateLimiter {
 
 	@Override
 	public EntryLimitDecision evaluateEntry(UUID userId, UUID eventScope,
-			UUID verifiedEventId, Instant occurredAt, RateLimitProperties.Policy policy,
-			EntryBlockProperties blockProperties) {
+			UUID verifiedEventId, Instant occurredAt, RateLimitPolicy policy,
+			EntryBlockPolicy blockProperties) {
 		return entries.evaluate(userId, eventScope, verifiedEventId, occurredAt, policy, blockProperties);
 	}
 
 	/** 창이 끝나는 시각과 그 창에서 센 요청 수. */
-	private record Window(long endMillis, int count) {
+	@Getter
+	private static final class Window {
+		private final long endMillis;
+		private final int count;
+
+		private Window(long endMillis, int count) {
+			this.endMillis = endMillis;
+			this.count = count;
+		}
 	}
 }

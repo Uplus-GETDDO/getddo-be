@@ -1,4 +1,4 @@
-package com.getddo.api.common.ratelimit;
+package com.getddo.core.common.ratelimit;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -8,17 +8,20 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+
 import com.getddo.core.abuse.domain.AbuseTriggerScope;
 import com.getddo.core.common.time.TimeProvider;
+
 import static org.assertj.core.api.Assertions.*;
 
 class EntryRateLimiterTest {
@@ -27,8 +30,8 @@ class EntryRateLimiterTest {
 	private static final Instant START = Instant.parse("2026-10-22T01:00:00Z");
 	private final MutableClock clock = new MutableClock();
 	private final InMemoryRateLimiter limiter = new InMemoryRateLimiter(new TimeProvider(clock));
-	private final RateLimitProperties.Policy policy = new RateLimitProperties.Policy(4, Duration.ofMinutes(1), 2);
-	private final EntryBlockProperties settings = new EntryBlockProperties(4, 2, Duration.ofMinutes(10), "entry-v1");
+	private final RateLimitPolicy policy = new RateLimitPolicy(4, Duration.ofMinutes(1), 2);
+	private final EntryBlockPolicy settings = new EntryBlockPolicy(4, 2, Duration.ofMinutes(10), "entry-v1");
 
 	private EntryLimitDecision request(UUID scope) {
 		return limiter.evaluateEntry(USER, scope, scope, clock.instant(), policy, settings);
@@ -76,8 +79,8 @@ class EntryRateLimiterTest {
 	@DisplayName("두 거절 기준 동시 충족 시 USER 근거와 한 차단만 보존한다")
 	void simultaneousUsesUser() {
 		// given
-		RateLimitProperties.Policy one = new RateLimitProperties.Policy(1, Duration.ofSeconds(5), 1);
-		EntryBlockProperties block = new EntryBlockProperties(1, 1, Duration.ofSeconds(10), "v2");
+		RateLimitPolicy one = new RateLimitPolicy(1, Duration.ofSeconds(5), 1);
+		EntryBlockPolicy block = new EntryBlockPolicy(1, 1, Duration.ofSeconds(10), "v2");
 		limiter.evaluateEntry(USER, EVENT, null, START, one, block);
 		// when
 		EntryLimitDecision decision = limiter.evaluateEntry(USER, EVENT, null, START, one, block);
@@ -193,7 +196,7 @@ class EntryRateLimiterTest {
 			request(EVENT);
 		}
 		// when / then
-		assertThat(limiter.tryAcquire("rl:attendance:"+USER, 5, Duration.ofMinutes(1)).allowed()).isTrue();
+		assertThat(limiter.tryAcquire("rl:attendance:"+USER, 5, Duration.ofMinutes(1)).isAllowed()).isTrue();
 		assertThat(limiter.findActiveEntry(UUID.randomUUID())).isEmpty();
 	}
 
@@ -201,10 +204,10 @@ class EntryRateLimiterTest {
 	@DisplayName("차단 설정은 양수·필수 버전·집계시간 이하 금지를 검증한다")
 	void invalidSettings() {
 		// given / when / then
-		assertThatThrownBy(() -> new EntryBlockProperties(0, 1, Duration.ofMinutes(1), "v")).isInstanceOf(IllegalArgumentException.class);
-		assertThatThrownBy(() -> new EntryBlockProperties(1, 0, Duration.ofMinutes(1), "v")).isInstanceOf(IllegalArgumentException.class);
-		assertThatThrownBy(() -> new EntryBlockProperties(1, 1, Duration.ZERO, "v")).isInstanceOf(IllegalArgumentException.class);
-		assertThatThrownBy(() -> new EntryBlockProperties(1, 1, Duration.ofMinutes(1), " ")).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new EntryBlockPolicy(0, 1, Duration.ofMinutes(1), "v")).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new EntryBlockPolicy(1, 0, Duration.ofMinutes(1), "v")).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new EntryBlockPolicy(1, 1, Duration.ZERO, "v")).isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> new EntryBlockPolicy(1, 1, Duration.ofMinutes(1), " ")).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> settings.validateWindow(Duration.ofMinutes(11))).isInstanceOf(IllegalArgumentException.class);
 		assertThatThrownBy(() -> settings.validateWindow(Duration.ofNanos(1))).isInstanceOf(IllegalArgumentException.class);
 	}

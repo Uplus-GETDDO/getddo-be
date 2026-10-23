@@ -6,6 +6,13 @@
 - 조회 계약 원본: [AR01/AR02](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/05-api/abuse.md)
 - BE 설계: [저장·복구 설계](../03-database/entry-abuse-blocking.md)
 
+## 모듈별 책임
+
+- `api`: `RateLimitInterceptor`·`EntryRateLimitHandler`의 HTTP 처리, 사용자 문맥 검증과 429 응답, `RateLimitProperties`·`EntryBlockProperties`의 Spring 설정 바인딩을 담당한다. 설정 이름·기본값은 유지하고 `toDomain()`으로 순수 정책을 전달한다.
+- `core`: `com.getddo.core.common.ratelimit`에 제한기 인터페이스, `RateLimitPolicy`·`EntryBlockPolicy`, 판정·차단 모델과 메모리 구현을 둔다. HTTP·Spring Boot 설정 바인딩·Redis 구현을 참조하지 않는다. 메모리 모드는 Redis 장애의 자동 대체 경로가 아니다.
+- `storage:redis`: `com.getddo.redis.ratelimit`에 Redis 제한기·연결 풀·스크립트 실행기와 Redis 빈 구성을 둔다. Lua 리소스는 `storage/redis/src/main/resources/redis`에 있다. 이 모듈은 `core`에만 프로젝트 의존성을 가지며 `api`·`storage:db`를 참조하지 않는다.
+- API는 `RedisRateLimiterConfig`를 import해 기본 저장소 구성을 연결한다. 사용자 정의 `RateLimiter`의 기본 빈 대체 계약은 유지한다. Redis 전용 테스트는 `storage:redis`, 메모리·판정 테스트는 `core`, HTTP·실제 API YAML 바인딩 테스트는 `api`에 둔다.
+
 ## 적용 경로
 
 `RateLimitInterceptor`는 `policy=entry`를 `EntryRateLimitHandler`와 `EntryRateLimiter`로 연결한다. 다른 정책은 기존 `tryAcquire` 흐름을 유지한다. 기본 메모리·Redis 제한기 모두 응모 평가 인터페이스를 구현한다. 사용자 정의 `RateLimiter`만 주입한 경우 기존 일반 제한 계약을 유지하며 자동 차단을 제공하려면 `EntryRateLimiter`도 구현해야 한다.
@@ -60,7 +67,7 @@ payload 필드는 id·userId·eventId(nullable)·sourceType·detectionType·dete
 
 [application.yaml](../../api/src/main/resources/application.yaml)의 기존 `getddo.rate-limit` enabled·store·entry 일반 한도를 재사용한다. entry-block.user-threshold·event-threshold·duration·rule-version을 추가했다. 기본값은 해당 설정 파일을 따른다. ENTRY_RATE_LIMIT·ENTRY_SCOPED_RATE_LIMIT·ENTRY_RATE_WINDOW와 ENTRY_BLOCK_* 환경변수 또는 Spring 외부 설정으로 조정하고, 양수·최소 1ms 구간·집계시간≤차단시간을 부팅 시 검사한다. 설정 주입 변경은 프로세스 재시작을 필요로 하며 런타임 동적 갱신 기능을 추가하지 않는다. 기존 Parameter Store 필수 조회 목록·CD 워크플로는 변경하지 않았다.
 
-실제 검증 결과:
+모듈 분리 전 검증 결과:
 
 - 응모·기존 제한·설정 단위 테스트 58건 통과. CORS 전용 컨텍스트는 새 의존성 대역을 보완했으며 기존 CORS 회귀도 통과했다.
 - 전체 단위 테스트 1,684건 통과(API 544, core 1,042, storage:db 96, storage:s3 2). 실패·오류·건너뛰기 0건.
@@ -69,7 +76,8 @@ payload 필드는 id·userId·eventId(nullable)·sourceType·detectionType·dete
 
 ```bash
 ./gradlew test build :api:compileIntegrationTestJava :storage:db:compileIntegrationTestJava \
-  -x :api:integrationTest -x :storage:db:integrationTest \
+  :storage:redis:compileIntegrationTestJava \
+  -x :api:integrationTest -x :storage:db:integrationTest -x :storage:redis:integrationTest \
   --no-daemon --max-workers=1 --no-parallel
 ```
 
@@ -78,3 +86,10 @@ payload 필드는 id·userId·eventId(nullable)·sourceType·detectionType·dete
 최초 기록이 한 번만 발생하는지 시작 래치로 동시 평가를 검증하고, 판정 객체의 상태·대기 시간 불변식과 잘못된 JSON 응답 검증을 추가했다. Lua 리소스 읽기 실패는 내부 리소스 이름·I/O 원인을 보존한다. 두 ACTIVE 함수의 공통 추출은 현재 판정이 동일한 선택적 리팩터링이므로 이번 수정에 포함하지 않는다. Redis 보존·대기 적체 운영 확인은 [런북](../06-runbook/entry-abuse-migration.md#gd-144-redis-생산-경로-운영-경계)을 따른다. 리뷰 후 대상 단위 테스트 58건·전체 단위 테스트 1,684건과 통합 테스트 실행 제외 빌드가 통과했다. 보강한 통합 소스는 컴파일만 했고 실제 연결·부하 측정 결과를 주장하지 않는다.
 
 재리뷰 보완으로 전용 연결이 원본 TLS 검증 모드 FULL·CA·NONE과 STARTTLS 설정을 그대로 보존하도록 수정하고 세 모드의 회귀 테스트를 통과했다. 연결 재사용 통합 시나리오는 현재 연결 개수 대신 INFO stats의 total_connections_received 누적값을 사용해 연결 종료에 의한 오판을 방지한다. 해당 통합 시나리오는 로컬 실행하지 않았으며 소스 컴파일만 확인했다.
+
+## 모듈 분리 검증 — 2026-10-23
+
+- 전체 단위 테스트 1,684건 통과(실패·오류·건너뛰기 0). 모듈별 건수는 api 515, core 1062, storage/db 96, storage/redis 9, storage/s3 2이다. 테스트를 각 책임 모듈로 옮겼으며 전체 건수는 유지했다.
+- 위 통합 테스트 제외 명령으로 전체 빌드 및 API·DB·Redis 통합 테스트 소스 컴파일에 성공했다. 로컬 통합 테스트·실제 저장소 연결·배포 검증은 사용자 요청에 따라 수행하지 않았다.
+- core의 API·Redis·Spring Boot 바인딩 역참조 부재, storage:redis의 API 역참조 부재와 API 운영 코드의 직접 Redis 클라이언트 import 부재를 확인했다. 두 Lua 파일은 이동 전과 바이트 단위로 동일하다.
+- 실행 JAR에 Redis 모듈과 그 안의 두 Lua 파일이 포함되고, 기존 API 경로에 Redis 구현 클래스나 Lua 파일이 중복되지 않음을 확인했다.

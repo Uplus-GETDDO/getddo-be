@@ -6,20 +6,30 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.method.HandlerMethod;
+
 import com.getddo.api.common.context.CurrentUser;
 import com.getddo.api.common.context.CurrentUserArgumentResolver;
 import com.getddo.api.common.exception.CommonErrorCode;
 import com.getddo.core.abuse.service.EntryAbuseEventService;
 import com.getddo.core.common.exception.BusinessException;
+import com.getddo.core.common.ratelimit.EntryBlockPolicy;
+import com.getddo.core.common.ratelimit.EntryLimitDecision;
+import com.getddo.core.common.ratelimit.EntryLimitResult;
+import com.getddo.core.common.ratelimit.EntryRateLimiter;
+import com.getddo.core.common.ratelimit.EntryRecordingStatus;
+import com.getddo.core.common.ratelimit.RateLimitPolicy;
 import com.getddo.core.common.time.TimeProvider;
 import com.getddo.core.user.domain.User;
+
 import static org.assertj.core.api.Assertions.*;
-import static org.mockito.Mockito.*;
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 class EntryRateLimitHandlerTest {
 	private static final UUID USER = UUID.randomUUID();
@@ -89,12 +99,21 @@ class EntryRateLimitHandlerTest {
 		// given
 		when(limiter.findActiveEntry(USER)).thenReturn(Optional.empty());
 		when(events.findExistingId(EVENT)).thenReturn(EVENT);
-		when(limiter.evaluateEntry(eq(USER), eq(EVENT), eq(EVENT), any(), eq(policy), eq(settings)))
+		when(limiter.evaluateEntry(eq(USER), eq(EVENT), eq(EVENT), any(), any(RateLimitPolicy.class), any(EntryBlockPolicy.class)))
 				.thenReturn(decision(EntryLimitResult.RATE_LIMITED, EntryRecordingStatus.DENY_RECORDING_FAILED));
 		// when / then
 		assertThatThrownBy(this::run).isInstanceOfSatisfying(RateLimitExceededException.class,
 				e -> assertThat(e.getRetryAfterSeconds()).isEqualTo(37));
-		verify(limiter, times(1)).evaluateEntry(eq(USER), eq(EVENT), eq(EVENT), any(), eq(policy), eq(settings));
+		ArgumentCaptor<RateLimitPolicy> limits = ArgumentCaptor.forClass(RateLimitPolicy.class);
+		ArgumentCaptor<EntryBlockPolicy> blocking = ArgumentCaptor.forClass(EntryBlockPolicy.class);
+		verify(limiter, times(1)).evaluateEntry(eq(USER), eq(EVENT), eq(EVENT), any(), limits.capture(), blocking.capture());
+		assertThat(limits.getValue().getLimit()).isEqualTo(policy.limit());
+		assertThat(limits.getValue().getWindow()).isEqualTo(policy.window());
+		assertThat(limits.getValue().getScopedLimit()).isEqualTo(policy.scopedLimit());
+		assertThat(blocking.getValue().getUserThreshold()).isEqualTo(settings.userThreshold());
+		assertThat(blocking.getValue().getEventThreshold()).isEqualTo(settings.eventThreshold());
+		assertThat(blocking.getValue().getDuration()).isEqualTo(settings.duration());
+		assertThat(blocking.getValue().getRuleVersion()).isEqualTo(settings.ruleVersion());
 	}
 
 	@Test

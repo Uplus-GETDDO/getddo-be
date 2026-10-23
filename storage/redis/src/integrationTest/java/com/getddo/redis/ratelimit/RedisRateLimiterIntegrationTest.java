@@ -1,4 +1,4 @@
-package com.getddo.api.common.ratelimit;
+package com.getddo.redis.ratelimit;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -22,7 +22,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.utility.DockerImageName;
 
-import com.getddo.api.common.ratelimit.RateLimiter.Decision;
+import com.getddo.core.common.ratelimit.RateLimiter.Decision;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -88,9 +88,9 @@ class RedisRateLimiterIntegrationTest {
 			decisions.add(limiter.tryAcquire(key, 3, MINUTE));
 		}
 		// then
-		assertThat(decisions.subList(0, 3)).allMatch(Decision::allowed);
-		assertThat(decisions.get(3).allowed()).isFalse();
-		assertThat(decisions.get(3).retryAfterSeconds()).isBetween(1L, 60L);
+		assertThat(decisions.subList(0, 3)).allMatch(Decision::isAllowed);
+		assertThat(decisions.get(3).isAllowed()).isFalse();
+		assertThat(decisions.get(3).getRetryAfterSeconds()).isBetween(1L, 60L);
 	}
 
 	@Test
@@ -106,9 +106,9 @@ class RedisRateLimiterIntegrationTest {
 		Decision b2 = serverB.tryAcquire(key, 3, MINUTE);
 		Decision a3 = serverA.tryAcquire(key, 3, MINUTE);
 		// then
-		assertThat(List.of(a1, b1, a2)).allMatch(Decision::allowed);
-		assertThat(b2.allowed()).isFalse();
-		assertThat(a3.allowed()).isFalse();
+		assertThat(List.of(a1, b1, a2)).allMatch(Decision::isAllowed);
+		assertThat(b2.isAllowed()).isFalse();
+		assertThat(a3.isAllowed()).isFalse();
 	}
 
 	@Test
@@ -121,8 +121,8 @@ class RedisRateLimiterIntegrationTest {
 		Decision other = limiter.tryAcquire(key + ":b", 1, MINUTE);
 		Decision sameAgain = limiter.tryAcquire(key + ":a", 1, MINUTE);
 		// then
-		assertThat(other.allowed()).isTrue();
-		assertThat(sameAgain.allowed()).isFalse();
+		assertThat(other.isAllowed()).isTrue();
+		assertThat(sameAgain.isAllowed()).isFalse();
 	}
 
 	@Test
@@ -132,11 +132,11 @@ class RedisRateLimiterIntegrationTest {
 		RedisRateLimiter limiter = server();
 		Duration shortWindow = Duration.ofMillis(800);
 		limiter.tryAcquire(key, 1, shortWindow);
-		assertThat(limiter.tryAcquire(key, 1, shortWindow).allowed()).isFalse();
+		assertThat(limiter.tryAcquire(key, 1, shortWindow).isAllowed()).isFalse();
 		// when
 		Thread.sleep(1_200);
 		// then
-		assertThat(limiter.tryAcquire(key, 1, shortWindow).allowed()).isTrue();
+		assertThat(limiter.tryAcquire(key, 1, shortWindow).isAllowed()).isTrue();
 	}
 
 	@Test
@@ -151,7 +151,7 @@ class RedisRateLimiterIntegrationTest {
 			RedisRateLimiter limiter = servers.get(i % 2);
 			results.add(pool.submit(() -> {
 				start.await();
-				return limiter.tryAcquire(key, 10, MINUTE).allowed();
+				return limiter.tryAcquire(key, 10, MINUTE).isAllowed();
 			}));
 		}
 		// when

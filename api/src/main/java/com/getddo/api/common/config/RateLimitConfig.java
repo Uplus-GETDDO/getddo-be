@@ -5,18 +5,18 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.context.annotation.Import;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
-import com.getddo.api.common.ratelimit.InMemoryRateLimiter;
 import com.getddo.api.common.ratelimit.EntryBlockProperties;
 import com.getddo.api.common.ratelimit.EntryRateLimitHandler;
 import com.getddo.api.common.ratelimit.RateLimitInterceptor;
 import com.getddo.api.common.ratelimit.RateLimitProperties;
-import com.getddo.api.common.ratelimit.RateLimiter;
-import com.getddo.api.common.ratelimit.RedisRateLimiter;
+import com.getddo.core.common.ratelimit.InMemoryRateLimiter;
+import com.getddo.core.common.ratelimit.RateLimiter;
 import com.getddo.core.common.time.TimeProvider;
+import com.getddo.redis.ratelimit.RedisRateLimiterConfig;
 
 /**
  * 요청 빈도 제한을 MVC에 등록한다.
@@ -25,6 +25,7 @@ import com.getddo.core.common.time.TimeProvider;
  * 횟수를 합치는 Redis 구현이다. 다른 {@link RateLimiter} 빈을 직접 등록하면 기본 구현은 만들지 않는다.</p>
  */
 @Configuration
+@Import(RedisRateLimiterConfig.class)
 @EnableConfigurationProperties({RateLimitProperties.class, EntryBlockProperties.class})
 public class RateLimitConfig implements WebMvcConfigurer {
 
@@ -57,18 +58,6 @@ public class RateLimitConfig implements WebMvcConfigurer {
 		@ConditionalOnMissingBean(RateLimiter.class)
 		RateLimiter inMemoryRateLimiter(TimeProvider timeProvider) {
 			return new InMemoryRateLimiter(timeProvider);
-		}
-	}
-
-	/** 서버 여러 대의 횟수를 합치는 Redis 제한기. 접속 정보는 {@code spring.data.redis.*}를 따른다. */
-	@Configuration
-	@ConditionalOnProperty(name = "getddo.rate-limit.store", havingValue = "redis")
-	static class RedisRateLimiterConfig {
-
-		@Bean
-		@ConditionalOnMissingBean(RateLimiter.class)
-		RateLimiter redisRateLimiter(StringRedisTemplate redis) {
-			return new RedisRateLimiter(redis);
 		}
 	}
 }

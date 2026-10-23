@@ -1,14 +1,20 @@
-package com.getddo.api.common.ratelimit;
+package com.getddo.redis.ratelimit;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.List;
 
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+
+import com.getddo.core.common.ratelimit.EntryBlockPolicy;
+import com.getddo.core.common.ratelimit.EntryLimitDecision;
+import com.getddo.core.common.ratelimit.EntryRateLimiter;
+import com.getddo.core.common.ratelimit.RateLimitPolicy;
+import com.getddo.core.common.ratelimit.RateLimiter;
 
 /**
  * Redis에서 세는 고정 창 방식의 {@link RateLimiter}. 서버가 여러 대여도 같은 키의 횟수가 하나로 합쳐진다.
@@ -71,8 +77,8 @@ public class RedisRateLimiter implements EntryRateLimiter, DisposableBean {
 
 	@Override
 	public EntryLimitDecision evaluateEntry(UUID userId, UUID eventScope,
-			UUID verifiedEventId, Instant occurredAt, RateLimitProperties.Policy policy,
-			EntryBlockProperties blockProperties) {
+			UUID verifiedEventId, Instant occurredAt, RateLimitPolicy policy,
+			EntryBlockPolicy blockProperties) {
 		return entries.evaluate(userId, eventScope, verifiedEventId, occurredAt, policy, blockProperties);
 	}
 

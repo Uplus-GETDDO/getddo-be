@@ -31,6 +31,8 @@
 
 ## 구현 구조
 
+제한기 인터페이스·정책·판정과 메모리 구현은 `core/common/ratelimit`, Redis 구현·Lua·연결 풀은 `storage:redis`, HTTP 인터셉터와 설정 바인딩은 `api`에 둔다. 모듈 경계와 테스트 배치는 [응모 자동 차단의 모듈별 책임](entry-auto-blocking.md#모듈별-책임)을 따른다.
+
 - `@RateLimited(policy, scopeVariable)`를 Controller 메서드에 붙이면 `RateLimitInterceptor`가 `/api/**` 요청에서 확인한다.
 - 횟수는 `RateLimiter` 인터페이스가 센다. `getddo.rate-limit.store`(환경변수 `RATE_LIMIT_STORE`)로 구현을 고른다. `memory`(기본)는 서버 메모리의 `InMemoryRateLimiter`이며 서버가 한 대인 동안만 정확하다. `redis`는 `RedisRateLimiter`이며 서버가 여러 대여도 같은 키의 횟수를 하나로 센다(GD-208).
 - 제한기가 실패하면(예: Redis 장애) 요청을 막지 않고 통과시키고 경고 로그를 남긴다. 제한 때문에 응모·출석이 모두 멈추는 것보다 낫다는 판단이다.

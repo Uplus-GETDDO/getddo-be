@@ -9,10 +9,10 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 import com.getddo.api.common.ratelimit.EntryRateLimitHandler;
-import com.getddo.api.common.ratelimit.InMemoryRateLimiter;
-import com.getddo.api.common.ratelimit.RateLimiter;
-import com.getddo.api.common.ratelimit.RedisRateLimiter;
+import com.getddo.core.common.ratelimit.InMemoryRateLimiter;
+import com.getddo.core.common.ratelimit.RateLimiter;
 import com.getddo.core.common.time.TimeProvider;
+import com.getddo.redis.ratelimit.RedisRateLimiter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;

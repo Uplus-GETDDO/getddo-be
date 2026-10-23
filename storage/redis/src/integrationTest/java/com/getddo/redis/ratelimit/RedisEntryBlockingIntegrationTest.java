@@ -1,4 +1,4 @@
-package com.getddo.api.common.ratelimit;
+package com.getddo.redis.ratelimit;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -11,10 +11,11 @@ import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.Executors;
 import java.util.stream.IntStream;
+
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -25,7 +26,15 @@ import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.utility.DockerImageName;
+
 import com.getddo.core.abuse.domain.AbuseTriggerScope;
+import com.getddo.core.common.ratelimit.EntryBlock;
+import com.getddo.core.common.ratelimit.EntryBlockPolicy;
+import com.getddo.core.common.ratelimit.EntryLimitDecision;
+import com.getddo.core.common.ratelimit.EntryLimitResult;
+import com.getddo.core.common.ratelimit.EntryRecordingStatus;
+import com.getddo.core.common.ratelimit.RateLimitPolicy;
+
 import static org.assertj.core.api.Assertions.*;
 
 /** 실제 Redis Lua·여러 연결·명령 실패를 검증한다. 로컬 실행은 사용자 요청에 따라 수행하지 않는다. */
@@ -36,8 +45,8 @@ class RedisEntryBlockingIntegrationTest {
 	private final List<ControlledExecutor> executors = new ArrayList<>();
 	private final UUID user = UUID.randomUUID();
 	private final UUID event = UUID.randomUUID();
-	private final RateLimitProperties.Policy policy = new RateLimitProperties.Policy(1, Duration.ofMinutes(1), 1);
-	private final EntryBlockProperties settings = new EntryBlockProperties(2, 2, Duration.ofMinutes(10), "entry-v1");
+	private final RateLimitPolicy policy = new RateLimitPolicy(1, Duration.ofMinutes(1), 1);
+	private final EntryBlockPolicy settings = new EntryBlockPolicy(2, 2, Duration.ofMinutes(10), "entry-v1");
 	private StringRedisTemplate redis;
 	private long now;
 
@@ -243,8 +252,8 @@ class RedisEntryBlockingIntegrationTest {
 	void eventOnlyThreshold() {
 		// given
 		RedisEntryRateLimiter limiter = server();
-		RateLimitProperties.Policy limits = new RateLimitProperties.Policy(20, Duration.ofSeconds(7), 1);
-		EntryBlockProperties block = new EntryBlockProperties(20, 1, Duration.ofMinutes(10), "v2");
+		RateLimitPolicy limits = new RateLimitPolicy(20, Duration.ofSeconds(7), 1);
+		EntryBlockPolicy block = new EntryBlockPolicy(20, 1, Duration.ofMinutes(10), "v2");
 		limiter.evaluate(user, event, event, Instant.ofEpochMilli(now), limits, block);
 		// when
 		EntryLimitDecision result = limiter.evaluate(user, event, event, Instant.ofEpochMilli(now), limits, block);

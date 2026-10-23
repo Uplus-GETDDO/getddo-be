@@ -1,6 +1,7 @@
-package com.getddo.api.common.ratelimit;
+package com.getddo.core.common.ratelimit;
 
 import java.time.Instant;
+
 import lombok.Getter;
 
 /** 한 원자 평가에서 확정한 구간·거절 횟수다. Retry-After로 구간을 복원하지 않는다. */

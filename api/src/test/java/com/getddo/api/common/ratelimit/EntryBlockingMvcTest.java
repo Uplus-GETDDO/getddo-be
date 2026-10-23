@@ -7,6 +7,7 @@ import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -14,18 +15,21 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.*;
+
 import com.getddo.api.common.context.CurrentUser;
 import com.getddo.api.common.context.CurrentUserArgumentResolver;
 import com.getddo.api.common.exception.GlobalExceptionHandler;
 import com.getddo.core.abuse.service.EntryAbuseEventService;
+import com.getddo.core.common.ratelimit.InMemoryRateLimiter;
 import com.getddo.core.common.time.TimeProvider;
 import com.getddo.core.user.domain.*;
 import com.getddo.core.user.repository.UserRepository;
 import com.getddo.core.user.service.UserService;
+
+import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
-import static org.assertj.core.api.Assertions.*;
 
 /** DB·Redis 없이 기존 resolver·인터셉터·오류 변환을 함께 검증하는 MVC 단위 테스트다. */
 class EntryBlockingMvcTest {

@@ -1,14 +1,23 @@
-package com.getddo.api.common.ratelimit;
+package com.getddo.redis.ratelimit;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+
 import com.getddo.core.abuse.domain.AbuseEvidence;
 import com.getddo.core.abuse.domain.AbuseTriggerScope;
+import com.getddo.core.common.ratelimit.EntryBlock;
+import com.getddo.core.common.ratelimit.EntryBlockPolicy;
+import com.getddo.core.common.ratelimit.EntryLimitDecision;
+import com.getddo.core.common.ratelimit.EntryLimitResult;
+import com.getddo.core.common.ratelimit.EntryRecordingStatus;
+import com.getddo.core.common.ratelimit.EntryWindowSnapshot;
+import com.getddo.core.common.ratelimit.RateLimitPolicy;
 
 /** 단일 Lua 평가의 저장값을 복원한다. 최초 payload를 현재 설정·TTL로 재계산하지 않는다. */
 final class RedisEntryRateLimiter {
@@ -30,8 +39,8 @@ final class RedisEntryRateLimiter {
 
 	/** 최초 후보 ID를 한 번 생성하고 정확히 한 번 평가한다. */
 	EntryLimitDecision evaluate(UUID userId, UUID scope, UUID verifiedEvent, Instant received,
-			RateLimitProperties.Policy policy, EntryBlockProperties settings) {
-		settings.validateWindow(policy.window());
+			RateLimitPolicy policy, EntryBlockPolicy settings) {
+		settings.validateWindow(policy.getWindow());
 		UUID candidate = UUID.randomUUID();
 		// KEYS·ARGV의 순서는 entry-evaluate.lua와 한 계약이다. 후보 ID는 실제 차단이 시작될 때만 저널로 남는다.
 		List<String> keys = List.of(userIndex(userId), PREFIX + "counters:" + userId,
@@ -39,10 +48,10 @@ final class RedisEntryRateLimiter {
 		List<String> args = List.of(userId.toString(), scope == null ? "" : scope.toString(),
 				verifiedEvent == null ? "" : verifiedEvent.toString(),
 				received.truncatedTo(ChronoUnit.MICROS).toString(), candidate.toString(),
-				Long.toString(policy.window().toMillis()), Integer.toString(policy.limit()),
-				policy.scopedLimit() == null ? "0" : policy.scopedLimit().toString(),
-				Integer.toString(settings.userThreshold()), Integer.toString(settings.eventThreshold()),
-				Long.toString(settings.duration().toMillis()), settings.ruleVersion());
+				Long.toString(policy.getWindow().toMillis()), Integer.toString(policy.getLimit()),
+				policy.getScopedLimit() == null ? "0" : policy.getScopedLimit().toString(),
+				Integer.toString(settings.getUserThreshold()), Integer.toString(settings.getEventThreshold()),
+				Long.toString(settings.getDuration().toMillis()), settings.getRuleVersion());
 		return decision(executor.execute(evaluateScript, keys, args));
 	}
 
