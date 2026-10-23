@@ -1,13 +1,13 @@
 package com.getddo.api.abuse;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.time.Duration;
-import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.AfterEach;
@@ -15,6 +15,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -24,10 +26,6 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import com.getddo.api.support.ApiIntegrationTest;
-import com.getddo.core.abuse.domain.AbuseHistoryRetryPolicy;
-import com.getddo.core.abuse.repository.AbuseHistoryJournalRepository;
-import com.getddo.core.abuse.service.AbuseCaseSaveService;
-import com.getddo.core.abuse.service.AbuseHistoryService;
 import com.getddo.db.common.util.UuidBinary;
 
 /** 응모 HTTP → Redis 자동 차단 → 건별 DB commit → AR01/AR02의 실제 연결. 로컬 실행하지 않는다. */
@@ -35,7 +33,9 @@ import com.getddo.db.common.util.UuidBinary;
 @TestPropertySource(properties = {"getddo.rate-limit.enabled=true", "getddo.rate-limit.store=redis",
 		"getddo.rate-limit.policies.entry.limit=1", "getddo.rate-limit.policies.entry.scoped-limit=1",
 		"getddo.rate-limit.entry-block.user-threshold=1", "getddo.rate-limit.entry-block.event-threshold=1",
-		"getddo.abuse.history-worker.enabled=false"})
+		"getddo.abuse.history-worker.enabled=true",
+		"getddo.abuse.history-worker.poll-delay=100", "getddo.abuse.history-worker.recovery-delay=3600000"})
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class EntryAbuseHistoryIntegrationTest {
 	private static final GenericContainer<?> REDIS = new GenericContainer<>(DockerImageName.parse("redis:7-alpine"))
 			.withExposedPorts(6379);
@@ -54,9 +54,7 @@ class EntryAbuseHistoryIntegrationTest {
 	@Autowired
 	private JdbcTemplate jdbc;
 	@Autowired
-	private AbuseHistoryJournalRepository journals;
-	@Autowired
-	private AbuseCaseSaveService saves;
+	private StringRedisTemplate redis;
 	private final UUID user = UUID.randomUUID();
 	private final UUID admin = UUID.randomUUID();
 
@@ -81,10 +79,10 @@ class EntryAbuseHistoryIntegrationTest {
 		mvc.perform(post("/api/v1/events/{event}/entries", missingEvent).header("X-User-ID", user).header("X-User-Role", "USER").header("X-User-Membership", "excellent")
 				.header("Idempotency-Key", UUID.randomUUID()).contentType(MediaType.APPLICATION_JSON).content("{}"))
 				.andExpect(status().isTooManyRequests());
-		AbuseHistoryService service = new AbuseHistoryService(journals, saves,
-				new AbuseHistoryRetryPolicy(Duration.ofMinutes(10), List.of(Duration.ofSeconds(10), Duration.ofMinutes(2))),
-				Duration.ofSeconds(30), 100);
-		assertThat(service.processNext()).isTrue();
+		// 실제 Spring 작업자의 정기 poll이 저널을 선점해 DB 커밋할 때까지 기다린다.
+		await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+				assertThat(jdbc.queryForObject("select count(*) from abuse_cases where user_id = ?",
+						Long.class, UuidBinary.toBytes(user))).isEqualTo(1));
 		UUID id = jdbc.queryForObject("select id from abuse_cases where user_id = ?",
 				(row, index) -> UuidBinary.fromBytes(row.getBytes(1)), UuidBinary.toBytes(user));
 		mvc.perform(get("/api/v1/admin/abuse-cases").header("X-User-ID", admin).header("X-User-Role", "ADMIN")
@@ -96,7 +94,9 @@ class EntryAbuseHistoryIntegrationTest {
 		mvc.perform(post("/api/v1/events/{event}/entries", missingEvent).header("X-User-ID", user).header("X-User-Role", "USER").header("X-User-Membership", "excellent")
 				.contentType(MediaType.APPLICATION_JSON).content("{}"))
 				.andExpect(status().isTooManyRequests());
-		assertThat(service.processNext()).isFalse();
+		// 저장 성공이 차단 해제를 뜻하지 않으며 Redis 완료 표식까지 실제 작업자 경로로 확인한다.
+		await().atMost(Duration.ofSeconds(10)).untilAsserted(() ->
+				assertThat(redis.opsForHash().get("getddo:entry-block:journal:" + id, "dbPersisted")).isEqualTo("true"));
 	}
 
 	private void insertUser(UUID id, String role) {
