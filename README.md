@@ -275,7 +275,7 @@ flowchart LR
 | 복구·기록 정리 | 백업·진행 기록 보존, 다음 배포 차단 후 수동 확인 |
 | 태그·Release 발행 | 새 앱 유지, 서버를 롤백하지 않고 버전 발행 재시도 |
 
-[배포 흐름·실패 대응 상세](https://github.com/Uplus-GETDDO/getddo-be/wiki/CI-CD-Release-Recovery)
+[배포·복구 절차](docs/06-runbook/container-cd.md)
 
 #### 설계·기술 선택과 사용 이유
 
@@ -284,11 +284,11 @@ flowchart LR
 | Docker·Compose | CI 이미지 재사용·YAML 실행 설정 관리. Docker 운영과 서버별 배포 관리 부담을 수용. [대안·트레이드오프 비교](https://github.com/Uplus-GETDDO/getddo-be/wiki/Docker-Compose-Choice) |
 | CloudFront·내부 ALB·보안 그룹 | HTTPS 진입, 요청 분산과 접근 경계 |
 | RDS·ElastiCache·S3 | 업무 데이터·요청 횟수·이미지의 저장 목적 분리 |
-| GitHub Actions·OIDC·SSM | 검증한 이미지 배포와 버전 발행을 분리합니다. 실패 단계별로 유지·복구·재시도를 구분합니다. [정기 릴리스·실패 대응](https://github.com/Uplus-GETDDO/getddo-be/wiki/CI-CD-Release-Recovery) |
+| GitHub Actions·OIDC·SSM | 검증한 이미지 배포와 버전 발행을 분리합니다. 실패 단계별로 유지·복구·재시도를 구분합니다. [정기 릴리스 설정·실행 절차](docs/06-runbook/daily-release.md) |
 | Parameter Store·IAM | 비밀값 보관과 서버별 접근 권한 |
 | Terraform·IAM 정책 파일 | 리소스 정의와 변경 검토 방식 |
 
-배포 코드: [CI](.github/workflows/build.yml) · [이미지 생성](.github/workflows/image.yml) · [CD](.github/workflows/cd.yml) · [서버 배포](infra/scripts/deploy-container.sh) · [정기 릴리스](https://github.com/Uplus-GETDDO/getddo-be/blob/6daa51196d24cce298d2824cdeae0ef883fa4408/.github/workflows/daily-release.yml)
+배포 코드: [CI](.github/workflows/build.yml) · [이미지 생성](.github/workflows/image.yml) · [CD](.github/workflows/cd.yml) · [서버 배포](infra/scripts/deploy-container.sh) · [정기 릴리스](.github/workflows/daily-release.yml)
 
 </details>
 
@@ -383,8 +383,6 @@ public ResponseEnvelope<UserProfileResponse> getProfile(@CurrentUser User user) 
 - **설계·기술 선택과 사용 이유**: 작성 예정
 - **문제와 해결 과정**: 작성 예정
 - **테스트 결과**: 실행일·기준 커밋·명령·성공/실패·검증 범위 작성 예정
-
-기존 참고 자료: [Wiki](https://github.com/Uplus-GETDDO/getddo-be/wiki/Mentoring-Features#user) — 해당 문서의 기준 시점과 현재 구현을 확인한 뒤 작성합니다.
 
 </details>
 
@@ -1116,7 +1114,7 @@ DB의 이미지 키 + 공개 주소 설정 → 응답의 imageUrl
 
 실패·오류·건너뜀은 0개입니다. 관리자 알림 운영 수치는 위 알림 합계에 포함되는 하위 집계이며 중복 합산하지 않습니다. 사용자 조회는 권한, AND 필터, `%·_·!`의 문자 검색, 안정 정렬, 큰 페이지, 응답 7개 필드, UTC 시각과 조회 전후 데이터 불변을 확인했습니다.
 
-**배너** — 2026-10-16 KST, [배너 검증 기준](https://github.com/Uplus-GETDDO/getddo-be/pull/110)의 코드 `28e4ed05`에서 별도로 새로 실행했습니다. 배너 기능은 위 dev 기준 코드에 포함되지 않습니다.
+**배너** — 2026-10-16 KST, 코드 `28e4ed05`에서 별도로 새로 실행했습니다. 배너 기능은 위 dev 기준 코드에 포함되지 않습니다.
 
 | 검증 종류 | 실행 수 | 결과 |
 | --- | ---: | --- |
@@ -1144,7 +1142,7 @@ DB의 이미지 키 + 공개 주소 설정 → 응답의 imageUrl
 
 이 검증은 로컬의 담당 기능 테스트이며 실제 FE·이미지 저장소·운영 DB 연결을 검증한 결과로 확대하지 않습니다.
 
-구현 안내: [관리자 사용자 조회](docs/02-api/admin-users.md). 배너 소스는 검증한 PR 기준 [서비스](https://github.com/Uplus-GETDDO/getddo-be/blob/28e4ed0570bdb50d9409539e3e3931b7dd663324/core/src/main/java/com/getddo/core/banner/service/BannerService.java) · [실제 API·MySQL 테스트](https://github.com/Uplus-GETDDO/getddo-be/blob/28e4ed0570bdb50d9409539e3e3931b7dd663324/api/src/integrationTest/java/com/getddo/api/banner/BannerApiIntegrationTest.java)를 참고합니다.
+구현 안내: [관리자 사용자 조회](docs/02-api/admin-users.md). 현재 배너 구현은 [서비스](core/src/main/java/com/getddo/core/banner/service/BannerService.java) · [실제 API·MySQL 테스트](api/src/integrationTest/java/com/getddo/api/banner/BannerApiIntegrationTest.java)를 참고합니다. 위 실행 결과는 명시한 과거 검증 코드 기준입니다.
 
 </details>
 
@@ -1194,15 +1192,16 @@ DB 이름이나 계정을 바꿨다면 환경변수도 `.env`와 맞춥니다.
 
 ### AWS Staging 부하 테스트
 
-Stage 이미지 생성·배포 경로는 [Stage 배포 기능](https://github.com/Uplus-GETDDO/getddo-be/pull/164)로 `dev`에 반영됐습니다. 같은 저장소 PR의 CI에서 만든 고정 SHA 이미지 산출물을 검증한 Stage a/c에 순차 배포하며, 운영 main 전용 CD 조건과 기본 설정은 유지합니다. Stage의 Parameter Store·로그·지표 환경과 배포 잠금은 운영과 분리합니다.
+Stage는 같은 저장소 PR의 CI에서 만든 고정 SHA 이미지 산출물을 사용합니다. 대상 검증 후 Stage a/c에 순차 배포하며, 운영 main 전용 CD 조건과 기본 설정은 유지합니다. Stage의 Parameter Store·로그·지표 환경과 배포 잠금은 운영과 분리합니다.
 
 - [백엔드 Stage 이미지·대상 검증·배포·복구](docs/06-runbook/staging-deployment.md)
 - [인프라 환경 생성·Locust UI/CLI·Grafana·결과 수집·삭제](https://github.com/Uplus-GETDDO/getddo-infra/blob/main/docs/staging-loadtest.md)
-- 인프라 구현은 [임시 인프라 구현](https://github.com/Uplus-GETDDO/getddo-infra/pull/5)로 `main`에 병합됐습니다. **인프라는 비공개 저장소이므로 읽기 권한이 필요하며, 권한 없는 GitHub 계정에는 404로 보입니다.** 권한이 있는 조직 계정으로 인프라 저장소의 `docs/staging-loadtest.md`를 확인합니다.
+
+**인프라는 비공개 저장소이므로 읽기 권한이 필요하며, 권한 없는 GitHub 계정에는 404로 보입니다.** 권한이 있는 조직 계정으로 인프라 저장소의 `docs/staging-loadtest.md`를 확인합니다.
 
 환경 up/destroy는 인프라 저장소의 `scripts/staging.py`가 맡습니다. `ready` 이후 Locust 웹 UI 또는 CLI로 부하를 시작하고 기존 Grafana의 Staging 폴더에서 관측합니다. **UI Stop은 부하만 멈추며, 서버·DB 삭제에는 인프라 destroy가 필요합니다.** 비밀번호는 Parameter Store에서 본인 권한으로 조회하고 문서·명령 인자에 기록하지 않습니다.
 
-2026-10-23 고정 PR SHA 조합에서 UI 41건·CLI 39건 모두 실패 0, Grafana 대조·S3 결과 재조회·정상 삭제·독립 잔여 0을 확인했습니다. 이는 플랫폼 기능 인수이며 이후 병합된 모든 업무 코드의 성능이나 SLO를 보장하지 않습니다. 전체 TTL 만료 삭제 E2E는 별도 미수행입니다. 실행 조건·고정 이미지·CSV 원본·Grafana/S3/삭제 대조는 [Stage 검증 상세 보고서](docs/07-verification/reports/2026-10-23-staging-lifecycle.md)를 참고합니다.
+2026-10-23 고정 소스·이미지 조합에서 UI 41건·CLI 39건 모두 실패 0, Grafana 대조·S3 결과 재조회·정상 삭제·독립 잔여 0을 확인했습니다. 이는 플랫폼 기능 인수이며 이후 병합된 모든 업무 코드의 성능이나 SLO를 보장하지 않습니다. 전체 TTL 만료 삭제 E2E는 별도 미수행입니다. 실행 조건·고정 이미지·CSV 원본·Grafana/S3/삭제 대조는 [Stage 검증 상세 보고서](docs/07-verification/reports/2026-10-23-staging-lifecycle.md)를 참고합니다.
 
 ### 테스트와 CI
 
