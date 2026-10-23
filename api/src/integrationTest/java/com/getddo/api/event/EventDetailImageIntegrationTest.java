@@ -1,6 +1,7 @@
 package com.getddo.api.event;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import org.junit.jupiter.api.AfterEach;
@@ -75,10 +76,14 @@ class EventDetailImageIntegrationTest {
 				.header("X-User-ID", admin).header("X-User-Role", "ADMIN"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.data.items[0].detailImageKey").value("events/detail.png"));
-		mvc.perform(get("/api/v1/events").header("X-User-ID", user)
+		String listResponse = mvc.perform(get("/api/v1/events").header("X-User-ID", user)
 				.header("X-User-Role", "USER").header("X-User-Membership", "vip"))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.data.items[*].detailImageUrl").isEmpty());
+				.andReturn().getResponse().getContentAsString();
+		List<Map<String, Object>> items = JsonPath.read(listResponse, "$.data.items");
+		assertThat(items).filteredOn(item -> event.toString().equals(item.get("id")))
+				.singleElement()
+				.satisfies(item -> assertThat(item).doesNotContainKey("detailImageUrl"));
 
 		// when
 		modify("events/changed.png");
