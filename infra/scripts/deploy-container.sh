@@ -19,6 +19,7 @@ image=''
 marker="$root/deploy-in-progress"
 transaction_started=0
 cleanup_complete=0
+api_private_ip=''
 
 # Actions와 별개로 서버에서도 한 번에 한 배포만 허용한다.
 exec 9>"$root/deploy.lock"
@@ -51,7 +52,7 @@ compose() {
   shift 4
   # 임시 설정으로 사전 검증하고 실제 실행·복구 때는 정식 app.env를 읽는다.
   # 설정값 자체를 셸 변수로 가져오거나 source로 실행하지 않는다.
-  APP_IMAGE="$selected_image" APP_ENV_FILE="$selected_env" timeout "$limit" docker compose --project-name getddo \
+  API_PRIVATE_IP="$api_private_ip" APP_IMAGE="$selected_image" APP_ENV_FILE="$selected_env" timeout "$limit" docker compose --project-name getddo \
     --env-file /dev/null --file "$directory/compose.deploy.yaml" "$@"
 }
 
@@ -72,6 +73,32 @@ healthy() {
     fi
     sleep 4
   done
+  return 1
+}
+
+metrics_ready() {
+  # 이전 산출물/롤백에는 Prometheus endpoint를 요구하지 않는다.
+  grep -q 'API_PRIVATE_IP' "$release/compose.deploy.yaml" || return 0
+  local attempt
+  for ((attempt = 0; attempt < 15; attempt++)); do
+    if curl --disable --fail --silent --noproxy '*' --max-time 5 "http://$api_private_ip:9091/actuator/prometheus" | python3 -c '
+import math
+import re
+import sys
+required = {"http_server_requests_seconds_bucket", "jvm_memory_used_bytes",
+            "tomcat_threads_busy_threads", "hikaricp_connections_max"}
+found = set()
+for line in sys.stdin:
+    sample = re.fullmatch(r"([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{.*\})?\s+([-+]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?)(?:\s+[0-9]+)?", line.strip())
+    if sample and sample[1] in required and math.isfinite(float(sample[2])):
+        found.add(sample[1])
+sys.exit(0 if found == required else 1)
+'; then
+      return 0
+    fi
+    sleep 4
+  done
+  echo 'Prometheus 필수 지표 확인 실패' >&2
   return 1
 }
 
@@ -141,6 +168,31 @@ trap finish EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# IMDSv2에서 이 호스트의 기본 private IP만 읽는다. 프록시·리디렉션·IMDSv1 fallback은 쓰지 않는다.
+# 새 Compose가 필요로 할 때만 조회하여 관리 포트가 없는 승인된 이전 산출물도 배포할 수 있다.
+if grep -q 'API_PRIVATE_IP' "$release/compose.deploy.yaml" ||
+   { [[ -L $root/current ]] && grep -q 'API_PRIVATE_IP' "$root/current/compose.deploy.yaml"; }; then
+  metadata_token=$(curl --disable --fail --silent --show-error --noproxy '*' --connect-timeout 2 --max-time 5 \
+    --request PUT --header 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
+    http://169.254.169.254/latest/api/token) || { echo 'IMDSv2 token 조회 실패' >&2; exit 1; }
+  [[ -n $metadata_token && $metadata_token != *$'\r'* && $metadata_token != *$'\n'* ]] || exit 1
+  # 헤더는 stdin으로 전달해 프로세스 명령행에 token을 남기지 않는다.
+  api_private_ip=$(printf 'X-aws-ec2-metadata-token: %s\n' "$metadata_token" | \
+    curl --disable --fail --silent --show-error --noproxy '*' --connect-timeout 2 --max-time 5 \
+    --header @- http://169.254.169.254/latest/meta-data/local-ipv4) || { echo 'IMDSv2 private IP 조회 실패' >&2; exit 1; }
+  unset metadata_token
+  python3 - "$api_private_ip" <<'PYIP'
+import ipaddress
+import sys
+try:
+    address = ipaddress.IPv4Address(sys.argv[1])
+    if not any(address in ipaddress.IPv4Network(network) for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")):
+        raise ValueError("not RFC1918")
+except ValueError:
+    raise SystemExit("IMDSv2 private IPv4 검증 실패") from None
+PYIP
+fi
+
 # 설정 디렉터리는 초기 설치에서 준비한다. 기존 env의 링크·소유권·권한도 검사한다.
 [[ -d /etc/getddo && ! -L /etc/getddo ]]
 if [[ -e $app_env || -L $app_env ]]; then
@@ -198,7 +250,7 @@ mv -f -- "$env_tmp/next.env" "$app_env"
 
 # 짧은 중단을 동반하는 교체다. 환경변수 변경도 반영되도록 강제 재생성한다.
 if compose 120 "$release" "$image" "$app_env" up -d --force-recreate --no-build --pull never app &&
-   healthy "$release" "$image" && record_current "$release"; then
+   healthy "$release" "$image" && metrics_ready && record_current "$release"; then
   committed=1
   clear_marker
   echo "DEPLOY_OK: $source_sha $image"

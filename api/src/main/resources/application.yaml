@@ -32,8 +32,12 @@ springdoc:
     tags-sorter: alpha
     operations-sorter: alpha
 
-# 기존 공개 health 경로(/v3/api-docs)를 유지하며 Actuator HTTP/JMX 경로는 열지 않는다.
+# 기본 프로파일은 기존 health 경로(/v3/api-docs)를 유지하고 Actuator HTTP/JMX 경로는 열지 않는다.
 management:
+  prometheus:
+    metrics:
+      export:
+        enabled: false
   endpoints:
     web:
       exposure:

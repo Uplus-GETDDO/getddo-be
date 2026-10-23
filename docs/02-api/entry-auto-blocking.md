@@ -65,7 +65,7 @@ payload 필드는 id·userId·eventId(nullable)·sourceType·detectionType·dete
 
 ## 설정과 검증
 
-[application.yaml](../../api/src/main/resources/application.yaml)의 기존 `getddo.rate-limit` enabled·store·entry 일반 한도를 재사용한다. entry-block.user-threshold·event-threshold·duration·rule-version을 추가했다. 기본값은 해당 설정 파일을 따른다. ENTRY_RATE_LIMIT·ENTRY_SCOPED_RATE_LIMIT·ENTRY_RATE_WINDOW와 ENTRY_BLOCK_* 환경변수 또는 Spring 외부 설정으로 조정하고, 양수·최소 1ms 구간·집계시간≤차단시간을 부팅 시 검사한다. 설정 주입 변경은 프로세스 재시작을 필요로 하며 런타임 동적 갱신 기능을 추가하지 않는다. 기존 Parameter Store 필수 조회 목록·CD 워크플로는 변경하지 않았다.
+[application.yaml](../../api/src/main/resources/application.yaml)의 기존 `getddo.rate-limit` enabled·store·entry 일반 한도를 재사용한다. entry-block.user-threshold·event-threshold·duration·rule-version을 추가했다. 기본값은 해당 설정 파일을 따른다. ENTRY_RATE_LIMIT·ENTRY_SCOPED_RATE_LIMIT·ENTRY_RATE_WINDOW와 ENTRY_BLOCK_* 환경변수 또는 Spring 외부 설정으로 조정하고, 양수·최소 1ms 구간·집계시간≤차단시간을 부팅 시 검사한다. 설정 주입 변경은 프로세스 재시작을 필요로 하며 런타임 동적 갱신 기능을 추가하지 않는다. `ruleVersion`은 공용 계약상 문자열이며 JSON의 `v1`은 예시다. 이 구현의 기본값은 설정 바인딩과 YAML 모두 `entry-v1`이고 `ENTRY_BLOCK_RULE_VERSION`으로 변경할 수 있다. 저장된 과거 근거의 버전은 현재 기본값으로 덮어쓰지 않는다. 기존 Parameter Store 필수 조회 목록·CD 워크플로는 변경하지 않았다.
 
 모듈 분리 전 검증 결과:
 
@@ -93,3 +93,5 @@ payload 필드는 id·userId·eventId(nullable)·sourceType·detectionType·dete
 - 위 통합 테스트 제외 명령으로 전체 빌드 및 API·DB·Redis 통합 테스트 소스 컴파일에 성공했다. 로컬 통합 테스트·실제 저장소 연결·배포 검증은 사용자 요청에 따라 수행하지 않았다.
 - core의 API·Redis·Spring Boot 바인딩 역참조 부재, storage:redis의 API 역참조 부재와 API 운영 코드의 직접 Redis 클라이언트 import 부재를 확인했다. 두 Lua 파일은 이동 전과 바이트 단위로 동일하다.
 - 실행 JAR에 Redis 모듈과 그 안의 두 Lua 파일이 포함되고, 기존 API 경로에 Redis 구현 클래스나 Lua 파일이 중복되지 않음을 확인했다.
+
+최신 dev(`8ee80cf0`) 병합 후 단위 테스트 1,697건(api 521, core 1,069, storage:db 96, storage:redis 9, storage:s3 2)이 통과했다. 실패·오류·건너뛰기 0건이며 전체 빌드·세 모듈 통합 테스트 소스 컴파일도 성공했다. 늘어난 건수는 dev의 기존 변경을 포함한 결과이고 로컬 통합 테스트는 실행하지 않았다.
