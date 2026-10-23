@@ -10,6 +10,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.ImportAutoConfiguration;
+import org.springframework.boot.persistence.autoconfigure.PersistenceExceptionTranslationAutoConfiguration;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
@@ -34,6 +36,8 @@ import com.getddo.db.ticket.TicketGrantSeeds;
 @DataJpaTest(properties = {"spring.jpa.hibernate.ddl-auto=validate", "spring.flyway.enabled=true",
 		"spring.jpa.properties.hibernate.jdbc.time_zone=UTC"})
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+// JPA 슬라이스에서도 운영과 같은 Repository 예외 변환을 적용해 중복 확인 경로를 검증한다.
+@ImportAutoConfiguration(PersistenceExceptionTranslationAutoConfiguration.class)
 @ContextConfiguration(classes = AbusePersistenceTestConfiguration.class)
 @ActiveProfiles("test")
 @Import({MySqlTestConfiguration.class, AbuseCaseWriteRepositoryImpl.class,
