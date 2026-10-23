@@ -14,6 +14,8 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -109,6 +111,38 @@ class DrawPublicationIntegrationTest {
 			""", toBytes(UUID.randomUUID()), toBytes(participantId), toBytes(participantId), toBytes(userId), utc(NOW.minusSeconds(301)));
 		snapshot = snapshots.prepareInitial(eventId);
 		confirmed = confirmation.confirm(snapshot.runId());
+	}
+
+	/** 실제 MySQL에 확인을 저장하고 새 영속성 컨텍스트에서 DB 시각을 다시 읽는다. */
+	@ParameterizedTest
+	@CsvSource({
+			"2026-10-23T01:12:00.123456000Z, 2026-10-23T01:12:00.123456Z",
+			"2026-10-23T01:12:00.123456100Z, 2026-10-23T01:12:00.123456Z",
+			"2026-10-23T01:12:00.123456800Z, 2026-10-23T01:12:00.123456Z",
+			"2026-10-23T01:12:00.999999800Z, 2026-10-23T01:12:00.999999Z"
+	})
+	@DisplayName("MySQL 저장·재조회 후 확인 시각은 입력 시각을 넘지 않고 마이크로초로 보존된다")
+	void storesAndReloadsMicrosecondConfirmation(String requestedTime, String expectedTime) {
+		// given
+		Instant requestedAt = Instant.parse(requestedTime);
+		Instant expectedAt = Instant.parse(expectedTime);
+		TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+
+		// when: 저장 트랜잭션을 끝낸 다음 별도 트랜잭션에서 실제 DB 값을 읽는다.
+		DrawResultConfirmation saved = transaction.execute(status ->
+				repository.saveConfirmation(snapshot.runId(), userId, requestedAt));
+		assertThat(saved).isNotNull();
+		DrawResultConfirmation reloaded = transaction.execute(status -> {
+			entityManager.clear();
+			return confirmations.findById(saved.getId()).orElseThrow().toDomain();
+		});
+
+		// then
+		assertThat(reloaded).isEqualTo(saved);
+		assertThat(reloaded.getRunId()).isEqualTo(snapshot.runId());
+		assertThat(reloaded.getConfirmedBy()).isEqualTo(userId);
+		assertThat(reloaded.getConfirmedAt()).isEqualTo(expectedAt).isBeforeOrEqualTo(requestedAt);
+		assertThat(confirmationCount()).isEqualTo(1);
 	}
 
 	/** 실제 최초 확정 결과를 공개하고 JPA 왕복·DB 시각·반복 공개를 보존한다는 시나리오를 검증한다. */
