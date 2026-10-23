@@ -1,0 +1,280 @@
+{
+  "run_id": "d2440eaefd6446e7a2074ea42a3cfd4c",
+  "checked_at": "2026-10-23T02:53:41.191742+00:00",
+  "ui": {
+    "expected_workers": 2,
+    "failures": 0,
+    "finished": 1792723075.689012,
+    "mode": "ui",
+    "parameters": {
+      "duration_seconds": 30,
+      "spawn_rate": 1.0,
+      "users": 2
+    },
+    "requests": 41,
+    "started": 1792723012.1221275
+  },
+  "cli": {
+    "expected_workers": 2,
+    "failures": 0,
+    "finished": 1792723287.7306762,
+    "mode": "cli",
+    "parameters": {
+      "duration_seconds": 30,
+      "spawn_rate": 1.0,
+      "users": 2
+    },
+    "requests": 39,
+    "started": 1792723231.4607453
+  },
+  "ui_grafana": {
+    "api_cumulative_requests": 42,
+    "api_servers": [
+      "a",
+      "c"
+    ],
+    "csv_requests": 41,
+    "failures": 0,
+    "grafana_business_total": 41,
+    "grafana_requests": 41,
+    "mode": "ui",
+    "prod_targets_up": 6,
+    "run_id": "d2440eaefd6446e7a2074ea42a3cfd4c",
+    "seed_requests": 1,
+    "stage_targets_up": 6
+  },
+  "cli_grafana": {
+    "api_cumulative_requests": 81,
+    "api_servers": [
+      "a",
+      "c"
+    ],
+    "csv_requests": 39,
+    "failures": 0,
+    "grafana_business_total": 39,
+    "grafana_requests": 39,
+    "mode": "cli",
+    "prod_targets_up": 6,
+    "run_id": "d2440eaefd6446e7a2074ea42a3cfd4c",
+    "seed_requests": 1,
+    "stage_targets_up": 6
+  },
+  "deletion": {
+    "collection_error": null,
+    "expiry_removed": true,
+    "managed_state_resources": 0,
+    "persistent_credentials_preserved": true,
+    "phase": "destroyed",
+    "residuals": [],
+    "run_id": "d2440eaefd6446e7a2074ea42a3cfd4c",
+    "singleton_released": true
+  },
+  "routing": {
+    "grafana_history_and_dashboards_preserved": true,
+    "locust_route_http_status": 404,
+    "monitor_remove_acknowledged": true,
+    "prod_instant_targets_up": 6,
+    "run_id": "d2440eaefd6446e7a2074ea42a3cfd4c",
+    "stage_history_preserved": true,
+    "stage_instant_targets": 0
+  },
+  "limits": [
+    "2-user 30-second read-only smoke, not a capacity or SLO test",
+    "Scheduler invocation contract and rollback deletion verified; full expiry-triggered workload deletion not exercised",
+    "Human PR approval and merge pending; no merge or production app deployment performed"
+  ],
+  "provenance": {
+    "backend_source_sha": "e2ec9714864165750636a16c4bfce0a7bdf18438",
+    "bundle_sha256": "a1a2eb3d5719755bd4f4af3c5e63f3a4d2700b9c36fc842cadb33a49abeab9be",
+    "image_archive_sha256": "1f3a3445b7367d0d919def9458bb469b01e80c08ecadb616bd93dd59956e2a94",
+    "image_id": "sha256:e9c55cfe4b8cd6cfaf2eac9dee9624c713b3769a1d15aed814f4866b2b77399e",
+    "infra_source_sha": "9127450bf6e5a676f1b51324b4231b107cde8ea0"
+  },
+  "s3": {
+    "ui": {
+      "backend": {
+        "archive_sha256": "1f3a3445b7367d0d919def9458bb469b01e80c08ecadb616bd93dd59956e2a94",
+        "image_id": "sha256:e9c55cfe4b8cd6cfaf2eac9dee9624c713b3769a1d15aed814f4866b2b77399e",
+        "source_sha": "e2ec9714864165750636a16c4bfce0a7bdf18438"
+      },
+      "index": {
+        "key": "staging/runs/d2440eaefd6446e7a2074ea42a3cfd4c/results/index-d30ddcb8c3d23005f257d3c01f39dcbdf2a61b9c4e673f3644d556de11e21919.json",
+        "sha256": "d30ddcb8c3d23005f257d3c01f39dcbdf2a61b9c4e673f3644d556de11e21919"
+      },
+      "infra_source_sha": "9127450bf6e5a676f1b51324b4231b107cde8ea0",
+      "results": {
+        "locust": {
+          "key": "staging/runs/d2440eaefd6446e7a2074ea42a3cfd4c/results/locust-2195a99930dd5587e9e4e5383d1942483f619d9c441d766979b56bb30d2677b6.tar.gz",
+          "readback_verified": true,
+          "report_files": [
+            "SHA256SUMS",
+            "metadata.json",
+            "run.html",
+            "run_exceptions.csv",
+            "run_failures.csv",
+            "run_stats.csv",
+            "run_stats_history.csv",
+            "run.json"
+          ],
+          "sha256": "2195a99930dd5587e9e4e5383d1942483f619d9c441d766979b56bb30d2677b6",
+          "size": 314216
+        },
+        "monitoring": {
+          "dashboards": [
+            {
+              "numeric_frames": 124,
+              "queries": 41,
+              "title": "GETDDO Staging — load test"
+            },
+            {
+              "numeric_frames": 26,
+              "queries": 29,
+              "title": "GETDDO Staging — AWS resources"
+            }
+          ],
+          "key": "staging/runs/d2440eaefd6446e7a2074ea42a3cfd4c/results/monitoring-7ab3ecbf6638f8aef77c5c3445b96d605ee4213a7c1304779e565a774f206c68.json.gz",
+          "readback_verified": true,
+          "sha256": "7ab3ecbf6638f8aef77c5c3445b96d605ee4213a7c1304779e565a774f206c68",
+          "size": 25845
+        }
+      },
+      "run_id": "d2440eaefd6446e7a2074ea42a3cfd4c"
+    },
+    "cli": {
+      "backend": {
+        "archive_sha256": "1f3a3445b7367d0d919def9458bb469b01e80c08ecadb616bd93dd59956e2a94",
+        "image_id": "sha256:e9c55cfe4b8cd6cfaf2eac9dee9624c713b3769a1d15aed814f4866b2b77399e",
+        "source_sha": "e2ec9714864165750636a16c4bfce0a7bdf18438"
+      },
+      "index": {
+        "key": "staging/runs/d2440eaefd6446e7a2074ea42a3cfd4c/results/index-82026e8d06734ae03b11a546a58ef7122d402bfd4898498d5fd999b15742aa81.json",
+        "sha256": "82026e8d06734ae03b11a546a58ef7122d402bfd4898498d5fd999b15742aa81"
+      },
+      "infra_source_sha": "9127450bf6e5a676f1b51324b4231b107cde8ea0",
+      "results": {
+        "locust": {
+          "key": "staging/runs/d2440eaefd6446e7a2074ea42a3cfd4c/results/locust-f92954292362d2196c0bc3e7a0ffa1db2387e4fa1eb1df113488b7ca0357f175.tar.gz",
+          "readback_verified": true,
+          "report_files": [
+            "SHA256SUMS",
+            "metadata.json",
+            "run.html",
+            "run_exceptions.csv",
+            "run_failures.csv",
+            "run_stats.csv",
+            "run_stats_history.csv",
+            "run.json"
+          ],
+          "sha256": "f92954292362d2196c0bc3e7a0ffa1db2387e4fa1eb1df113488b7ca0357f175",
+          "size": 315838
+        },
+        "monitoring": {
+          "dashboards": [
+            {
+              "numeric_frames": 124,
+              "queries": 41,
+              "title": "GETDDO Staging — load test"
+            },
+            {
+              "numeric_frames": 26,
+              "queries": 29,
+              "title": "GETDDO Staging — AWS resources"
+            }
+          ],
+          "key": "staging/runs/d2440eaefd6446e7a2074ea42a3cfd4c/results/monitoring-7ddcc39ba0bbc618f6d05143a4f20c417f181cce5e23e2cfa34c8fc5fb5df195.json.gz",
+          "readback_verified": true,
+          "sha256": "7ddcc39ba0bbc618f6d05143a4f20c417f181cce5e23e2cfa34c8fc5fb5df195",
+          "size": 30930
+        }
+      },
+      "run_id": "d2440eaefd6446e7a2074ea42a3cfd4c"
+    },
+    "final": {
+      "backend": {
+        "archive_sha256": "1f3a3445b7367d0d919def9458bb469b01e80c08ecadb616bd93dd59956e2a94",
+        "image_id": "sha256:e9c55cfe4b8cd6cfaf2eac9dee9624c713b3769a1d15aed814f4866b2b77399e",
+        "source_sha": "e2ec9714864165750636a16c4bfce0a7bdf18438"
+      },
+      "index": {
+        "key": "staging/runs/d2440eaefd6446e7a2074ea42a3cfd4c/results/index-6589605397c8cb3f314f5e823363e291cd673ce267bfb06c8ff2b0550de7ea71.json",
+        "sha256": "6589605397c8cb3f314f5e823363e291cd673ce267bfb06c8ff2b0550de7ea71"
+      },
+      "infra_source_sha": "9127450bf6e5a676f1b51324b4231b107cde8ea0",
+      "results": {
+        "locust": {
+          "key": "staging/runs/d2440eaefd6446e7a2074ea42a3cfd4c/results/locust-ba5ff441e39ebc8c4fce92149438cb3f77bde98a96c831c5f73968614dcdd251.tar.gz",
+          "readback_verified": true,
+          "report_files": [
+            "SHA256SUMS",
+            "metadata.json",
+            "run.html",
+            "run_exceptions.csv",
+            "run_failures.csv",
+            "run_stats.csv",
+            "run_stats_history.csv",
+            "run.json"
+          ],
+          "sha256": "ba5ff441e39ebc8c4fce92149438cb3f77bde98a96c831c5f73968614dcdd251",
+          "size": 316439
+        },
+        "monitoring": {
+          "dashboards": [
+            {
+              "numeric_frames": 124,
+              "queries": 41,
+              "title": "GETDDO Staging — load test"
+            },
+            {
+              "numeric_frames": 26,
+              "queries": 29,
+              "title": "GETDDO Staging — AWS resources"
+            }
+          ],
+          "key": "staging/runs/d2440eaefd6446e7a2074ea42a3cfd4c/results/monitoring-fba43f505132abd3eb1511a12bd164855d98cb3f4844cf6b43b45d67970a5d06.json.gz",
+          "readback_verified": true,
+          "sha256": "fba43f505132abd3eb1511a12bd164855d98cb3f4844cf6b43b45d67970a5d06",
+          "size": 33663
+        }
+      },
+      "run_id": "d2440eaefd6446e7a2074ea42a3cfd4c"
+    },
+    "acceptance": {
+      "bucket": "getddo-deploy-942466928325-ap-northeast-2",
+      "key": "staging/runs/d2440eaefd6446e7a2074ea42a3cfd4c/results/acceptance-b1fde933e01f14f49424c19f5a3afec0d4b9d0330299964574f9ba9843705cbe.json",
+      "sha256": "b1fde933e01f14f49424c19f5a3afec0d4b9d0330299964574f9ba9843705cbe",
+      "readback_verified": true
+    }
+  },
+  "session_metadata": {
+    "ui": {
+      "locust_version": "2.47.0",
+      "scenario": "smoke_events",
+      "environment": "staging",
+      "started_at": "2026-10-23T02:37:01.488218+00:00",
+      "stopped_at": "2026-10-23T02:37:32.488123+00:00",
+      "collected_at": "2026-10-23T02:37:47.111429+00:00",
+      "parameters": {
+        "users": 2,
+        "spawn_rate": 1.0,
+        "duration_seconds": 30
+      },
+      "expected_workers": 2,
+      "metrics": "# TYPE locust_users gauge\nlocust_users 0\n# TYPE locust_requests_total counter\nlocust_requests_total 41\n# TYPE locust_failures_total counter\nlocust_failures_total 0\n# TYPE locust_rps gauge\nlocust_rps NaN\n# TYPE locust_data_fresh gauge\nlocust_data_fresh 0\n# TYPE locust_workers_expected gauge\nlocust_workers_expected 2\n# TYPE locust_workers_connected gauge\nlocust_workers_connected 2\n# TYPE locust_workers_fresh gauge\nlocust_workers_fresh 2\n# TYPE locust_workers_healthy gauge\nlocust_workers_healthy 1\n# TYPE locust_response_time_seconds gauge\nlocust_response_time_seconds{quantile=\"0.5\",scope=\"cumulative\"} NaN\nlocust_response_time_seconds{quantile=\"0.5\",scope=\"rolling\"} NaN\nlocust_response_time_seconds{quantile=\"0.95\",scope=\"cumulative\"} NaN\nlocust_response_time_seconds{quantile=\"0.95\",scope=\"rolling\"} NaN\nlocust_response_time_seconds{quantile=\"0.99\",scope=\"cumulative\"} NaN\nlocust_response_time_seconds{quantile=\"0.99\",scope=\"rolling\"} NaN\n# TYPE locust_business_total counter\nlocust_business_total{scenario=\"smoke_events\",method=\"GET\",result=\"success\"} 41\nlocust_business_total{scenario=\"smoke_events\",method=\"GET\",result=\"expected_rejection\"} 0\nlocust_business_total{scenario=\"smoke_events\",method=\"GET\",result=\"rate_limited\"} 0\nlocust_business_total{scenario=\"smoke_events\",method=\"GET\",result=\"server_error\"} 0\nlocust_business_total{scenario=\"smoke_events\",method=\"GET\",result=\"http_error\"} 0\nlocust_business_total{scenario=\"smoke_events\",method=\"GET\",result=\"invalid_envelope\"} 0\nlocust_business_total{scenario=\"smoke_events\",method=\"GET\",result=\"transport_error\"} 0\n"
+    },
+    "cli": {
+      "locust_version": "2.47.0",
+      "scenario": "smoke_events",
+      "environment": "staging",
+      "started_at": "2026-10-23T02:40:33.652182+00:00",
+      "stopped_at": "2026-10-23T02:41:04.653561+00:00",
+      "collected_at": "2026-10-23T02:41:19.036652+00:00",
+      "parameters": {
+        "users": 2,
+        "spawn_rate": 1.0,
+        "duration_seconds": 30
+      },
+      "expected_workers": 2,
+      "metrics": "# TYPE locust_users gauge\nlocust_users 0\n# TYPE locust_requests_total counter\nlocust_requests_total 39\n# TYPE locust_failures_total counter\nlocust_failures_total 0\n# TYPE locust_rps gauge\nlocust_rps NaN\n# TYPE locust_data_fresh gauge\nlocust_data_fresh 0\n# TYPE locust_workers_expected gauge\nlocust_workers_expected 2\n# TYPE locust_workers_connected gauge\nlocust_workers_connected 2\n# TYPE locust_workers_fresh gauge\nlocust_workers_fresh 2\n# TYPE locust_workers_healthy gauge\nlocust_workers_healthy 1\n# TYPE locust_response_time_seconds gauge\nlocust_response_time_seconds{quantile=\"0.5\",scope=\"cumulative\"} NaN\nlocust_response_time_seconds{quantile=\"0.5\",scope=\"rolling\"} NaN\nlocust_response_time_seconds{quantile=\"0.95\",scope=\"cumulative\"} NaN\nlocust_response_time_seconds{quantile=\"0.95\",scope=\"rolling\"} NaN\nlocust_response_time_seconds{quantile=\"0.99\",scope=\"cumulative\"} NaN\nlocust_response_time_seconds{quantile=\"0.99\",scope=\"rolling\"} NaN\n# TYPE locust_business_total counter\nlocust_business_total{scenario=\"smoke_events\",method=\"GET\",result=\"success\"} 39\nlocust_business_total{scenario=\"smoke_events\",method=\"GET\",result=\"expected_rejection\"} 0\nlocust_business_total{scenario=\"smoke_events\",method=\"GET\",result=\"rate_limited\"} 0\nlocust_business_total{scenario=\"smoke_events\",method=\"GET\",result=\"server_error\"} 0\nlocust_business_total{scenario=\"smoke_events\",method=\"GET\",result=\"http_error\"} 0\nlocust_business_total{scenario=\"smoke_events\",method=\"GET\",result=\"invalid_envelope\"} 0\nlocust_business_total{scenario=\"smoke_events\",method=\"GET\",result=\"transport_error\"} 0\n"
+    }
+  }
+}
