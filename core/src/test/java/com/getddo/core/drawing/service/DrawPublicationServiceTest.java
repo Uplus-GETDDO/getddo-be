@@ -33,6 +33,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InOrder;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -255,6 +257,75 @@ class DrawPublicationServiceTest {
 				List.of(new DrawPublication.Execution(runId, checked.getId(), actor, NOW, List.of())));
 		verify(eventStatuses).changeStatus(eventId, EventStatus.CLOSED, EventStatus.PUBLISHED);
 		verify(notifications).register(response.getPublication());
+	}
+
+	/** 저장소가 마이크로초로 반환한 정상 확인은 최초·재추첨 후 발표에서 모두 사용할 수 있다. */
+	@ParameterizedTest
+	@ValueSource(booleans = {false, true})
+	@DisplayName("마이크로초 확인 시각으로 최초 결과와 재추첨 결과를 발표한다")
+	void publishesWithMicrosecondConfirmation(boolean replacement) {
+		// given
+		Instant now = NOW.plusNanos(800);
+		UUID actor = UUID.randomUUID();
+		UUID replacementRun = UUID.randomUUID();
+		UUID replacementCandidate = UUID.randomUUID();
+		UUID replacementUser = UUID.randomUUID();
+		DrawSnapshot.Candidate candidate = new DrawSnapshot.Candidate(replacementCandidate, UUID.randomUUID(),
+				replacementUser, 0, 1, null, null);
+		DrawSnapshot fixed = new DrawSnapshot(runId, eventId, snapshot.status(), snapshot.fixedAt(),
+				snapshot.algorithmVersion(), snapshot.rules(), List.of(snapshot.candidates().getFirst(), candidate));
+		when(results.lockSnapshot(runId)).thenReturn(Optional.of(fixed));
+		when(results.findConfirmed(fixed)).thenReturn(new DrawConfirmation(runId, eventId, NOW, List.of(selected, unfilled)));
+		DrawResult winner = selected;
+		if (replacement) {
+			winner = new DrawResult(UUID.randomUUID(), new DrawSelection(prizeId, 1, 1, 1,
+					replacementCandidate, replacementUser, DrawSelectionResultType.SELECTED), NOW);
+			when(publications.findReplacementRuns(eventId)).thenReturn(List.of(new DrawPublicationRun(
+					replacementRun, eventId, 1, DrawRunStatus.CONFIRMED, NOW, List.of(winner), null)));
+			when(publications.findCancellations(eventId)).thenReturn(List.of(new DrawPublication.Cancellation(
+					UUID.randomUUID(), resultId, replacementRun, "관리자 취소")));
+		}
+		UUID reviewedRun = replacement ? replacementRun : runId;
+		when(publications.saveConfirmation(any(), eq(actor), eq(now))).thenAnswer(invocation ->
+				new DrawResultConfirmation(UUID.randomUUID(), invocation.getArgument(0), actor, NOW));
+		when(publications.saveReviewedInitial(eq(eventId), eq(reviewedRun), any(), eq(actor), anyList(), eq(now)))
+				.thenAnswer(invocation -> new DrawPublication(UUID.randomUUID(), eventId, reviewedRun, 1,
+						DrawPublicationType.INITIAL, null, actor, now, now, invocation.getArgument(4)));
+		DrawPublicationService precise = new DrawPublicationService(publications, snapshots, results,
+				new TimeProvider(Clock.fixed(now, ZoneOffset.UTC)), notifications, eventStatuses);
+
+		// when
+		DrawPublicationConfirmation response = precise.publishReviewedInitial(eventId, reviewedRun, actor);
+
+		// then
+		assertThat(response.getConfirmation().getConfirmedAt()).isEqualTo(NOW);
+		assertThat(response.getPublication().getEntries()).singleElement().satisfies(entry ->
+				assertThat(entry.getRunId()).isEqualTo(reviewedRun));
+		assertThat(response.getPublication().getEntries().getFirst().getResultId()).isEqualTo(winner.getId());
+		verify(publications).saveConfirmation(runId, actor, now);
+		if (replacement) verify(publications).saveConfirmation(replacementRun, actor, now);
+		verify(eventStatuses).changeStatus(eventId, EventStatus.CLOSED, EventStatus.PUBLISHED);
+		verify(notifications).register(response.getPublication());
+	}
+
+	/** 정밀도 조정과 무관하게 과거·미래 시각과 다른 실행의 확인은 계속 거절한다. */
+	@ParameterizedTest
+	@CsvSource({"-1000, false", "1000, false", "0, true"})
+	@DisplayName("확정 이전·미래·다른 실행의 확인 기록은 발표할 수 없다")
+	void rejectsInvalidConfirmation(long offsetNanos, boolean foreignRun) {
+		// given
+		DrawResultConfirmation invalid = new DrawResultConfirmation(UUID.randomUUID(),
+				foreignRun ? UUID.randomUUID() : runId, UUID.randomUUID(), NOW.plusNanos(offsetNanos));
+		when(publications.findConfirmation(runId)).thenReturn(Optional.of(invalid));
+
+		// when / then
+		assertThatThrownBy(() -> service.publishReviewedInitial(eventId, runId, UUID.randomUUID()))
+				.isInstanceOfSatisfying(BusinessException.class, exception ->
+						assertThat(exception.getErrorCode()).isEqualTo(
+								com.getddo.core.drawing.exception.DrawingErrorCode.INVALID_RUN));
+		verify(publications, never()).saveConfirmation(any(), any(), any());
+		verify(publications, never()).saveReviewedInitial(any(), any(), any(), any(), anyList(), any());
+		verifyNoInteractions(eventStatuses, notifications);
 	}
 
 	/** 새 재추첨으로 검토 명단이 바뀌면 확인 기록을 만들기 전에 거절하는지 검증한다. */

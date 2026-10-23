@@ -3,6 +3,7 @@ package com.getddo.db.drawing.repository;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -267,8 +268,10 @@ public class DrawPublicationRepositoryImpl implements DrawPublicationRepository 
 	/** 이벤트 선잠금 안에서만 호출한다. UNIQUE와 서비스의 재조회로 확인자를 덮어쓰지 않는다. */
 	@Override
 	public DrawResultConfirmation saveConfirmation(UUID runId, UUID actorId, Instant confirmedAt) {
+		// DATETIME(6)에 맞춰 절삭하여 저장 후 반올림된 시각을 미래로 오판하지 않게 한다.
+		Instant storedAt = confirmedAt.truncatedTo(ChronoUnit.MICROS);
 		DrawResultConfirmationEntity saved = confirmations.saveAndFlush(
-		new DrawResultConfirmationEntity(runId, actorId, confirmedAt));
+				new DrawResultConfirmationEntity(runId, actorId, storedAt));
 		UUID id = saved.getId();
 		entityManager.detach(saved);
 		return confirmations.findById(id).orElseThrow().toDomain();
