@@ -11,6 +11,10 @@ import lombok.Getter;
 /** GD-291에 인계할 최초 차단 payload다. 재전달 때 ID·시각·근거를 다시 만들지 않는다. */
 @Getter
 public final class EntryBlock {
+	public static final String SOURCE_TYPE = "ENTRY";
+	public static final String DETECTION_TYPE = "REPEATED_RATE_LIMIT_EXCEEDED";
+	public static final String DETECTION_REASON = "응모 요청 한도 초과가 반복되어 일시 차단되었습니다.";
+
 	private final UUID id;
 	private final UUID userId;
 	private final UUID eventId;
