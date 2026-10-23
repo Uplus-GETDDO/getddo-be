@@ -66,7 +66,7 @@ BE가 파일을 받는 방식과 JPG·PNG, **5MB = 5,000,000바이트 이하** �
 
 위 JSON은 등록·수정 본문의 이미지 필드만 발췌한 것이다. 기존 제목·기간·경품 등 필수 필드는 그대로 전달한다. 업로드 객체 자동 정리와 이전 이미지 삭제는 이번 범위에 포함하지 않는다.
 
-2026-10-23 KST, dev `41af1c8f` 기반 GD-321 로컬 변경에서 대상 검증 73개가 통과했다. 실제 MySQL에서 등록·사용자/관리자 조회·상세 이미지만 수정·동일 PUT·제거·미등록 null·길이 상한·감사 키와 새 컬럼 메타데이터를 확인했다. 이어 `test build --init-script gradle/test-limits.init.gradle --max-workers=1 --no-parallel --console=plain`이 12분 58초에 성공했다. 보고서 기준 일반 1,663개·통합 1,110개, 총 2,773개이며 실패·오류·건너뜀은 0개다. 배포 DB·실제 AWS·FE 연동 검증 결과를 뜻하지 않는다.
+2026-10-23 KST, GD-321 대상 검증 73개가 통과했다. 실제 MySQL에서 등록·사용자/관리자 조회·상세 이미지만 수정·동일 PUT·제거·미등록 null·길이 상한·감사 키와 새 컬럼 메타데이터를 확인했다. 최신 dev `ec30bdef`를 병합한 `68640709`에서 `test build --init-script gradle/test-limits.init.gradle --max-workers=1 --no-parallel --console=plain`도 13분 5초에 성공했다. Redis 모듈을 포함한 보고서 기준 일반 1,705개·통합 1,124개, 총 2,829개이며 실패·오류·건너뜀은 0개다. 배포 DB·실제 AWS·FE 연동 검증 결과를 뜻하지 않는다.
 
 ## 설정·구조
 
