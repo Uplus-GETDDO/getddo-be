@@ -1,6 +1,7 @@
 package com.getddo.api.common.ratelimit;
 
 import java.time.Instant;
+import java.util.Objects;
 import java.util.UUID;
 import com.getddo.core.abuse.domain.AbuseEvidence;
 import lombok.Getter;
@@ -18,10 +19,10 @@ public final class EntryBlock {
 
 	public EntryBlock(UUID id, UUID userId, UUID eventId, Instant occurredAt, Instant blockedAt,
 			Instant blockedUntil, AbuseEvidence evidence) {
-		java.util.Objects.requireNonNull(id, "id");
-		java.util.Objects.requireNonNull(userId, "userId");
-		java.util.Objects.requireNonNull(occurredAt, "occurredAt");
-		java.util.Objects.requireNonNull(evidence, "evidence");
+		Objects.requireNonNull(id, "id");
+		Objects.requireNonNull(userId, "userId");
+		Objects.requireNonNull(occurredAt, "occurredAt");
+		Objects.requireNonNull(evidence, "evidence");
 		if (blockedAt == null || blockedUntil == null || !blockedAt.isBefore(blockedUntil)) {
 			throw new IllegalArgumentException("차단 시작·종료 시각이 올바르지 않다.");
 		}

@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
+import com.getddo.api.common.ratelimit.EntryRateLimitHandler;
 import com.getddo.api.common.ratelimit.InMemoryRateLimiter;
 import com.getddo.api.common.ratelimit.RateLimiter;
 import com.getddo.api.common.ratelimit.RedisRateLimiter;
@@ -20,8 +21,8 @@ class RateLimitConfigTest {
 
 	private final ApplicationContextRunner runner = new ApplicationContextRunner()
 			.withBean(TimeProvider.class, () -> new TimeProvider(Clock.system(ZoneOffset.UTC)))
-			.withBean(com.getddo.api.common.ratelimit.EntryRateLimitHandler.class,
-				() -> mock(com.getddo.api.common.ratelimit.EntryRateLimitHandler.class))
+			.withBean(EntryRateLimitHandler.class,
+				() -> mock(EntryRateLimitHandler.class))
 			.withUserConfiguration(RateLimitConfig.class);
 
 	@Test

@@ -5,12 +5,16 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import com.getddo.core.abuse.domain.AbuseTriggerScope;
@@ -150,8 +154,8 @@ class EntryRateLimiterTest {
 		}
 		CountDownLatch ready = new CountDownLatch(40);
 		CountDownLatch start = new CountDownLatch(1);
-		try (java.util.concurrent.ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
-			List<Callable<EntryLimitDecision>> jobs = java.util.stream.IntStream.range(0, 40)
+		try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+			List<Callable<EntryLimitDecision>> jobs = IntStream.range(0, 40)
 					.mapToObj(i -> (Callable<EntryLimitDecision>) () -> {
 						ready.countDown();
 						if (!start.await(5, TimeUnit.SECONDS)) {
@@ -160,7 +164,7 @@ class EntryRateLimiterTest {
 						return request(EVENT);
 					}).toList();
 			// when
-			List<java.util.concurrent.Future<EntryLimitDecision>> futures = new java.util.ArrayList<>();
+			List<Future<EntryLimitDecision>> futures = new ArrayList<>();
 			for (Callable<EntryLimitDecision> job : jobs) {
 				futures.add(pool.submit(job));
 			}
@@ -169,8 +173,8 @@ class EntryRateLimiterTest {
 			} finally {
 				start.countDown();
 			}
-			List<EntryLimitDecision> decisions = new java.util.ArrayList<>();
-			for (java.util.concurrent.Future<EntryLimitDecision> future : futures) {
+			List<EntryLimitDecision> decisions = new ArrayList<>();
+			for (Future<EntryLimitDecision> future : futures) {
 				decisions.add(future.get(10, TimeUnit.SECONDS));
 			}
 			// then

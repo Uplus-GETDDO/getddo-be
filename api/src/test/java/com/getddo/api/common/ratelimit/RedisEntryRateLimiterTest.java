@@ -2,6 +2,7 @@ package com.getddo.api.common.ratelimit;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -51,7 +52,7 @@ class RedisEntryRateLimiterTest {
 		when(executor.execute(any(), anyList(), anyList())).thenReturn("");
 		// when / then
 		assertThat(limiter.active(user)).isEmpty();
-		verify(executor).execute(any(), eq(java.util.List.of("getddo:entry-block:user:"+user)), eq(java.util.List.of(user.toString())));
+		verify(executor).execute(any(), eq(List.of("getddo:entry-block:user:"+user)), eq(List.of(user.toString())));
 	}
 	@Test
 	@DisplayName("잘못된 JSON 응답은 원문을 노출하지 않는 형식 오류로 전파하고 재전송하지 않는다")

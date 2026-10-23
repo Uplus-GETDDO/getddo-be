@@ -3,6 +3,7 @@ package com.getddo.api.common.ratelimit;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.stream.Stream;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.api.StatefulConnection;
 import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
@@ -35,7 +36,7 @@ class EntryRedisScriptExecutor {
 
 	/** EVALSHA fallback이나 애플리케이션 재시도 없이 한 번만 전송한다. */
 	String execute(byte[] script, List<String> keys, List<String> args) {
-		byte[][] values = java.util.stream.Stream.concat(keys.stream(), args.stream())
+		byte[][] values = Stream.concat(keys.stream(), args.stream())
 				.map(value -> value.getBytes(StandardCharsets.UTF_8)).toArray(byte[][]::new);
 		// 타임아웃은 미실행을 뜻하지 않는다. 카운터 증가가 끝난 뒤 응답만 유실될 수 있어 재전송하지 않는다.
 		byte[] result = connectionTemplate().execute((RedisCallback<byte[]>) connection ->

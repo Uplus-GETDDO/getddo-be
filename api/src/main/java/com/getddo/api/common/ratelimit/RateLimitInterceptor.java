@@ -4,10 +4,9 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
+import lombok.extern.slf4j.Slf4j;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.HandlerInterceptor;
 import org.springframework.web.servlet.HandlerMapping;
@@ -22,9 +21,9 @@ import org.springframework.web.servlet.HandlerMapping;
  * <p>제한기 자체가 실패하면(예: 공유 저장소 장애) 요청을 막지 않고 통과시킨다. 제한 때문에 응모·출석이 모두 멈추는 것보다
  * 낫기 때문이며 실패는 로그로 남긴다.</p>
  */
+@Slf4j
 public class RateLimitInterceptor implements HandlerInterceptor {
 
-	private static final Logger log = LoggerFactory.getLogger(RateLimitInterceptor.class);
 	private static final String USER_ID_HEADER = "X-User-ID";
 	private static final Pattern UUID_FORMAT = Pattern
 			.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");

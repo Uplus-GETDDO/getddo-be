@@ -5,17 +5,23 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.Executors;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.utility.DockerImageName;
@@ -85,8 +91,8 @@ class RedisEntryBlockingIntegrationTest {
 		request(first);
 		CountDownLatch ready = new CountDownLatch(20);
 		CountDownLatch start = new CountDownLatch(1);
-		try (java.util.concurrent.ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
-			List<Callable<EntryLimitDecision>> jobs = java.util.stream.IntStream.range(0, 20)
+		try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+			List<Callable<EntryLimitDecision>> jobs = IntStream.range(0, 20)
 					.mapToObj(i -> (Callable<EntryLimitDecision>) () -> {
 						ready.countDown();
 						if (!start.await(10, TimeUnit.SECONDS)) {
@@ -95,7 +101,7 @@ class RedisEntryBlockingIntegrationTest {
 						return request(i % 2 == 0 ? first : second);
 					}).toList();
 			// when
-			List<java.util.concurrent.Future<EntryLimitDecision>> futures = new ArrayList<>();
+			List<Future<EntryLimitDecision>> futures = new ArrayList<>();
 			for (Callable<EntryLimitDecision> job : jobs) {
 				futures.add(pool.submit(job));
 			}
@@ -105,7 +111,7 @@ class RedisEntryBlockingIntegrationTest {
 				start.countDown();
 			}
 			List<EntryLimitDecision> results = new ArrayList<>();
-			for (java.util.concurrent.Future<EntryLimitDecision> future : futures) {
+			for (Future<EntryLimitDecision> future : futures) {
 				results.add(future.get(15, TimeUnit.SECONDS));
 			}
 			// then
@@ -128,7 +134,7 @@ class RedisEntryBlockingIntegrationTest {
 		EntryBlock block = request(limiter).getBlock();
 		String journal = "getddo:entry-block:journal:"+block.getId();
 		Object payload = redis.opsForHash().get(journal, "payload");
-		java.util.Map<Object,Object> counters = redis.opsForHash().entries("getddo:entry-block:counters:"+user);
+		Map<Object,Object> counters = redis.opsForHash().entries("getddo:entry-block:counters:"+user);
 		now += 30000;
 		// when
 		EntryLimitDecision fast = limiter.active(user).orElseThrow();
@@ -254,7 +260,7 @@ class RedisEntryBlockingIntegrationTest {
 		// given
 		RedisEntryRateLimiter limiter = server();
 		request(limiter);
-		java.util.Map<Object,Object> before = redis.opsForHash().entries("getddo:entry-block:counters:"+user);
+		Map<Object,Object> before = redis.opsForHash().entries("getddo:entry-block:counters:"+user);
 		ControlledExecutor executor = executors.getLast();
 		executor.counterFailure = true;
 		// when
@@ -295,11 +301,11 @@ class RedisEntryBlockingIntegrationTest {
 		// when
 		assertThat(executor.execute(script, List.of(), List.of())).isEqualTo("ok");
 		// 첫 조회는 공유 조회 연결까지 만든 뒤의 누적 연결 수다. 연결 종료는 이 값을 줄이지 않는다.
-		String first = redis.execute((org.springframework.data.redis.core.RedisCallback<java.util.Properties>)
+		String first = redis.execute((RedisCallback<Properties>)
 				connection -> connection.serverCommands().info("stats")).getProperty("total_connections_received");
 		assertThat(first).isNotBlank();
 		assertThat(executor.execute(script, List.of(), List.of())).isEqualTo("ok");
-		String second = redis.execute((org.springframework.data.redis.core.RedisCallback<java.util.Properties>)
+		String second = redis.execute((RedisCallback<Properties>)
 				connection -> connection.serverCommands().info("stats")).getProperty("total_connections_received");
 		// then
 		assertThat(second).isEqualTo(first);

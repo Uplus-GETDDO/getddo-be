@@ -1,11 +1,11 @@
 package com.getddo.api.common.ratelimit;
 
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.Optional;
 import java.util.UUID;
+import lombok.extern.slf4j.Slf4j;
 import jakarta.servlet.http.HttpServletRequest;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.core.MethodParameter;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.ServletWebRequest;
@@ -16,8 +16,8 @@ import com.getddo.core.common.time.TimeProvider;
 
 /** 기존 문맥 검증을 집계 앞으로 연결하고 Redis 판정 오류와 사용자 검증 오류를 분리한다. */
 @Component
+@Slf4j
 public class EntryRateLimitHandler {
-	private static final Logger log = LoggerFactory.getLogger(EntryRateLimitHandler.class);
 	private final CurrentUserArgumentResolver users;
 	private final EntryAbuseEventService events;
 	private final EntryBlockProperties settings;
@@ -35,7 +35,7 @@ public class EntryRateLimitHandler {
 	public boolean preHandle(HttpServletRequest request, HandlerMethod method, EntryRateLimiter limiter,
 			RateLimitProperties.Policy policy, UUID scope) {
 		Instant received = time.now();
-		MethodParameter parameter = java.util.Arrays.stream(method.getMethodParameters())
+		MethodParameter parameter = Arrays.stream(method.getMethodParameters())
 				.filter(users::supportsParameter).findFirst()
 				.orElseThrow(() -> new IllegalStateException("응모 제한 handler에 CurrentUser가 필요하다."));
 		ServletWebRequest web = new ServletWebRequest(request);
