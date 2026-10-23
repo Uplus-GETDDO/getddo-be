@@ -158,6 +158,7 @@ getddo-be/
 ├── infra/                                       # 인프라 정의·배포 자동화 (Gradle 모듈과 별도)
 │   └── scripts/                                 # 서버 배포·설정 조회 스크립트
 │       ├── deploy-ssm.py                         # S3 파일 전달·SSM 배포 요청·결과 확인
+│       ├── deploy-staging.py                     # 고정 CI 이미지를 검증한 Stage a/c에 배포
 │       ├── deploy-container.sh                   # 설정·컨테이너 교체와 실패 복구
 │       ├── fetch-app-env.py                      # Parameter Store 설정 조회·검증
 │       ├── daily-release.py                      # dev CI 확인·main 병합
@@ -1190,6 +1191,18 @@ $env:DB_PASSWORD = '<.env에 설정한 DB_PASSWORD 값>'
 ```
 
 DB 이름이나 계정을 바꿨다면 환경변수도 `.env`와 맞춥니다.
+
+### AWS Staging 부하 테스트
+
+Stage 이미지 생성·배포 경로는 [PR #164](https://github.com/Uplus-GETDDO/getddo-be/pull/164)로 `dev`에 반영됐습니다. 같은 저장소 PR의 CI에서 만든 고정 SHA 이미지 산출물을 검증한 Stage a/c에 순차 배포하며, 운영 main 전용 CD 조건과 기본 설정은 유지합니다. Stage의 Parameter Store·로그·지표 환경과 배포 잠금은 운영과 분리합니다.
+
+- [백엔드 Stage 이미지·대상 검증·배포·복구](docs/06-runbook/staging-deployment.md)
+- [인프라 환경 생성·Locust UI/CLI·Grafana·결과 수집·삭제](https://github.com/Uplus-GETDDO/getddo-infra/blob/feat/GD-311/docs/staging-loadtest.md)
+- 인프라 구현은 현재 [Infra PR #5](https://github.com/Uplus-GETDDO/getddo-infra/pull/5)에서 검토 중이므로 위 인프라 안내는 해당 작업 브랜치를 가리킵니다.
+
+환경 up/destroy는 인프라 저장소의 `scripts/staging.py`가 맡습니다. `ready` 이후 Locust 웹 UI 또는 CLI로 부하를 시작하고 기존 Grafana의 Staging 폴더에서 관측합니다. **UI Stop은 부하만 멈추며, 서버·DB 삭제에는 인프라 destroy가 필요합니다.** 비밀번호는 Parameter Store에서 본인 권한으로 조회하고 문서·명령 인자에 기록하지 않습니다.
+
+2026-10-23 고정 PR SHA 조합에서 UI 41건·CLI 39건 모두 실패 0, Grafana 대조·S3 결과 재조회·정상 삭제·독립 잔여 0을 확인했습니다. 이는 플랫폼 기능 인수이며 이후 병합된 모든 업무 코드의 성능이나 SLO를 보장하지 않습니다. 전체 TTL 만료 삭제 E2E는 별도 미수행입니다. 검증 소스·범위·근거는 위 두 PR을 참고합니다.
 
 ### 테스트와 CI
 
