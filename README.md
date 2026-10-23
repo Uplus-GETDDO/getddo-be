@@ -211,9 +211,9 @@ getddo-be/
 
 ## ERD
 
-[![GETDDO 전체 ERD — 2026-10-16](docs/assets/erd-2026-10-16.png)](docs/assets/erd-2026-10-16.png)
+[![GETDDO 전체 ERD — 2026-10-23](docs/assets/erd-2026-10-23.png)](docs/assets/erd-2026-10-23.png)
 
-[ERDCloud에서 확대·이동하며 보기](https://www.erdcloud.com/d/vuDvgmGQcvHf6f6g9) · [원본 이미지](docs/assets/erd-2026-10-16.png)
+[ERDCloud에서 확대·이동하며 보기](https://www.erdcloud.com/d/vuDvgmGQcvHf6f6g9) · [원본 이미지](docs/assets/erd-2026-10-23.png)
 
 ### 도메인별 ERD
 
