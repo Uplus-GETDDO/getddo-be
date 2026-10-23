@@ -55,3 +55,7 @@ UUID 사용을 전제로 v4와 v7을 비교했다.
 - 예외 추가(2026-10-12, GD-137 사용자 승인): `DrawCheckEntity`는 `BaseEntity`를 상속하지 않고 ID(UUID v7)만 공통 방식으로 생성한다. 기존 `draw_checks`에는 `created_at`이 없고 검증 시각인 `checked_at`을 기록한다. 검증 Service가 정한 시각을 그대로 저장하며 공통 생성 시각을 추가하기 위한 스키마 변경은 하지 않는다. 필수값은 생성자에서 검사한다. 이 예외는 `DrawCheckEntity`에 한정하며, 여기에 명시하지 않은 Entity는 공통 Entity를 따른다.
 - 예외 추가(2026-10-13, GD-169 사용자 승인 기록·검토 대기): `DrawPublicationEntity`와 `DrawResultConfirmationEntity`는 기존 UUID v7과 업무 시각 `published_at`·`confirmed_at`을 유지한다. 기존 V007에는 `created_at`이 없으며 상속만 추가해 없는 컬럼을 매핑하지 않는다. 승인 범위와 공용 문서 반영 상태는 [PR #69](https://github.com/Uplus-GETDDO/getddo-be/pull/69), [공개 저장 문서](../03-database/draw-publication-storage.md#gd-169-연결과-조회-계약)에서 검토한다. BaseEntity로 전환할 때는 새 마이그레이션의 생성 시각 추가·기존 데이터 채움 근거·정밀도·NOT NULL 전환과 Entity 매핑을 함께 검토한다. 업무 시각을 생성 시각으로 임의 치환하거나 기존 Flyway를 수정하지 않는다. 새 공개 실행 연결은 기존 공개 결과 연결과 같은 복합 식별자를 사용하며 독립 생성 시각을 중복 저장하지 않는다.
 - MySQL 버전·연결 설정과 Flyway SQL은 이번 작업 범위에서 제외한다. DB 변경이나 저장 전 ID가 필요한 요구사항이 생기면 재검토한다.
+
+### GD-291 응모 차단 이력 예외 — 2026-10-23 사용자 승인
+
+- 예외: `AbuseCaseEntity`는 `BaseEntity`를 상속하지 않고, Redis 생산자가 최초 발급한 UUID v4 blockId를 PK로 유지한다. DB 삽입·재시도 때 새 ID를 생성하지 않으며 최초 차단 시각·근거를 그대로 저장한다. 같은 PK의 전체 저장값 비교로 재전달을 확인하기 위한 예외다. 사용자가 2026-10-23 대화에서 명시 승인했고 [ADR-0009](0009-entry-abuse-history-identifiers.md)에 근거와 대안을 기록했다. 적용 범위는 이 Entity이며 다른 Entity의 UUID v7 규칙은 유지한다.

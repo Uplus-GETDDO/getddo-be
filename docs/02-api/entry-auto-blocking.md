@@ -54,14 +54,14 @@ GD-291 연결 전에는 Redis 모드의 GD-144 운영 배포를 보류한다. �
 
 payload 필드는 id·userId·eventId(nullable)·sourceType·detectionType·detectionReason·occurredAt·detectedAt·blockedAt·blockedUntil·evidence다. sourceType·탐지 유형·사유는 서버 고정값이다. occurredAt은 요청 평가 진입 시각의 UTC ISO 문자열이며 마이크로초로 한 번 정규화한다. Redis TIME으로 확정한 detectedAt=blockedAt 및 blockedUntil, evidence.windowStartedAt·windowEndsAt은 내부 JSON에서 epoch 밀리초 정수다. GD-291은 이를 Instant.ofEpochMilli로 변환하고 DB에 UTC로 저장한다. API의 UTC instant 문자열이나 DB evidence 문자열로 변환할 때 현재 시각·현재 설정으로 재계산하지 않는다. 나머지 evidence 필드명과 타입은 공용 계약과 같다. 두 거절 임계값을 동시에 충족하면 [공용 evidence 계약](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/05-api/abuse.md)에 따라 차단 한 건과 USER 대표 근거만 생성한다. 이때 evidence에는 USER의 구간·일반 한도·거절 횟수·임계값을 기록하며, GD-291 재전달·저장 재시도에서도 이 최초 근거를 그대로 보존한다.
 
-후속 소비자는 다음 경계를 구현해야 한다. 이 문서가 저장 작업자 구현 완료를 뜻하지 않는다.
+GD-291 소비자는 아래 경계를 구현한다. 재시도·배치·저널 필드와 운영 확인은 [저장 작업자](../06-runbook/abuse-history-worker.md)를 따른다. 구현과 실제 배포·연결 검증은 구분한다.
 
 - ACTIVE와 생성 표식을 확인한 전체 payload만 저장한다. PREPARED나 파생 항목만으로 차단을 합성하지 않는다.
 - pending 유실에도 후속 요청 없이 복구되도록 journal-ids와 실제 journal:* 키의 SCAN을 사용한다. 인덱스 없는 고아 PREPARED 정리와 ACTIVE의 인덱스 복구도 포함한다.
 - DB commit 후에만 dbPersisted를 true로 표시한다. 완료 표시 실패 시 같은 ID·payload로 재전달하며 기존 DB 행과 비교한다.
 - 저장 전 차단이 만료되거나 새 차단이 생겨도 과거 payload는 덮어쓰지 않는다. 종료 전에는 저장 완료가 차단을 해제하지 않는다.
 - DB 저장 확인과 blockedUntil 경과를 모두 만족한 뒤 저널·인덱스를 정리한다. 재시도·배치 대기 데이터도 이 조건을 지킨다.
-- 실제 저장·재시도·배치·복구 스캔은 GD-291 범위다. 이번 변경만으로 Redis 차단이 AR01/AR02에 자동 표시되지는 않는다.
+- GD-291 작업자가 Redis 저널을 DB에 커밋하면 기존 AR01/AR02에서 조회된다. 운영 환경의 작업자 배포·동작과 FE 실측은 별도 확인한다.
 
 ## 설정과 검증
 

@@ -2,6 +2,7 @@ package com.getddo.db.abuse.mapper;
 
 import java.time.DateTimeException;
 import java.time.Instant;
+import java.util.Map;
 
 import org.springframework.stereotype.Component;
 import tools.jackson.core.JacksonException;
@@ -31,6 +32,24 @@ public class AbuseEvidenceMapper {
 		} catch (JacksonException | IllegalArgumentException | DateTimeException invalidEvidence) {
 			// 파서 예외의 입력 스니펫이 공통 오류 로그에 원문 근거·토큰을 남기지 않게 원인을 연결하지 않는다.
 			throw new IllegalStateException("Stored abuse evidence is invalid");
+		}
+	}
+
+	/** 허용된 일곱 필드만 저장하고 UTC instant를 문자열로 명시해 JVM 시간대에 의존하지 않는다. */
+	public String toJson(AbuseEvidence evidence) {
+		return json.writeValueAsString(Map.of(
+				"ruleVersion", evidence.getRuleVersion(), "triggerScope", evidence.getTriggerScope().name(),
+				"windowStartedAt", evidence.getWindowStartedAt().toString(),
+				"windowEndsAt", evidence.getWindowEndsAt().toString(), "requestLimit", evidence.getRequestLimit(),
+				"rejectedCount", evidence.getRejectedCount(), "rejectionThreshold", evidence.getRejectionThreshold()));
+	}
+
+	/** JSON 필드 순서는 무시하되 추가·누락 필드나 값이 다른 기존 근거는 중복 성공으로 인정하지 않는다. */
+	public boolean sameContent(String stored, String expected) {
+		try {
+			return stored != null && json.readTree(expected).equals(json.readTree(stored));
+		} catch (RuntimeException invalid) {
+			return false;
 		}
 	}
 
