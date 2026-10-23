@@ -30,6 +30,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import static com.getddo.core.drawing.exception.DrawingErrorCode.NOT_EXECUTABLE;
 import static org.assertj.core.api.Assertions.*;
@@ -157,6 +158,29 @@ class DrawExecutionControlServiceTest {
 		// then
 		verify(executions).fail(runId, delay < 0 ? null : NOW.plusSeconds(delay));
 		verify(failures).append(argThat(failure -> failure.getId().equals(attemptId) && failure.getRunId().equals(runId)));
+	}
+
+	/** 자동 재시도 불가 오류는 실패 이력을 남기고 예약 없이 운영자 확인을 기다린다. */
+	@ParameterizedTest
+	@EnumSource(value = DrawFailureCode.class,
+			names = {"INVALID_EVIDENCE", "INVALID_RUN", "NOT_EXECUTABLE", "INTERNAL_ERROR"})
+	@DisplayName("정합성·실행 불가·미분류 오류는 자동 재시도 없이 관리자 확인을 기다린다")
+	void nonRetryableFailureWaitsForOperator(DrawFailureCode code) {
+		// given
+		when(executions.lockRun(runId)).thenReturn(
+				Optional.of(state(DrawRunStatus.RUNNING, attemptId, NOW.plusSeconds(30), null)),
+				Optional.of(state(DrawRunStatus.FAILED, null, null, null)));
+
+		// when
+		control.recordFailure(runId, attemptId, code, NOW);
+
+		// then
+		verify(failures).append(argThat(failure -> failure.getRunId().equals(runId)
+				&& failure.getFailureCode().equals(code.name())));
+		verify(executions).fail(runId, null);
+		verify(failures, never()).countSince(any(), any());
+		verify(executions, never()).claim(any(), any(), any(), any(), any());
+		verifyNoInteractions(audit);
 	}
 
 	/** 이미 저장된 같은 실패 ID는 이력과 예약 횟수를 다시 증가시키지 않는다. */

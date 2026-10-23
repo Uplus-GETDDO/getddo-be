@@ -306,7 +306,10 @@ class AdminDrawPublicationControllerTest {
 		when(publications.validateReplacement(eventId, runId)).thenThrow(new BusinessException(NOT_CONFIRMABLE));
 		when(publications.publishReviewedInitial(eventId, runId, actorId)).thenThrow(new BusinessException(NOT_CONFIRMABLE));
 		// when / then
-		mvc.perform(selected(post("/api/v1/admin/draws/{id}/" + endpoint, runId))).andExpect(status().isConflict());
+		mvc.perform(selected(post("/api/v1/admin/draws/{id}/" + endpoint, runId)))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("PUBLICATION-002"))
+				.andExpect(jsonPath("$.message").value("추첨 결과가 아직 발표 가능한 상태가 아닙니다."));
 		verify(repository, never()).saveConfirmation(any(), any(), any());
 	}
 
