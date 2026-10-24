@@ -12,6 +12,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,6 +37,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import com.getddo.core.common.time.TimeProvider;
 import com.getddo.core.notification.domain.MockDeliveryStatus;
@@ -361,36 +363,67 @@ class NotificationJobIntegrationTest {
 				.isEqualTo("묶음 전 업무 확정");
 	}
 
-	/** 두 실제 트랜잭션이 잠금에 경합해도 같은 알림을 중복 선점하지 않는지 검사한다. */
+	/** 첫 트랜잭션의 실제 선점 잠금을 유지한 상태에서 다음 선점의 비대기·중복 방지·후속 처리를 검증한다. */
 	@Test
-	@DisplayName("두 작업자의 동시 묶음 선점은 서로 다른 20건씩만 확보한다")
+	@DisplayName("동시 선점은 최대 20건씩 중복 없이 확보하고 총 40건 전체를 이어 처리한다")
 	void concurrentDeliveryBatchesDoNotOverlap() throws Exception {
 		// given
 		for (int index = 0; index < 40; index++) {
 			service.register(request("batch-delivery-" + index, NOW, List.of(USER)));
 			assertThat(service.processNextJob()).isTrue();
 		}
-		CountDownLatch start = new CountDownLatch(1);
+		CountDownLatch firstLocked = new CountDownLatch(1);
+		CountDownLatch releaseFirst = new CountDownLatch(1);
+		AtomicBoolean holdFirst = new AtomicBoolean(true);
+		doAnswer(invocation -> {
+			@SuppressWarnings("unchecked")
+			List<NotificationDelivery> deliveries = (List<NotificationDelivery>) invocation.callRealMethod();
+			if (holdFirst.compareAndSet(true, false)) {
+				assertThat(deliveries).isNotEmpty();
+				assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+				// 호출한 Service의 REQUIRES_NEW는 아직 반환하지 않아 실제 행 잠금이 유지된다.
+				firstLocked.countDown();
+				if (!releaseFirst.await(30, TimeUnit.SECONDS)) {
+					throw new IllegalStateException("첫 발송 선점 트랜잭션 해제 대기 시간 초과");
+				}
+			}
+			return deliveries;
+		}).when(repository).claimNextDeliveries(NOW, 20);
 
 		// when
 		try (java.util.concurrent.ExecutorService executor = Executors.newFixedThreadPool(2)) {
-			java.util.concurrent.Callable<List<NotificationDelivery>> claim = () -> {
-				assertThat(start.await(10, TimeUnit.SECONDS)).isTrue();
-				return batches.claimNextDeliveries(NOW, 20);
-			};
-			Future<List<NotificationDelivery>> first = executor.submit(claim);
-			Future<List<NotificationDelivery>> second = executor.submit(claim);
-			start.countDown();
+			Future<List<NotificationDelivery>> first = executor.submit(() -> batches.claimNextDeliveries(NOW, 20));
+			List<NotificationDelivery> right;
+			try {
+				assertThat(firstLocked.await(10, TimeUnit.SECONDS)).isTrue();
+				Future<List<NotificationDelivery>> second = executor.submit(() -> batches.claimNextDeliveries(NOW, 20));
+				right = second.get(10, TimeUnit.SECONDS);
+				assertThat(first).isNotDone();
+			} finally {
+				releaseFirst.countDown();
+			}
 			List<NotificationDelivery> left = first.get(15, TimeUnit.SECONDS);
-			List<NotificationDelivery> right = second.get(15, TimeUnit.SECONDS);
 
 			// then
-			assertThat(left).hasSize(20);
-			assertThat(right).hasSize(20);
-			assertThat(java.util.stream.Stream.concat(left.stream(), right.stream())
-					.map(NotificationDelivery::getId).distinct().count()).isEqualTo(40);
-			assertThat(left).allMatch(delivery -> delivery.getAttemptCount() == 1);
-			assertThat(right).allMatch(delivery -> delivery.getAttemptCount() == 1);
+			assertThat(left).hasSizeLessThanOrEqualTo(20);
+			assertThat(right).hasSizeLessThanOrEqualTo(20);
+			List<NotificationDelivery> claimed = new ArrayList<>(left);
+			claimed.addAll(right);
+			assertThat(claimed).isNotEmpty();
+			assertThat(claimed.stream().map(NotificationDelivery::getId).distinct().count())
+					.isEqualTo(claimed.size());
+			// InnoDB가 조회 중 잠근 행은 커밋 뒤 다음 호출에서 다시 후보가 될 수 있다.
+			while (claimed.size() < 40) {
+				List<NotificationDelivery> remaining = batches.claimNextDeliveries(NOW, 20);
+				assertThat(remaining).isNotEmpty().hasSizeLessThanOrEqualTo(20);
+				claimed.addAll(remaining);
+				assertThat(claimed.stream().map(NotificationDelivery::getId).distinct().count())
+						.isEqualTo(claimed.size());
+			}
+			assertThat(claimed).hasSize(40).allMatch(delivery -> delivery.getAttemptCount() == 1);
+			assertThat(count("select count(*) from notifications n join notification_jobs j on j.id = n.job_id"
+					+ " where j.occurrence_key like ? and n.delivery_attempt_count = 1", prefix + "batch-delivery-%"))
+					.isEqualTo(40);
 			assertThat(batches.claimNextDeliveries(NOW, 20)).isEmpty();
 		}
 	}
