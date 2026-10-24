@@ -4,7 +4,9 @@ spring:
   datasource:
     hikari:
       pool-name: getddo
-      # 롤백 오류가 원래 연결 단절을 덮어써도 현재 요청에 확인된 근거를 유지한다.
+      # Spring Boot가 아래 클래스 이름을 HikariConfig에 바인딩하면 Hikari가 리플렉션으로 객체를 생성한다.
+      # 클래스는 SQLExceptionOverride 구현과 공개 기본 생성자가 필요하며, Spring Bean 주입에 의존하지 않는다.
+      # JDBC 오류 검사 콜백에서 현재 요청에 연결 단절 근거를 남겨 JPA 롤백 오류에 원인이 가려져도 확인한다.
       exception-override-class-name: com.getddo.api.common.exception.RequestDatabaseConnectionFailure
   servlet:
     multipart:
