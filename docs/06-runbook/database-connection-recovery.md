@@ -7,6 +7,8 @@
 
 MVC의 Controller·사용자 문맥 조회·Service 트랜잭션 시작/실행/커밋에서 전파된 예외의 원인과 JDBC `nextException`을 확인한다. SQLState `08` 계열 또는 Spring JDBC/Hibernate의 연결 전용 예외 타입이 근거다. 풀 고갈도 연결 획득 실패지만 RDS 전환을 뜻하지 않는다. 일반 트랜잭션 생성 실패·SQLTransientConnectionException 자체·쿼리 timeout·문법·무결성·deadlock은 이 근거 없이 503으로 바꾸지 않는다. 기존 업무 오류와 429의 Retry-After는 유지한다.
 
+Hikari가 SQLState 08 연결 오류를 확인한 시점에 현재 MVC 요청 속성에 SQLState·vendor code·예외 타입의 분류 결과만 보관한다. JPA 롤백이 원래 오류를 SQLState 없는 정리 오류로 덮어쓰면 데이터 접근·트랜잭션 오류 경로에서 이 근거를 사용한다. 원문 예외는 보관하지 않고 Hikari의 기본 폐기 판단도 유지한다. 요청 종료 뒤 다른 요청에 근거를 전파하지 않으며, 워커에는 HTTP 문맥을 만들지 않는다.
+
 503은 DB 미저장 확인이 아니다. 커밋이 완료되고 응답만 유실될 수 있다. 응모·미션 클라이언트는 같은 사용자·대상·요청 키·본문으로 기존 결과를 조회해야 한다. 서버는 새 키 생성이나 연결 장애에 대한 쓰기 자동 재시도를 하지 않는다. 프론트의 키 유지·안내 표시 검증은 이 변경 범위 밖이다.
 
 1. `Database request unavailable` 로그의 `category`, `sqlState`, `vendorCode`, `causeType`을 확인한다. SQLState가 없는 연결 전용 wrapper는 `CONNECTION_RESOURCE_UNAVAILABLE`로 구분한다. 로그에 SQL·호스트·예외 원문은 추가하지 않는다.
@@ -51,3 +53,5 @@ JDBC URL의 같은 속성은 Hikari data-source-properties보다 드라이버에
 - 실제 운영 RDS 전환 시간·장애 중 503·프론트 키 유지·대표 장기 업무 성능은 별도 증거가 필요하다. 실행하지 않은 항목은 NOT_RUN으로 남긴다.
 
 근거: [Connector/J 네트워크 속성](https://dev.mysql.com/doc/connector-j/en/connector-j-connp-props-networking.html), [HikariCP 설정과 연결 제한](https://github.com/brettwooldridge/HikariCP), [Java 21 DNS 보안 속성](https://docs.oracle.com/en/java/javase/21/core/java-networking.html).
+
+롤백 오류가 원래 단절 원인을 덮어쓰는 경로의 근거: [HikariCP 7.0.2 예외 콜백·기본 폐기](https://github.com/brettwooldridge/HikariCP/blob/HikariCP-7.0.2/src/main/java/com/zaxxer/hikari/pool/ProxyConnection.java).

@@ -45,6 +45,8 @@ class DatabaseConnectionSettingsTest {
 							.filter(property -> property.name.equals("connectTimeout") || property.name.equals("socketTimeout"))
 							.collect(Collectors.toMap(property -> property.name, property -> property.value));
 					// then
+					assertThat(pool.getExceptionOverrideClassName()).isEqualTo(
+							"com.getddo.api.common.exception.RequestDatabaseConnectionFailure");
 					assertThat(pool.getConnectionTimeout()).isEqualTo(2000);
 					assertThat(pool.getValidationTimeout()).isEqualTo(1000);
 					assertThat(properties).containsEntry("connectTimeout", "2000").containsEntry("socketTimeout", socketLimitEnabled ? "5000" : "0");

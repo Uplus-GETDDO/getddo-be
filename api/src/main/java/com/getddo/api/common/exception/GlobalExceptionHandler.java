@@ -1,6 +1,8 @@
 package com.getddo.api.common.exception;
 
 import org.springframework.beans.TypeMismatchException;
+import org.springframework.dao.DataAccessException;
+import org.springframework.transaction.TransactionException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
@@ -92,6 +94,10 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 	@ExceptionHandler(Exception.class)
 	public ResponseEntity<ResponseEnvelope<Void>> handleUnexpected(Exception exception) {
 		String category = DatabaseConnectionFailures.classify(exception);
+		if (category == null && (exception instanceof DataAccessException || exception instanceof TransactionException)) {
+			// 실제 JDBC 연결 오류가 같은 요청에서 확인됐을 때만 롤백·정리 오류에 가려진 근거를 사용한다.
+			category = RequestDatabaseConnectionFailure.currentFailure();
+		}
 		if (category != null) {
 			// SQL·호스트·개인정보가 들어갈 수 있는 원문과 스택은 이 경로에서 기록하지 않는다.
 			logger.warn("Database request unavailable: code=COMMON-007 category=" + category

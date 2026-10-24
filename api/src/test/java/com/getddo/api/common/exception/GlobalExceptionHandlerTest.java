@@ -22,6 +22,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.TransactionSystemException;
 import org.hibernate.exception.JDBCConnectionException;
@@ -237,6 +238,35 @@ class GlobalExceptionHandlerTest {
 	static class UserContextController {
 		@GetMapping("/test/user")
 		void user(@CurrentUser(membershipRequired = false) User user) {}
+	}
+
+	@Test
+	@DisplayName("단절 근거가 롤백 오류에 가려져도 503이며 다음 요청의 근거 없는 오류는 500을 유지한다")
+	void rollbackCannotHideConnectionFailureOrLeakToNextRequest() throws Exception {
+		// given
+		MockMvc mvc = MockMvcBuilders.standaloneSetup(new RollbackFailureController())
+				.setControllerAdvice(new GlobalExceptionHandler()).build();
+		// when / then
+		mvc.perform(get("/test/rollback").param("state", "08S01"))
+				.andExpect(status().isServiceUnavailable())
+				.andExpect(jsonPath("$.code").value("COMMON-007"));
+		mvc.perform(get("/test/rollback"))
+				.andExpect(status().isInternalServerError())
+				.andExpect(jsonPath("$.code").value("COMMON-001"));
+		mvc.perform(get("/test/rollback").param("state", "42000"))
+				.andExpect(status().isInternalServerError())
+				.andExpect(jsonPath("$.code").value("COMMON-001"));
+	}
+
+	@RestController
+	static class RollbackFailureController {
+		@GetMapping("/test/rollback")
+		void fail(@RequestParam(defaultValue = "", name = "state") String state) {
+			if (!state.isEmpty()) {
+				new RequestDatabaseConnectionFailure().adjudicate(new SQLException("private", state));
+			}
+			throw new DataAccessResourceFailureException("rollback", new SQLException("private"));
+		}
 	}
 
 	private MockMvc failingMvc(Exception failure) {

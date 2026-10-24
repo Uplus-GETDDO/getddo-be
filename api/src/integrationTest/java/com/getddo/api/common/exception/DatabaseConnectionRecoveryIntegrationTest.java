@@ -30,6 +30,7 @@ import com.getddo.core.user.repository.UserRepository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -62,7 +63,7 @@ class DatabaseConnectionRecoveryIntegrationTest {
 					.andExpect(jsonPath("$.code").value("COMMON-007"))
 					.andExpect(header().doesNotExist("Retry-After"));
 			assertThat((System.nanoTime() - started) / 1_000_000).isLessThan(8000);
-			mvc.perform(get("/connection-test/normal")).andExpect(status().isOk());
+			mvc.perform(get("/connection-test/normal")).andExpect(status().isOk()).andExpect(content().string("1"));
 			assertThat(probe.queryForObject("select connection_id()", Long.class)).isNotEqualTo(before);
 		}
 	}
@@ -88,7 +89,7 @@ class DatabaseConnectionRecoveryIntegrationTest {
 				connection.close();
 			}
 		}
-		mvc.perform(get("/connection-test/jpa/normal")).andExpect(status().isOk());
+		mvc.perform(get("/connection-test/jpa/normal")).andExpect(status().isOk()).andExpect(content().string("1"));
 	}
 
 	@Test
@@ -102,7 +103,7 @@ class DatabaseConnectionRecoveryIntegrationTest {
 				.andExpect(status().isServiceUnavailable())
 				.andExpect(jsonPath("$.code").value("COMMON-007"));
 		assertThat((System.nanoTime() - started) / 1_000_000).isLessThan(8000);
-		mvc.perform(get("/connection-test/jpa/normal")).andExpect(status().isOk());
+		mvc.perform(get("/connection-test/jpa/normal")).andExpect(status().isOk()).andExpect(content().string("1"));
 	}
 
 	/** 배포 프로파일에서 바인딩한 URL·드라이버·시간 제한을 유지하고 테스트 소유 연결 수만 1개로 제한한다. */
@@ -114,6 +115,7 @@ class DatabaseConnectionRecoveryIntegrationTest {
 		config.setDataSourceProperties(pool.getDataSourceProperties());
 		config.setConnectionTimeout(pool.getConnectionTimeout());
 		config.setValidationTimeout(pool.getValidationTimeout());
+		config.setExceptionOverrideClassName(pool.getExceptionOverrideClassName());
 		config.setMaximumPoolSize(1);
 		config.setMinimumIdle(0);
 		return new HikariDataSource(config);

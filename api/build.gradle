@@ -12,6 +12,7 @@ dependencies {
 	implementation 'org.springframework:spring-tx'
 	// 영속성 연결 예외를 HTTP 경계에서 타입으로 판별한다.
 	implementation 'org.springframework:spring-jdbc'
+	implementation 'com.zaxxer:HikariCP'
 	implementation 'org.hibernate.orm:hibernate-core'
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 	implementation 'io.micrometer:micrometer-registry-cloudwatch2'
@@ -29,7 +30,6 @@ dependencies {
 	annotationProcessor 'org.projectlombok:lombok-mapstruct-binding:0.2.0'
 
 	testImplementation 'org.springframework.boot:spring-boot-starter-data-redis'
-	testImplementation 'com.zaxxer:HikariCP'
 	testImplementation 'org.springframework.boot:spring-boot-jdbc'
 	testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'

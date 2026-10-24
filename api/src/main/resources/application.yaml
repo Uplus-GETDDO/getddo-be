@@ -4,6 +4,8 @@ spring:
   datasource:
     hikari:
       pool-name: getddo
+      # 롤백 오류가 원래 연결 단절을 덮어써도 현재 요청에 확인된 근거를 유지한다.
+      exception-override-class-name: com.getddo.api.common.exception.RequestDatabaseConnectionFailure
   servlet:
     multipart:
       # MB는 십진 단위다. 요청 전체 상한은 파일 외의 multipart 헤더 공간을 포함한다.
