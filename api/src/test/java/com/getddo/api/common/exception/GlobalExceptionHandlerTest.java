@@ -1,9 +1,31 @@
 package com.getddo.api.common.exception;
 
+import java.sql.SQLException;
+import java.sql.SQLTransientConnectionException;
+import java.sql.SQLSyntaxErrorException;
+import java.sql.SQLIntegrityConstraintViolationException;
+import java.sql.SQLTimeoutException;
+import java.util.stream.Stream;
+import java.util.UUID;
+
+import com.getddo.api.common.context.CurrentUser;
+import com.getddo.api.common.context.CurrentUserArgumentResolver;
+import com.getddo.core.user.domain.User;
+import com.getddo.core.user.service.UserService;
+
+import jakarta.persistence.RollbackException;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.springframework.jdbc.CannotGetJdbcConnectionException;
+import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.transaction.TransactionSystemException;
+import org.hibernate.exception.JDBCConnectionException;
+import com.getddo.api.common.ratelimit.RateLimitExceededException;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -18,6 +40,8 @@ import com.getddo.api.common.response.ResponseEnvelope;
 import com.getddo.core.common.exception.BusinessException;
 import com.getddo.core.common.exception.ErrorCode;
 
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -131,6 +155,107 @@ class GlobalExceptionHandlerTest {
 				.andExpect(jsonPath("$.code").value("COMMON-001"))
 				.andExpect(jsonPath("$.message").value("서버 오류가 발생했습니다."))
 				.andExpect(jsonPath("$.data").value(nullValue()));
+	}
+
+	@ParameterizedTest
+	@MethodSource("connectionFailures")
+	@DisplayName("연결 획득·실행·커밋의 연결 장애는 내부 정보와 Retry-After 없이 공통 503으로 응답한다")
+	void connectionFailureReturnsUnavailable(Exception failure) throws Exception {
+		// given
+		MockMvc mvc = failingMvc(failure);
+		// when / then
+		mvc.perform(get("/test/failure"))
+				.andExpect(status().isServiceUnavailable())
+				.andExpect(jsonPath("$.success").value(false))
+				.andExpect(jsonPath("$.code").value("COMMON-007"))
+				.andExpect(jsonPath("$.message").value("일시적으로 요청을 처리할 수 없습니다. 잠시 후 다시 시도해 주세요."))
+				.andExpect(jsonPath("$.data").value(nullValue()))
+				.andExpect(header().doesNotExist("Retry-After"));
+	}
+
+	static Stream<Exception> connectionFailures() {
+		return Stream.of(
+				new SQLException("private SQL and host", "08006"),
+				new CannotGetJdbcConnectionException("unavailable"),
+				new CannotCreateTransactionException("begin", new SQLException("private", "08001")),
+				new RollbackException("commit", new SQLException("private", "08S01")),
+				new TransactionSystemException("commit", new RollbackException("commit", new SQLException("private", "08007"))),
+				new CannotCreateTransactionException("pool", new JDBCConnectionException("acquire",
+						new SQLTransientConnectionException("pool exhausted"))));
+	}
+
+	@ParameterizedTest
+	@MethodSource("nonConnectionFailures")
+	@DisplayName("문법·무결성·쿼리 시간초과·교착과 근거 없는 일시 예외는 기존 500을 유지한다")
+	void unrelatedFailureKeepsServerError(Exception failure) throws Exception {
+		// given
+		MockMvc mvc = failingMvc(failure);
+		// when / then
+		mvc.perform(get("/test/failure"))
+				.andExpect(status().isInternalServerError())
+				.andExpect(jsonPath("$.code").value("COMMON-001"));
+	}
+
+	static Stream<Exception> nonConnectionFailures() {
+		return Stream.of(new SQLSyntaxErrorException("syntax", "42000"),
+				new SQLIntegrityConstraintViolationException("duplicate", "23000", 1062),
+				new SQLTimeoutException("query timeout", "HYT00"), new SQLException("deadlock", "40001", 1213),
+				new SQLTransientConnectionException("not evidence"),
+				new CannotCreateTransactionException("no connection cause"));
+	}
+
+	@Test
+	@DisplayName("빈도 제한은 기존 429와 Retry-After를 유지한다")
+	void rateLimitPreservesRetryAfter() throws Exception {
+		// given
+		MockMvc mvc = failingMvc(new RateLimitExceededException(12));
+		// when / then
+		mvc.perform(get("/test/failure"))
+				.andExpect(status().isTooManyRequests())
+				.andExpect(jsonPath("$.code").value("COMMON-006"))
+				.andExpect(header().string("Retry-After", "12"));
+	}
+
+	@Test
+	@DisplayName("사용자 문맥 DB 조회의 연결 장애도 MVC에서 공통 503으로 변환한다")
+	void userContextConnectionFailureReturnsUnavailable() throws Exception {
+		// given
+		UserService users = mock(UserService.class);
+		UUID id = UUID.randomUUID();
+		when(users.findById(id)).thenThrow(new CannotCreateTransactionException("begin",
+				new SQLException("private", "08001")));
+		MockMvc mvc = MockMvcBuilders.standaloneSetup(new UserContextController())
+				.setCustomArgumentResolvers(new CurrentUserArgumentResolver(users))
+				.setControllerAdvice(new GlobalExceptionHandler()).build();
+		// when / then
+		mvc.perform(get("/test/user").header("X-User-ID", id).header("X-User-Role", "USER"))
+				.andExpect(status().isServiceUnavailable())
+				.andExpect(jsonPath("$.code").value("COMMON-007"));
+	}
+
+	@RestController
+	static class UserContextController {
+		@GetMapping("/test/user")
+		void user(@CurrentUser(membershipRequired = false) User user) {}
+	}
+
+	private MockMvc failingMvc(Exception failure) {
+		return MockMvcBuilders.standaloneSetup(new FailureController(failure))
+				.setControllerAdvice(new GlobalExceptionHandler()).build();
+	}
+
+	@RestController
+	static class FailureController {
+		private final Exception failure;
+
+		FailureController(Exception failure) {
+			this.failure = failure;
+		}
+
+		@GetMapping("/test/failure")
+		void fail() throws Exception {
+			throw failure;
+		}
 	}
 
 	// 운영 API가 아니라 공통 응답의 각 처리 경로를 재현하기 위한 테스트 전용 진입점이다.
