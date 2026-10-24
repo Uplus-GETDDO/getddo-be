@@ -2,15 +2,25 @@
 
 GETDDO는 응모권을 모아 경품 이벤트에 참여하고 추첨 결과를 확인하는 **이벤트 응모 및 추첨 플랫폼**입니다.
 
-### 목차
+## 바로가기
+
+| 구분 | 링크 |
+| --- | --- |
+| API 서버 | [링크](https://dzc8oneey9mmx.cloudfront.net) |
+| API 문서 | [Swagger UI](https://dzc8oneey9mmx.cloudfront.net/swagger-ui/index.html) |
+| 백엔드 문서 | [`docs/`](docs/) — [컨벤션](docs/01-conventions/) · [API](docs/02-api/) · [DB](docs/03-database/) · [결정 기록](docs/04-decisions/) · [작업 기록](docs/05-worklogs/) · [런북](docs/06-runbook/) |
+
+## 목차
 
 1. [프로젝트 개요](#프로젝트-개요)
 2. [기술 스택](#기술-스택)
-3. [프로젝트 팀 구성 및 역할](#프로젝트-팀-구성-및-역할)
-4. [아키텍처와 패키지 구조](#아키텍처와-패키지-구조)
-5. [ERD](#erd)
-6. [프로젝트 수행 경과](#프로젝트-수행-경과)
-7. [실행 방법](#실행-방법)
+3. [주요 고민과 결론](#주요-고민과-결론)
+4. [기술 선택 근거](#기술-선택-근거)
+5. [프로젝트 팀 구성 및 역할](#프로젝트-팀-구성-및-역할)
+6. [아키텍처](#아키텍처)
+7. [ERD](#erd)
+8. [프로젝트 수행 경과](#프로젝트-수행-경과)
+9. [실행 방법](#실행-방법)
 
 ## 프로젝트 개요
 
@@ -57,6 +67,31 @@ flowchart LR
 | 실행 환경 | ![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white) ![Docker Compose](https://img.shields.io/badge/Docker_Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white) |
 | CI | ![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white) |
 
+## 주요 고민과 결론
+
+| # | 고민 | 결론 | 상세 |
+| --- | --- | --- | --- |
+| 1 | 코드를 어떤 구조로 나눌까 | `api`·`core`·`storage:db`·`storage:s3` 네 모듈. `core`는 HTTP DTO와 JPA Entity에 의존하지 않고 Repository 인터페이스에만 의존한다 | [아키텍처](#아키텍처) |
+| 2 | 응모권을 금액처럼 다룰까, 한 장씩 다룰까 | 응모권 한 장이 한 행, 바뀔 때마다 이력을 **추가만** 한다. 잔액·합계 대신 "현재 상태와 마지막 이력의 일치"를 검사한다 | [프로젝트 수행 경과](#프로젝트-수행-경과) |
+| 3 | 같은 요청이 동시에 오면 | 행 잠금과 고정된 잠금 순서, 요청 ID 기반 멱등 처리, DB 제약을 마지막 방어선으로 쓴다. 응모는 마감을 차감 뒤와 커밋 직전에 두 번 확인한다 | [프로젝트 수행 경과](#프로젝트-수행-경과) |
+| 4 | 추첨 결과를 어떻게 믿게 할까 | 후보·가중치·조건을 스냅샷으로 저장하고, 확정된 결과는 같은 실행을 다시 요청해도 바뀌지 않는다. 공개 시점은 관리자가 정한다 | [프로젝트 수행 경과](#프로젝트-수행-경과) |
+| 5 | 업무 성공과 알림을 어떻게 묶을까 | 업무가 성공하면 알림 작업을 같은 트랜잭션에 저장하고, 사용자별 알림은 워커가 만든다. 발송 성공과 읽음은 별개 상태로 둔다 | [프로젝트 수행 경과](#프로젝트-수행-경과) |
+| 6 | 서버가 여러 대일 때 한도와 만료를 어떻게 맞출까 | 요청 횟수는 Redis 한곳에서 세고, 만료 워커는 이미 잡힌 행을 건너뛴다 | [프로젝트 수행 경과](#프로젝트-수행-경과) |
+| 7 | 배포가 실패하면 | 검증한 이미지만 배포하고, 실패 단계별로 기존 유지·복구·재시도를 구분한다. 배포 성공 뒤 버전을 발행한다 | [프로젝트 수행 경과](#프로젝트-수행-경과) |
+| 8 | 새 등급(플래티넘)을 안전하게 켜려면 | 등급·저장 경로를 먼저 넣고 지급은 꺼 둔 채 단계별로 반영한다. 문제가 생기면 설정 `getddo.ticket.grade-probability.platinum-bp=0`으로 지급만 멈춘다 | [플래티넘 문서](docs/02-api/platinum-ticket-grade.md) |
+
+## 기술 선택 근거
+
+| 선택 | 왜 이걸 골랐나 |
+| --- | --- |
+| Spring Boot · Spring Data JPA | 업무 규칙(`core`)과 저장 구현(`storage:db`)을 나누고, 변경은 도메인 객체와 Entity를 Mapper로 변환해 처리 |
+| MySQL 8.4 · Flyway | 모든 스키마 변경을 Flyway 마이그레이션으로만 반영해 환경마다 스키마가 달라지지 않게 한다. 기존 마이그레이션은 수정하지 않고 새 파일을 추가한다 |
+| 행 잠금 · UNIQUE 제약 | 응모권·출석·미션의 중복 지급과 초과 차감을 DB가 마지막으로 막는다. 잠금 방식은 직접 측정해 비교했다([핵심 지표](#핵심-지표)) |
+| Redis | 서버가 여러 대여도 요청 횟수를 한곳에서 센다. 횟수 저장소는 교체할 수 있게 만들었다 |
+| S3 | 이벤트·경품 이미지의 저장을 업무 규칙에서 분리한다(`storage:s3`) |
+| Testcontainers | 개발용 DB 설정 없이 임시 MySQL 8.4에서 실제 마이그레이션과 저장 로직을 검증한다 |
+| Docker · GitHub Actions · SSM | 한 번 만든 이미지를 CI에서 검증하고 같은 이미지를 배포한다. 정기 릴리스와 버전 발행까지 자동화한다 |
+
 ## 프로젝트 팀 구성 및 역할
 
 ### 팀원 소개와 담당 영역
@@ -69,7 +104,7 @@ flowchart LR
 | 윤태형 | 응모권·미션·출석·응모 | 응모권 지급·차감·반환·만료, 출석·미션 보상, 응모 접수·내역 |
 | 박지훈 | 이벤트·경품 관리·이벤트 취소 | 사용자·관리자 이벤트 조회, 이벤트·경품 CRUD, 시작·마감 전환, 취소 연동 |
 
-## 아키텍처와 패키지 구조
+## 아키텍처
 
 ### 시스템 아키텍처
 
@@ -176,9 +211,9 @@ getddo-be/
 
 ## ERD
 
-[![GETDDO 전체 ERD — 2026-10-16](docs/assets/erd-2026-10-16.png)](docs/assets/erd-2026-10-16.png)
+[![GETDDO 전체 ERD — 2026-10-23](docs/assets/erd-2026-10-23.png)](docs/assets/erd-2026-10-23.png)
 
-[ERDCloud에서 확대·이동하며 보기](https://www.erdcloud.com/d/vuDvgmGQcvHf6f6g9) · [원본 이미지](docs/assets/erd-2026-10-16.png)
+[ERDCloud에서 확대·이동하며 보기](https://www.erdcloud.com/d/vuDvgmGQcvHf6f6g9) · [원본 이미지](docs/assets/erd-2026-10-23.png)
 
 ### 도메인별 ERD
 
