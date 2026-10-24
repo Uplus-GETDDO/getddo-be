@@ -23,3 +23,6 @@ docs
 **/*.p12
 **/id_rsa
 **/id_ed25519
+
+# 작업 증적은 앱 빌드 컨텍스트와 이미지에 포함하지 않는다.
+local-reference

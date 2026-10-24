@@ -1,0 +1,10 @@
+# Java 21의 DNS 캐시 정책을 지정하는 추가 보안 속성 파일이다. 파일 이름 자체는 임의로 정할 수 있다.
+# Dockerfile의 -Djava.security.properties=/app/rds-ha.security로 기본 Java 보안 속성에 추가해 읽는다.
+# DNS 캐시 TTL은 Java 보안 속성이므로 이 파일을 통해 설정한다.
+
+# 정상 DNS 조회 결과를 30초 동안 캐시한다. 만료 후 다음 조회에서 RDS DNS 이름의 새 IP를 확인한다.
+# RDS 전환으로 IP가 바뀌어도 JVM이 이전 주소를 오래 유지하지 않게 하는 목적이다.
+networkaddress.cache.ttl=30
+
+# DNS 조회 실패 결과는 5초 동안 캐시해 일시적인 조회 실패 후 다시 확인할 수 있게 한다.
+networkaddress.cache.negative.ttl=5
