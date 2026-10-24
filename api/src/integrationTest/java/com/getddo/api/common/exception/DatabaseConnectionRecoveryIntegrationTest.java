@@ -1,9 +1,17 @@
 package com.getddo.api.common.exception;
 
 import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import jakarta.persistence.EntityManager;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -29,6 +37,7 @@ import com.getddo.api.support.ApiIntegrationTest;
 import com.getddo.core.user.repository.UserRepository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -53,7 +62,7 @@ class DatabaseConnectionRecoveryIntegrationTest {
 	void socketTimeoutReturns503AndPoolRecovers() throws Exception {
 		// given
 		// 연결 한 개짜리 별도 풀로 기존의 다른 유휴 연결을 재사용한 성공과 물리 연결 교체를 구분한다.
-		try (HikariDataSource isolated = singleConnectionPool(5000)) {
+		try (HikariDataSource isolated = connectionPool(5000, 1)) {
 			JdbcTemplate probe = new JdbcTemplate(isolated);
 			Long before = probe.queryForObject("select connection_id()", Long.class);
 			MockMvc mvc = MockMvcBuilders.standaloneSetup(new QueryController(probe))
@@ -118,7 +127,7 @@ class DatabaseConnectionRecoveryIntegrationTest {
 	@DisplayName("운영 socket 60초 제한에서는 6초 정상 SQL을 끊지 않고 같은 물리 연결을 유지한다")
 	void finiteProductionBudgetAllowsQueryLongerThanFiveSeconds() {
 		// given
-		try (HikariDataSource isolated = singleConnectionPool(60000)) {
+		try (HikariDataSource isolated = connectionPool(60000, 1)) {
 			JdbcTemplate probe = new JdbcTemplate(isolated);
 			Long before = probe.queryForObject("select connection_id()", Long.class);
 			// when
@@ -129,8 +138,52 @@ class DatabaseConnectionRecoveryIntegrationTest {
 		}
 	}
 
-	/** 테스트 소유 연결 수를 1개로 제한하고 장애 재현·정상 장기 SQL의 읽기 예산을 구분한다. */
-	private HikariDataSource singleConnectionPool(int socketTimeout) {
+	/** 동시 통신 대기로 모든 연결이 점유되면 다른 요청도 503이며, 제한 후 연결을 반환하고 복구하는지 검증한다. */
+	@Test
+	@DisplayName("동시 정지 읽기는 풀 고갈 503을 유발하지만 통신 제한 이후 정상 조회로 복구한다")
+	void concurrentStalledReadsExhaustPoolThenRecover() throws Exception {
+		// given
+		try (HikariDataSource isolated = connectionPool(5000, 2)) {
+			ExecutorService executor = Executors.newFixedThreadPool(2);
+			CountDownLatch borrowed = new CountDownLatch(2);
+			CountDownLatch start = new CountDownLatch(1);
+			List<Future<Void>> attempts = new ArrayList<>();
+			MockMvc mvc = MockMvcBuilders.standaloneSetup(new QueryController(new JdbcTemplate(isolated)))
+					.setControllerAdvice(new GlobalExceptionHandler()).build();
+			try {
+				for (int i = 0; i < 2; i++) {
+					attempts.add(executor.submit(() -> {
+						try (Connection connection = isolated.getConnection(); Statement statement = connection.createStatement()) {
+							borrowed.countDown();
+							start.await();
+							statement.executeQuery("select sleep(6)").close();
+							return null;
+						}
+					}));
+				}
+				assertThat(borrowed.await(5, TimeUnit.SECONDS)).isTrue();
+				// when
+				start.countDown();
+				ResultActions unavailable = mvc.perform(get("/connection-test/normal"));
+				// then
+				unavailable.andExpect(status().isServiceUnavailable())
+						.andExpect(jsonPath("$.code").value("COMMON-007"));
+				for (Future<Void> attempt : attempts) {
+					assertThatThrownBy(() -> attempt.get(10, TimeUnit.SECONDS))
+							.isInstanceOf(ExecutionException.class).hasCauseInstanceOf(SQLException.class)
+							.satisfies(failure -> assertThat(((SQLException) failure.getCause()).getSQLState()).startsWith("08"));
+				}
+				mvc.perform(get("/connection-test/normal")).andExpect(status().isOk()).andExpect(content().string("1"));
+			} finally {
+				start.countDown();
+				executor.shutdownNow();
+				assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+			}
+		}
+	}
+
+	/** 테스트 소유 연결 수와 읽기 예산을 제한해 장애 재현과 정상 SQL 검증을 구분한다. */
+	private HikariDataSource connectionPool(int socketTimeout, int maximumPoolSize) {
 		HikariConfig config = new HikariConfig();
 		config.setJdbcUrl(pool.getJdbcUrl());
 		config.setUsername(pool.getUsername());
@@ -140,7 +193,7 @@ class DatabaseConnectionRecoveryIntegrationTest {
 		config.setConnectionTimeout(pool.getConnectionTimeout());
 		config.setValidationTimeout(pool.getValidationTimeout());
 		config.setExceptionOverrideClassName(pool.getExceptionOverrideClassName());
-		config.setMaximumPoolSize(1);
+		config.setMaximumPoolSize(maximumPoolSize);
 		config.setMinimumIdle(0);
 		return new HikariDataSource(config);
 	}
