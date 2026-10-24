@@ -51,4 +51,17 @@ final class DatabaseConnectionFailures {
 		}
 		return category;
 	}
+
+	/** 요청에 남은 연결 근거는 원래 오류가 가려질 수 있는 트랜잭션 실패에만 사용한다. */
+	static boolean isTransactionFailure(Throwable failure) {
+		Set<Throwable> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+		for (Throwable cause = failure; cause != null && visited.add(cause); cause = cause.getCause()) {
+			if (cause instanceof org.hibernate.TransactionException
+					|| cause instanceof org.springframework.transaction.TransactionException) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 }

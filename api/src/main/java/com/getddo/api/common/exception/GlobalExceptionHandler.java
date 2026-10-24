@@ -1,8 +1,6 @@
 package com.getddo.api.common.exception;
 
 import org.springframework.beans.TypeMismatchException;
-import org.springframework.dao.DataAccessException;
-import org.springframework.transaction.TransactionException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
@@ -94,7 +92,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 	@ExceptionHandler(Exception.class)
 	public ResponseEntity<ResponseEnvelope<Void>> handleUnexpected(Exception exception) {
 		String category = DatabaseConnectionFailures.classify(exception);
-		if (category == null && (exception instanceof DataAccessException || exception instanceof TransactionException)) {
+		if (category == null && DatabaseConnectionFailures.isTransactionFailure(exception)) {
 			// 실제 JDBC 연결 오류가 같은 요청에서 확인됐을 때만 롤백·정리 오류에 가려진 근거를 사용한다.
 			category = RequestDatabaseConnectionFailure.currentFailure();
 		}

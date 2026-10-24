@@ -19,6 +19,7 @@ class DatabaseConnectionFailuresTest {
 		first.initCause(second);
 		// when / then
 		assertThat(DatabaseConnectionFailures.classify(first)).isNull();
+		assertThat(DatabaseConnectionFailures.isTransactionFailure(first)).isFalse();
 	}
 
 	@Test

@@ -253,6 +253,9 @@ class GlobalExceptionHandlerTest {
 		mvc.perform(get("/test/rollback"))
 				.andExpect(status().isInternalServerError())
 				.andExpect(jsonPath("$.code").value("COMMON-001"));
+		mvc.perform(get("/test/rollback").param("state", "08S01").param("rollback", "false"))
+				.andExpect(status().isInternalServerError())
+				.andExpect(jsonPath("$.code").value("COMMON-001"));
 		mvc.perform(get("/test/rollback").param("state", "42000"))
 				.andExpect(status().isInternalServerError())
 				.andExpect(jsonPath("$.code").value("COMMON-001"));
@@ -261,11 +264,14 @@ class GlobalExceptionHandlerTest {
 	@RestController
 	static class RollbackFailureController {
 		@GetMapping("/test/rollback")
-		void fail(@RequestParam(defaultValue = "", name = "state") String state) {
+		void fail(@RequestParam(defaultValue = "", name = "state") String state,
+				@RequestParam(defaultValue = "true", name = "rollback") boolean rollback) {
 			if (!state.isEmpty()) {
 				new RequestDatabaseConnectionFailure().adjudicate(new SQLException("private", state));
 			}
-			throw new DataAccessResourceFailureException("rollback", new SQLException("private"));
+			Throwable cause = rollback ? new org.hibernate.TransactionException("rollback", new SQLException("private"))
+					: new SQLException("private");
+			throw new DataAccessResourceFailureException("failure", cause);
 		}
 	}
 
