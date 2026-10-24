@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.getddo.core.notification.domain.MockDeliveryStatus;
 import com.getddo.core.notification.domain.NotificationDelivery;
+import com.getddo.core.notification.domain.NotificationDeliveryResult;
 import com.getddo.core.notification.domain.NotificationJob;
 import com.getddo.core.notification.domain.NotificationJobRequest;
 import com.getddo.core.notification.domain.NotificationJobStatus;
@@ -254,16 +255,23 @@ public class NotificationJobRepositoryImpl implements NotificationJobRepository 
 				return List.of();
 			}
 			List<NotificationDelivery> deliveries = new ArrayList<>();
+			List<NotificationDelivery> exhausted = new ArrayList<>();
 			for (NotificationDelivery previous : rows) {
 				if (previous.getAttemptCount() == Integer.MAX_VALUE || previous.getCycleAttemptCount() >= NotificationRetryPolicy.MAX_ATTEMPTS) {
-					jdbc.update("""
-					update notifications set mock_delivery_status = 'FAILED', next_delivery_attempt_at = null,
-					last_delivery_error = coalesce(last_delivery_error, ?) where id = ?
-					""", NotificationProcessingErrorCode.TEMPORARY_FAILURE.getCode(), bytes(previous.getId()));
+					exhausted.add(previous);
 					continue;
 				}
 				deliveries.add(new NotificationDelivery(previous.getId(), previous.getUserId(),
 						previous.getTitle(), previous.getBody(), previous.getLinkUrl(), previous.getAttemptCount() + 1, previous.getAttemptBase()));
+			}
+			if (!exhausted.isEmpty()) {
+				jdbc.batchUpdate("""
+					update notifications set mock_delivery_status = 'FAILED', next_delivery_attempt_at = null,
+					last_delivery_error = coalesce(last_delivery_error, ?) where id = ?
+					""", exhausted, exhausted.size(), (statement, delivery) -> {
+						statement.setString(1, NotificationProcessingErrorCode.TEMPORARY_FAILURE.getCode());
+						statement.setBytes(2, bytes(delivery.getId()));
+					});
 			}
 			if (deliveries.isEmpty()) {
 				continue;
@@ -279,6 +287,32 @@ public class NotificationJobRepositoryImpl implements NotificationJobRepository 
 				});
 			return List.copyOf(deliveries);
 		}
+	}
+
+	/** 각 행의 선점·복구 기준 차수를 검사하며 성공·실패 결과를 같은 JDBC 묶음으로 저장한다. */
+	@Override
+	public void recordDeliveryResults(List<NotificationDeliveryResult> results) {
+		if (results.isEmpty()) {
+			return;
+		}
+		if (results.size() > NotificationJobRepository.MAX_DELIVERY_CLAIM) {
+			throw new IllegalArgumentException("발송 결과 묶음은 최대 "
+					+ NotificationJobRepository.MAX_DELIVERY_CLAIM + "건이어야 합니다.");
+		}
+		jdbc.batchUpdate("""
+			update notifications set mock_delivery_status = ?, mock_sent_at = coalesce(?, mock_sent_at),
+			next_delivery_attempt_at = ?, last_delivery_error = ?
+			where id = ? and mock_delivery_status = 'PENDING' and delivery_attempt_count = ?
+			and delivery_attempt_base = ?
+			""", results, results.size(), (statement, result) -> {
+				statement.setString(1, result.getStatus().name());
+				statement.setObject(2, time(result.getSentAt()));
+				statement.setObject(3, time(result.getNextAttemptAt()));
+				statement.setString(4, result.getErrorCode());
+				statement.setBytes(5, bytes(result.getDelivery().getId()));
+				statement.setInt(6, result.getDelivery().getAttemptCount());
+				statement.setInt(7, result.getDelivery().getAttemptBase());
+			});
 	}
 
 	/** 현재 발송 차수의 성공 시각을 별도 트랜잭션으로 저장하며 사용자의 읽음 상태는 변경하지 않는다. */

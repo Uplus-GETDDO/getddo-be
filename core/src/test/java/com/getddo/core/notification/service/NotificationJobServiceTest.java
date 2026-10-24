@@ -3,6 +3,7 @@ package com.getddo.core.notification.service;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.boot.test.system.CapturedOutput;
@@ -24,6 +26,7 @@ import org.springframework.dao.TransientDataAccessResourceException;
 import com.getddo.core.common.time.TimeProvider;
 import com.getddo.core.notification.domain.MockDeliveryStatus;
 import com.getddo.core.notification.domain.NotificationDelivery;
+import com.getddo.core.notification.domain.NotificationDeliveryResult;
 import com.getddo.core.notification.domain.NotificationJob;
 import com.getddo.core.notification.domain.NotificationJobRequest;
 import com.getddo.core.notification.domain.NotificationType;
@@ -32,11 +35,13 @@ import com.getddo.core.notification.exception.NotificationProcessingException;
 import com.getddo.core.notification.repository.NotificationJobRepository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -138,13 +143,13 @@ class NotificationJobServiceTest {
 		order.verifyNoMoreInteractions();
 	}
 
-	/** 개별 발송 실패가 뒤의 정상 대상까지 중단시키지 않는지 확인한다. */
+	/** 개별 발송 실패가 뒤의 정상 대상을 막지 않고 각 시각·재시도 결과가 같은 묶음에 보존되는지 확인한다. */
 	@Test
 	@DisplayName("묶음 중 하나의 발송 실패가 다음 알림 발송과 각 결과 기록을 막지 않는다")
 	void recordsDeliveryBatchOutcomesSeparately() {
 		// given
 		NotificationDelivery second = new NotificationDelivery(UUID.randomUUID(), SECOND, "제목", "내용", null, 1);
-		when(batches.claimNextDeliveries(NOW, 20)).thenReturn(List.of(DELIVERY, second));
+		when(batches.claimNextDeliveries(NOW, 100)).thenReturn(List.of(DELIVERY, second));
 		when(sender.send(DELIVERY)).thenReturn(MockDeliveryStatus.FAILED);
 		when(sender.send(second)).thenReturn(MockDeliveryStatus.SENT);
 
@@ -152,48 +157,72 @@ class NotificationJobServiceTest {
 		assertThat(service.processNextDeliveries()).isEqualTo(2);
 
 		// then
-		verify(repository).failDelivery(DELIVERY, NOW.plusSeconds(10), "NOTIFICATION-005");
-		verify(repository).completeDelivery(second, NOW);
-		verify(repository, never()).claimNextDelivery(any());
-		verify(repository, never()).claimNextJob(any());
+		assertThat(recordedResults()).extracting(NotificationDeliveryResult::getDelivery,
+				NotificationDeliveryResult::getStatus, NotificationDeliveryResult::getSentAt,
+				NotificationDeliveryResult::getNextAttemptAt, NotificationDeliveryResult::getErrorCode)
+				.containsExactly(tuple(DELIVERY, MockDeliveryStatus.FAILED, null, NOW.plusSeconds(10), "NOTIFICATION-005"),
+						tuple(second, MockDeliveryStatus.SENT, NOW, null, null));
+		verifyNoInteractions(repository);
 	}
 
 	/** 결과 기록이 실패해도 뒤의 선점 항목을 발송하고 민감한 오류 원문을 남기지 않는다. */
 	@ParameterizedTest
 	@ValueSource(booleans = {false, true})
 	@DisplayName("두 번째 알림의 결과 기록이 실패해도 세 번째 알림은 발송한다")
-	void continuesAfterDeliveryBookkeepingFailure(boolean completionFails, CapturedOutput output) {
+	void continuesAfterDeliveryBookkeepingFailure(boolean secondSent, CapturedOutput output) {
 		// given
 		NotificationDelivery second = new NotificationDelivery(UUID.randomUUID(), SECOND, "제목", "내용", null, 1);
 		NotificationDelivery third = new NotificationDelivery(UUID.randomUUID(), new UUID(0, 3), "제목", "내용", null, 1);
-		when(batches.claimNextDeliveries(NOW, 20)).thenReturn(List.of(DELIVERY, second, third));
+		when(batches.claimNextDeliveries(NOW, 100)).thenReturn(List.of(DELIVERY, second, third));
 		when(sender.send(DELIVERY)).thenReturn(MockDeliveryStatus.SENT);
-		when(sender.send(second)).thenReturn(completionFails ? MockDeliveryStatus.SENT : MockDeliveryStatus.FAILED);
+		when(sender.send(second)).thenReturn(secondSent ? MockDeliveryStatus.SENT : MockDeliveryStatus.FAILED);
 		when(sender.send(third)).thenReturn(MockDeliveryStatus.SENT);
-		if (completionFails) {
-			doThrow(new TransientDataAccessResourceException("private completion details"))
-					.when(repository).completeDelivery(second, NOW);
-		}
-		doThrow(new TransientDataAccessResourceException("private bookkeeping details"))
-				.when(repository).failDelivery(second, NOW.plusSeconds(10), "NOTIFICATION-005");
+		List<List<NotificationDeliveryResult>> writes = new ArrayList<>();
+		doAnswer(invocation -> {
+			List<NotificationDeliveryResult> results = invocation.getArgument(0);
+			writes.add(List.copyOf(results));
+			if (results.size() > 1 || results.getFirst().getDelivery() == second) {
+				throw new TransientDataAccessResourceException("private bookkeeping details");
+			}
+			return null;
+		}).when(batches).recordDeliveryResults(anyList());
 
 		// when
 		assertThat(service.processNextDeliveries()).isEqualTo(3);
 
 		// then
-		InOrder order = inOrder(sender, repository);
-		order.verify(sender).send(DELIVERY);
-		order.verify(repository).completeDelivery(DELIVERY, NOW);
-		order.verify(sender).send(second);
-		if (completionFails) {
-			order.verify(repository).completeDelivery(second, NOW);
+		assertThat(writes).hasSize(4);
+		assertThat(writes.getFirst()).extracting(NotificationDeliveryResult::getDelivery)
+				.containsExactly(DELIVERY, second, third);
+		for (int index = 0; index < 3; index++) {
+			assertThat(writes.get(index + 1)).containsExactly(writes.getFirst().get(index));
 		}
-		order.verify(repository).failDelivery(second, NOW.plusSeconds(10), "NOTIFICATION-005");
-		order.verify(sender).send(third);
-		order.verify(repository).completeDelivery(third, NOW);
+		assertThat(writes.get(2).getFirst().getStatus())
+				.isEqualTo(secondSent ? MockDeliveryStatus.SENT : MockDeliveryStatus.FAILED);
+		verify(sender).send(DELIVERY);
+		verify(sender).send(second);
+		verify(sender).send(third);
+		verifyNoInteractions(repository);
 		assertThat(output.getOut()).contains("Notification delivery bookkeeping failed", second.getId().toString(),
 				"attempt=1", TransientDataAccessResourceException.class.getName())
-				.doesNotContain("private completion details", "private bookkeeping details", "제목", "내용");
+				.doesNotContain("private bookkeeping details", "제목", "내용");
+	}
+
+	/** 상한까지 선점한 100건을 각각 한 번 발송하고 결과는 하나의 묶음으로 저장한다. */
+	@Test
+	@DisplayName("발송 100건을 한 회차에 선점하고 발송 결과도 100건 한 묶음으로 기록한다")
+	void processesOneHundredDeliveriesInOneBatch() {
+		// given
+		List<NotificationDelivery> deliveries = IntStream.range(0, 100)
+				.mapToObj(index -> new NotificationDelivery(new UUID(1, index), FIRST, "제목", "내용", null, 1)).toList();
+		when(batches.claimNextDeliveries(NOW, 100)).thenReturn(deliveries);
+		when(sender.send(any())).thenReturn(MockDeliveryStatus.SENT);
+		// when / then
+		assertThat(service.processNextDeliveries()).isEqualTo(100);
+		assertThat(recordedResults()).hasSize(100)
+				.allSatisfy(result -> assertThat(result.getStatus()).isEqualTo(MockDeliveryStatus.SENT));
+		verify(sender, times(100)).send(any());
+		verifyNoInteractions(repository);
 	}
 
 	/** 선점할 알림이 없는 폴링에서는 발송이나 결과 기록을 실행하지 않는다. */
@@ -201,11 +230,12 @@ class NotificationJobServiceTest {
 	@DisplayName("묶음 발송 대상이 없으면 발송기를 호출하지 않는다")
 	void skipsSendingEmptyDeliveryBatch() {
 		// given
-		when(batches.claimNextDeliveries(NOW, 20)).thenReturn(List.of());
+		when(batches.claimNextDeliveries(NOW, 100)).thenReturn(List.of());
 
 		// when / then
 		assertThat(service.processNextDeliveries()).isZero();
 		verifyNoInteractions(sender, repository);
+		verify(batches, never()).recordDeliveryResults(anyList());
 	}
 
 	/** 검증 시나리오: 모의 발송 성공은 기존 알림의 발송 결과만 저장한다. */
@@ -218,7 +248,10 @@ class NotificationJobServiceTest {
 
 		// when / then
 		assertThat(service.processNextDelivery()).isTrue();
-		verify(repository).completeDelivery(DELIVERY, NOW);
+		NotificationDeliveryResult result = recordedResults().getFirst();
+		assertThat(result.getDelivery()).isSameAs(DELIVERY);
+		assertThat(result.getStatus()).isEqualTo(MockDeliveryStatus.SENT);
+		assertThat(result.getSentAt()).isEqualTo(NOW);
 		verify(repository, never()).claimNextJob(NOW);
 	}
 
@@ -232,8 +265,10 @@ class NotificationJobServiceTest {
 
 		// when / then
 		assertThat(service.processNextDelivery()).isTrue();
-		verify(repository).failDelivery(DELIVERY, NOW.plusSeconds(10), "NOTIFICATION-005");
-		verify(repository, never()).completeDelivery(DELIVERY, NOW);
+		NotificationDeliveryResult result = recordedResults().getFirst();
+		assertThat(result.getStatus()).isEqualTo(MockDeliveryStatus.FAILED);
+		assertThat(result.getNextAttemptAt()).isEqualTo(NOW.plusSeconds(10));
+		assertThat(result.getErrorCode()).isEqualTo("NOTIFICATION-005");
 	}
 
 	/** 검증 시나리오: 모의 발송 입력 오류는 즉시 최종 실패 처리한다. */
@@ -246,7 +281,9 @@ class NotificationJobServiceTest {
 
 		// when / then
 		assertThat(service.processNextDelivery()).isTrue();
-		verify(repository).failDelivery(DELIVERY, null, "NOTIFICATION-003");
+		NotificationDeliveryResult result = recordedResults().getFirst();
+		assertThat(result.getNextAttemptAt()).isNull();
+		assertThat(result.getErrorCode()).isEqualTo("NOTIFICATION-003");
 	}
 
 	/** 검증 시나리오: 예상하지 못한 발송 오류도 원문 없이 추적하고 최종 실패로 기록한다. */
@@ -259,9 +296,19 @@ class NotificationJobServiceTest {
 		// when
 		assertThat(service.processNextDelivery()).isTrue();
 		// then
-		verify(repository).failDelivery(DELIVERY, null, "NOTIFICATION-006");
+		NotificationDeliveryResult result = recordedResults().getFirst();
+		assertThat(result.getNextAttemptAt()).isNull();
+		assertThat(result.getErrorCode()).isEqualTo("NOTIFICATION-006");
 		assertThat(output.getOut()).contains(DELIVERY.getId().toString(), "attempt=1",
 				IllegalArgumentException.class.getName()).doesNotContain("private delivery details", "제목", "내용");
+	}
+
+	/** 묶음에 보존한 결과를 꺼내 발송 상태·시각·재시도 정책을 검증한다. */
+	@SuppressWarnings({"unchecked", "rawtypes"})
+	private List<NotificationDeliveryResult> recordedResults() {
+		ArgumentCaptor<List<NotificationDeliveryResult>> captor = ArgumentCaptor.forClass(List.class);
+		verify(batches).recordDeliveryResults(captor.capture());
+		return captor.getValue();
 	}
 
 	/** 각 시나리오에서 발생 키와 수신 대상을 지정할 유효한 알림 작업 입력을 만든다. */

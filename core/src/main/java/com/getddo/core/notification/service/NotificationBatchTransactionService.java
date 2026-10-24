@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.getddo.core.notification.domain.NotificationDelivery;
+import com.getddo.core.notification.domain.NotificationDeliveryResult;
 import com.getddo.core.notification.domain.NotificationJob;
 import com.getddo.core.notification.domain.NotificationJobRequest;
 import com.getddo.core.notification.repository.NotificationJobRepository;
@@ -31,5 +32,11 @@ public class NotificationBatchTransactionService {
 	@Transactional(propagation = Propagation.REQUIRES_NEW)
 	public List<NotificationDelivery> claimNextDeliveries(Instant now, int limit) {
 		return repository.claimNextDeliveries(now, limit);
+	}
+
+	/** 성공·실패 결과를 함께 확정하며 기록 오류는 해당 묶음 전체를 롤백한다. */
+	@Transactional(propagation = Propagation.REQUIRES_NEW)
+	public void recordDeliveryResults(List<NotificationDeliveryResult> results) {
+		repository.recordDeliveryResults(results);
 	}
 }

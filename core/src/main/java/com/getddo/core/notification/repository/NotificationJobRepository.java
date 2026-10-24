@@ -6,13 +6,14 @@ import java.util.Optional;
 import java.util.UUID;
 
 import com.getddo.core.notification.domain.NotificationDelivery;
+import com.getddo.core.notification.domain.NotificationDeliveryResult;
 import com.getddo.core.notification.domain.NotificationJob;
 import com.getddo.core.notification.domain.NotificationJobRequest;
 
 /** 알림 생성·모의 발송을 원본 업무와 분리해 저장하고 선점 차수로 동시 처리를 보호한다. */
 public interface NotificationJobRepository {
 	/** 한 번에 함께 선점할 수 있는 발송 대상의 최대 건수다. */
-	int MAX_DELIVERY_CLAIM = 20;
+	int MAX_DELIVERY_CLAIM = 100;
 
 	/** 호출자의 업무 트랜잭션에 참여하며 동일 발생 키·동일 입력에는 기존 작업 ID를 반환한다. */
 	UUID register(NotificationJobRequest request, Instant now);
@@ -34,6 +35,8 @@ public interface NotificationJobRepository {
 	Optional<NotificationDelivery> claimNextDelivery(Instant now);
 	/** Service의 독립 트랜잭션에서 최대 limit건을 함께 선점하며 다른 처리자의 잠긴 행은 건너뛴다. */
 	List<NotificationDelivery> claimNextDeliveries(Instant now, int limit);
+	/** Service의 독립 트랜잭션에서 최대 100건의 결과를 저장하며 이전 선점·복구 구간의 결과는 무시한다. */
+	void recordDeliveryResults(List<NotificationDeliveryResult> results);
 	/** 재선점되지 않은 자신의 발송 차수라면 제한 시간 이후에도 성공을 기록하며 읽음 상태는 그대로 둔다. */
 	void completeDelivery(NotificationDelivery delivery, Instant now);
 	/** 생성 실패와 별개인 발송 실패·다음 시각을 기록한다. 읽음 상태는 그대로 둔다. */
