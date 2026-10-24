@@ -4,6 +4,7 @@ import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -37,15 +38,22 @@ class DatabaseConnectionRecoveryIntegrationTest {
 	@DisplayName("테스트 DB의 6초 응답 대기는 socketTimeout으로 8초 이내 503이며 다음 정상 조회는 새 연결로 성공한다")
 	void socketTimeoutReturns503AndPoolRecovers() throws Exception {
 		// given
-		MockMvc mvc = mvc();
-		long started = System.nanoTime();
-		// when / then
-		mvc.perform(get("/connection-test/slow"))
-				.andExpect(status().isServiceUnavailable())
-				.andExpect(jsonPath("$.code").value("COMMON-007"))
-				.andExpect(header().doesNotExist("Retry-After"));
-		assertThat((System.nanoTime() - started) / 1_000_000).isLessThan(8000);
-		mvc.perform(get("/connection-test/normal")).andExpect(status().isOk());
+		// 연결 한 개짜리 별도 풀로 기존의 다른 유휴 연결을 재사용한 성공과 물리 연결 교체를 구분한다.
+		try (HikariDataSource isolated = singleConnectionPool()) {
+			JdbcTemplate probe = new JdbcTemplate(isolated);
+			Long before = probe.queryForObject("select connection_id()", Long.class);
+			MockMvc mvc = MockMvcBuilders.standaloneSetup(new QueryController(probe))
+					.setControllerAdvice(new GlobalExceptionHandler()).build();
+			long started = System.nanoTime();
+			// when / then
+			mvc.perform(get("/connection-test/slow"))
+					.andExpect(status().isServiceUnavailable())
+					.andExpect(jsonPath("$.code").value("COMMON-007"))
+					.andExpect(header().doesNotExist("Retry-After"));
+			assertThat((System.nanoTime() - started) / 1_000_000).isLessThan(8000);
+			mvc.perform(get("/connection-test/normal")).andExpect(status().isOk());
+			assertThat(probe.queryForObject("select connection_id()", Long.class)).isNotEqualTo(before);
+		}
 	}
 
 	@Test
@@ -70,6 +78,20 @@ class DatabaseConnectionRecoveryIntegrationTest {
 			}
 		}
 		mvc.perform(get("/connection-test/normal")).andExpect(status().isOk());
+	}
+
+	/** 배포 프로파일에서 바인딩한 URL·드라이버·시간 제한을 유지하고 테스트 소유 연결 수만 1개로 제한한다. */
+	private HikariDataSource singleConnectionPool() {
+		HikariConfig config = new HikariConfig();
+		config.setJdbcUrl(pool.getJdbcUrl());
+		config.setUsername(pool.getUsername());
+		config.setPassword(pool.getPassword());
+		config.setDataSourceProperties(pool.getDataSourceProperties());
+		config.setConnectionTimeout(pool.getConnectionTimeout());
+		config.setValidationTimeout(pool.getValidationTimeout());
+		config.setMaximumPoolSize(1);
+		config.setMinimumIdle(0);
+		return new HikariDataSource(config);
 	}
 
 	private MockMvc mvc() {
