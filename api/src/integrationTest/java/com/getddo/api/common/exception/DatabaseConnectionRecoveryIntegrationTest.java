@@ -1,6 +1,7 @@
 package com.getddo.api.common.exception;
 
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
@@ -38,6 +39,7 @@ import com.getddo.core.user.repository.UserRepository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.awaitility.Awaitility.await;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -147,13 +149,19 @@ class DatabaseConnectionRecoveryIntegrationTest {
 			ExecutorService executor = Executors.newFixedThreadPool(2);
 			CountDownLatch borrowed = new CountDownLatch(2);
 			CountDownLatch start = new CountDownLatch(1);
+			long[] connectionIds = new long[2];
 			List<Future<Void>> attempts = new ArrayList<>();
 			MockMvc mvc = MockMvcBuilders.standaloneSetup(new QueryController(new JdbcTemplate(isolated)))
 					.setControllerAdvice(new GlobalExceptionHandler()).build();
 			try {
 				for (int i = 0; i < 2; i++) {
+					int connectionIndex = i;
 					attempts.add(executor.submit(() -> {
 						try (Connection connection = isolated.getConnection(); Statement statement = connection.createStatement()) {
+							try (ResultSet id = statement.executeQuery("select connection_id()")) {
+								id.next();
+								connectionIds[connectionIndex] = id.getLong(1);
+							}
 							borrowed.countDown();
 							start.await();
 							statement.executeQuery("select sleep(6)").close();
@@ -164,6 +172,13 @@ class DatabaseConnectionRecoveryIntegrationTest {
 				assertThat(borrowed.await(5, TimeUnit.SECONDS)).isTrue();
 				// when
 				start.countDown();
+				// 테스트 대상 풀 밖의 연결로 실제 SQL 실행을 관측한다. 대여 래치만으로 실행 상태를 추정하지 않는다.
+				JdbcTemplate observer = new JdbcTemplate(pool);
+				await().atMost(2, TimeUnit.SECONDS).untilAsserted(() ->
+						assertThat(observer.queryForObject("""
+							select count(*) from information_schema.processlist
+							where id in (?, ?) and command = 'Query' and info = 'select sleep(6)'
+							""", Integer.class, connectionIds[0], connectionIds[1])).isEqualTo(2));
 				ResultActions unavailable = mvc.perform(get("/connection-test/normal"));
 				// then
 				unavailable.andExpect(status().isServiceUnavailable())
