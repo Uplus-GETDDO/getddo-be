@@ -48,9 +48,19 @@ Hikari `data-source-properties.socketTimeout`을 더 짧게 변경하려면 해�
 
 2026-10-24 기준 운영 ALB health 경로는 `/v3/api-docs`다. 이 경로는 DB 가용성 검사가 아니다. Compose의 `restart: unless-stopped`는 HTTP health 실패만으로 앱을 재시작하지 않는다. 별도 liveness 자동화를 확인 없이 있다고 가정하지 않는다. monitoring 포트의 종합 health는 DB 장애 때 실패할 수 있으며 ALB 경로와 구분한다.
 
-기존 [순차 CD](container-cd.md)로 같은 이미지의 A→C 교체, 각 컨테이너의 revision SHA·이미지 ID·실행 상태, ALB target healthy, 정상 읽기 API를 확인한다. `/v3/api-docs` 200만으로 DB 업무 성공을 주장하지 않는다. 쓰기 확인은 기존 검증용 사용자·대상이 있을 때만 수행한다. 운영 장애·재부팅·강제 전환·연결 차단·부하 시험은 수행하지 않는다.
+기존 [순차 CD](container-cd.md)로 같은 이미지의 A→C 교체, 각 컨테이너의 revision SHA·이미지 ID·실행 상태, ALB target healthy, 정상 읽기 API를 확인한다. `/v3/api-docs` 200만으로 DB 업무 성공을 주장하지 않는다. 쓰기 확인은 기존 검증용 사용자·대상이 있을 때만 수행한다. 정상 앱 배포 과정에서는 운영 장애·재부팅·강제 전환·연결 차단·부하 시험을 수행하지 않는다. 배포 이후 실제 전환 시험은 아래 별도 준비 조건을 따른다.
 
 실패 시 기존 CD의 이전 이미지·Compose·직전 app.env 복구를 사용한다. `/opt/getddo/current`와 배포 기록의 이전 이미지 ID를 확인하고 기존 런북대로 한 대씩 복구한다. 이 변경은 스키마를 바꾸지 않는다. 복구 뒤 DNS 파일·timeout 설정도 이전 이미지·설정과 일치하는지 확인한다.
+
+## 배포 후 실제 전환 시험
+
+2026-10-24 사용자 지시로 정상 앱 배포와 DB 이중화 이후의 실제 RDS 관리형 강제 전환 1회·복구 검증까지 실행 범위에 포함한다. 아직 실행하지 않은 시험은 `NOT_RUN`으로 기록한다. 백엔드 배포 준비 완료는 DB 적용의 선행 조건이며 실제 전환 시험 성공을 뜻하지 않는다.
+
+인프라 담당이 이중화·초기화·백업과 15분 정상 관찰을 확인하고, 양쪽 담당이 일반 사용자 쓰기·워커 통제 경로와 원래 값·진행 중 트랜잭션 정리·합성 계정/대상·복구 기준을 조정자에게 전달한다. 안전한 통제나 쓰기 대상이 준비되지 않았으면 전환하지 않는다. 조정자가 준비 완료와 실행 순서를 확인한 뒤 인프라 담당이 강제 전환을 실행하며, 백엔드는 시험 중 앱을 재시작하지 않고 A/C의 읽기·통제된 합성 쓰기와 재연결을 관찰한다. DB 삭제·SG 차단·EC2/Redis 중단·부하 시험은 제외한다.
+
+시험 전후 source SHA·이미지·container ID/시작 시각·restart count와 ALB 상태를 기록한다. DB 업무 API의 최초 실패·첫 정상·연속 정상 시각을 RDS 이벤트와 대조하며 `COMMON-007` 503, 프록시 502/503/504, 클라이언트 timeout을 구분한다. 동일 사용자·대상·요청 키·본문의 결과와 단일 차감/보상을 비교하고 미확정 요청에 새 키를 만들지 않는다. 실제 관측하지 못한 commit 후 응답 유실은 `NOT_OBSERVED`로 남긴다. 5분 내 업무가 회복되지 않으면 새 시험 요청을 중단하고 운영 복구를 우선하며 강제 전환을 반복하지 않는다.
+
+시험 후 임시 쓰기·워커 통제를 원래대로 복구하고 최소 15분 정상 상태를 확인한다. 워커의 기동 조건 설정을 바꾸려고 시험 전에 재생성한 경우 그 뒤를 재연결 관측 기준점으로 잡고, 실제 전환 중 재시작 여부와 혼동하지 않는다. 이 절차는 60초 socket의 HTTP8초/클라이언트10초 이전 응답이나 장기 업무 상한을 보장하지 않는다. 실제 결과·관측 한계와 복구 여부는 운영 인계 결과에 기록한다.
 
 ## 검증 증거의 구분
 
@@ -58,7 +68,7 @@ Hikari `data-source-properties.socketTimeout`을 더 짧게 변경하려면 해�
 - 설정 단위: 실제 배포 프로파일의 Hikari 바인딩·MySQL 드라이버 속성 해석 및 새 Java 21 프로세스의 보안 속성.
 - 테스트 MySQL: 운영 60000ms에서 6초 SQL의 정상 완료·같은 물리 연결 유지를 확인한다. 장애 재현 테스트 전용으로 socketTimeout 5000ms를 명시하고 SELECT SLEEP(6)의 통신 timeout과 8초 목표, JDBC 물리 connection_id 교체, 실제 Spring JPA Service·Repository 트랜잭션의 풀 고갈·socket 장애 후 정상 조회를 검증한다. 이 테스트의 SLEEP은 테스트 컨테이너에서만 실행한다.
 - 응모·미션 MySQL: beforeCommit 연결 예외 주입의 롤백과 afterCommit 예외 주입의 응답 유실을 구분하고, 동일 키 재전송·다른 본문 충돌·단일 차감/지급을 검증한다. 실제 소켓을 끊는 시험이나 실제 commit 응답 유실 재현과는 구분한다.
-- 실제 운영 RDS 전환 시간·장애 중 503·프론트 키 유지·대표 장기 업무 성능은 별도 증거가 필요하다. 실행하지 않은 항목은 NOT_RUN으로 남긴다.
+- 실제 운영 RDS 전환 시간·장애 중 503·프론트 키 유지·대표 장기 업무 성능은 별도 증거가 필요하다. 위 준비 조건 이후의 실제 전환 결과와 로컬 재현을 분리한다. 실행하지 않은 항목은 NOT_RUN으로 남긴다.
 
 근거: [Connector/J 네트워크 속성](https://dev.mysql.com/doc/connector-j/en/connector-j-connp-props-networking.html), [HikariCP 설정과 연결 제한](https://github.com/brettwooldridge/HikariCP), [Java 21 DNS 보안 속성](https://docs.oracle.com/en/java/javase/21/core/java-networking.html).
 
