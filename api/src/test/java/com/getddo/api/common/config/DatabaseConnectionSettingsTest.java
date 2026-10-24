@@ -26,16 +26,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** DB 접속 없이 배포 프로파일 바인딩·드라이버 해석과 Java 21 보안 속성의 실제 적용을 검증한다. */
 class DatabaseConnectionSettingsTest {
 
-	/** 기본 배포의 무제한 socket 설정과 JDBC URL로 명시한 5초 제한을 실제 드라이버 해석 결과로 대조한다. */
+	/** JDBC URL의 중복 값보다 배포 data-source-properties의 유한 60초가 우선함을 실제 드라이버로 확인한다. */
 	@ParameterizedTest
 	@ValueSource(booleans = {false, true})
-	@DisplayName("기본 배포는 socket 제한을 유지하고 기존 JDBC URL의 명시적 설정으로만 5초 제한을 적용한다")
-	void deploymentSettingsBindToPoolAndDriver(boolean socketLimitEnabled) {
+	@DisplayName("기본 배포의 socket 60초는 JDBC URL의 중복 5초 값보다 우선한다")
+	void deploymentSettingsBindToPoolAndDriver(boolean duplicateUrlLimit) {
 		// given
 		new ApplicationContextRunner()
 				.withInitializer(new ConfigDataApplicationContextInitializer())
 				.withPropertyValues("spring.profiles.active=monitoring",
-						"spring.datasource.url=jdbc:mysql://localhost/test" + (socketLimitEnabled ? "?socketTimeout=5000" : ""))
+						"spring.datasource.url=jdbc:mysql://localhost/test" + (duplicateUrlLimit ? "?socketTimeout=5000&connectTimeout=5000" : ""))
 				.withConfiguration(AutoConfigurations.of(DataSourceAutoConfiguration.class))
 				.run(context -> {
 					// when
@@ -50,7 +50,7 @@ class DatabaseConnectionSettingsTest {
 							"com.getddo.api.common.exception.RequestDatabaseConnectionFailure");
 					assertThat(pool.getConnectionTimeout()).isEqualTo(2000);
 					assertThat(pool.getValidationTimeout()).isEqualTo(1000);
-					assertThat(properties).containsEntry("connectTimeout", "2000").containsEntry("socketTimeout", socketLimitEnabled ? "5000" : "0");
+					assertThat(properties).containsEntry("connectTimeout", "2000").containsEntry("socketTimeout", "60000");
 				});
 	}
 

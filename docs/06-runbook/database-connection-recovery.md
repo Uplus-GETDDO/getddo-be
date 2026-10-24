@@ -24,15 +24,19 @@ Hikari가 SQLState 08 연결 오류를 확인한 시점에 현재 MVC 요청 속
 | Hikari connectionTimeout | 2000ms | 연결 획득 대기 |
 | Hikari validationTimeout | 1000ms | 기존 연결 유효성 확인 |
 | Connector/J connectTimeout | 2000ms | 새 소켓 연결 |
-| Connector/J socketTimeout | 기본 미설정(드라이버 기본 0) / JDBC URL 명시적 설정 5000ms | 장기 업무 검증 전 기본 배포에서 변경하지 않음 |
+| Connector/J socketTimeout | 60000ms | 통신 읽기 대기. 기존 50초 행 잠금 대기보다 여유를 두며 전체 SQL·HTTP 시간은 보장하지 않음 |
 | JVM 양의 DNS TTL | 30초 | JVM 전체 DNS 조회 |
 | JVM 음의 DNS TTL | 5초 | 조회 실패 캐시 |
 
-`monitoring`의 기본 배포는 socketTimeout을 지정하지 않는다. 장기 SQL·집계·추첨·워커의 statement/transaction 예산과 정상 처리를 검증한 뒤에만 기존 Parameter Store의 `SPRING_DATASOURCE_URL`에 `socketTimeout=5000`을 명시한다. 중복 속성이 없도록 URL을 서버 내부에서 파싱해 확인하고, TLS 등 나머지 속성은 유지한다. [설정 반영 절차](parameter-store.md)를 통해 순차 배포하고 실제 드라이버 값을 확인한다. 새로운 Parameter Store 항목·프로파일이나 인프라 파일 변경은 필요하지 않다. 검증 전에는 URL의 socket 제한을 변경하지 않는다. rollback 시에는 이전 Parameter Store 버전을 정상 절차로 반영하고 이미지/직전 app.env도 확인한다.
+`monitoring` 기본 배포에서 `socketTimeout=60000`을 적용한다. 2026-10-24 운영 앱 계정의 읽기 전용 조회 결과는 `innodb_lock_wait_timeout=50`초, `lock_wait_timeout=31536000`초, `max_execution_time=0`이었다. 행 잠금 대기보다 10초 여유를 두어 기존 잠금 실패 분류를 가능한 한 보존하고, 통신 무응답을 무기한 기다리던 드라이버 기본값 0을 제한한다. 메타데이터 잠금·실행 제한 없는 집계까지 기존의 모든 대기를 보존하는 값은 아니다.
 
-수치는 전체 HTTP 요청 시간 보장이 아니다. socketTimeout은 통신 읽기 제한이며 쿼리 취소·롤백 완료나 전체 업무 실행시간을 보장하지 않는다. 장기 집계·추첨·워커의 각 SQL이 5초를 넘으면 정상 업무도 연결 실패로 종료될 수 있다. 대표 정상 API·장기 업무 검증 결과와 별도 statement/transaction 예산을 확인한 뒤 운영 반영한다. 운영 성능이 확인되지 않았다면 시작값을 최종 운영값으로 표시하지 않는다.
+5초 전역 적용은 채택하지 않는다. 추첨의 `DrawSnapshotSourceReader.findParticipants`는 참여자·응모·사용 이력을 전체 조회하고 공통 statement/transaction 제한이 없다. 알림은 100명 묶음과 60초 선점 임대, 어뷰징 이력은 30초 임대를 사용하지만 임대는 JDBC 실행 제한이 아니다. 테스트 DB에서 5초 제한을 넘는 6초 SQL이 60초 제한에서 정상 완료하고 같은 물리 연결을 유지하는지 검증한다. 전체 데이터량·장기 업무의 운영 지연 상한을 증명한 것은 아니므로, 단일 읽기가 60초를 넘는 정상 업무의 실패 가능성은 남는다. 별도 풀·전역 transaction 제한·도메인 재시도 변경은 추가하지 않는다.
 
-JDBC URL의 같은 속성은 Hikari data-source-properties보다 드라이버에서 우선할 수 있다. 배포 전 `/etc/getddo/app.env`의 URL을 서버 내부에서 파싱해 timeout·autoReconnect 관련 속성과 DNS 사용 여부만 확인한다. env나 URL 전체를 출력하지 않는다. Spring 환경변수의 Hikari override도 확인한다. 비밀 Parameter Store 값은 기존 [설정 반영 절차](parameter-store.md)를 따른다.
+수치는 전체 HTTP 요청 시간 보장이 아니다. 연결 획득은 2초 제한으로 503을 반환할 수 있고 TCP 단절도 드라이버가 확인하면 503으로 분류한다. 통신 무응답은 읽기 제한 60초까지 기다릴 수 있어 대표 짧은 API의 8초 목표와 클라이언트 10초 이전 반환을 충족하지 못하며 클라이언트 timeout이 먼저 발생할 수 있다. socketTimeout은 쿼리 취소·롤백 완료나 전체 업무 실행시간을 보장하지 않고 여러 읽기·정리 작업의 합도 60초를 넘을 수 있다. 503이나 클라이언트 timeout을 미저장 증거로 해석하지 않는다.
+
+Hikari `data-source-properties.socketTimeout`을 더 짧게 변경하려면 해당 업무의 statement/transaction 예산과 정상 처리를 먼저 검증한다. URL 중복 속성도 서버 내부에서 확인하고 TLS 등 나머지 속성·DB 주소는 유지한다. 기존 [설정 반영 절차](parameter-store.md)를 사용하며 URL을 바꾼 경우 rollback 시 이전 Parameter Store 버전도 정상 절차로 반영한다. 이번 기본값 적용은 Parameter Store나 DB 주소 변경 없이 이미지 배포로 반영·복구한다.
+
+현재 Connector/J 9.7.0의 일반 JDBC URL은 같은 이름의 Hikari data-source-properties가 우선한다. 실제 드라이버 해석 회귀로 URL의 5000ms보다 프로파일의 60000ms가 적용되는지 확인한다. URL 문자열만으로 유효 timeout을 판단하지 않는다. 배포 전 `/etc/getddo/app.env`의 URL을 서버 내부에서 파싱해 timeout·autoReconnect 관련 속성과 DNS 사용 여부만 확인한다. env나 URL 전체를 출력하지 않는다. Spring 환경변수의 Hikari override도 확인한다. 비밀 Parameter Store 값은 기존 [설정 반영 절차](parameter-store.md)를 따른다.
 
 [Dockerfile](../../Dockerfile)은 [보안 속성 파일](../../config/rds-ha.security)을 `/app/rds-ha.security`로 복사하고 `-Djava.security.properties=/app/rds-ha.security`로 기본 보안 설정에 추가한다. `-Dnetworkaddress.cache.ttl`만으로 적용을 주장하지 않는다. 이미지 안에서 같은 옵션의 `java -XshowSettings:security:properties -version` 결과 중 두 DNS 속성만 확인하고, 실행 프로세스의 JVM 옵션도 대조한다. URL의 IP 고정·autoReconnect·자동 쿼리 재실행은 추가하지 않는다. 끊어진 연결의 폐기와 새 연결 획득은 기존 Hikari/드라이버 동작을 사용한다.
 
@@ -48,7 +52,7 @@ JDBC URL의 같은 속성은 Hikari data-source-properties보다 드라이버에
 
 - MockMvc 단위: 연결 예외와 wrapper, 기존 4xx/429/500, 사용자 문맥 조회, 원인 순환 방어.
 - 설정 단위: 실제 배포 프로파일의 Hikari 바인딩·MySQL 드라이버 속성 해석 및 새 Java 21 프로세스의 보안 속성.
-- 테스트 MySQL: 테스트 전용으로 socketTimeout 5000ms를 명시하고 SELECT SLEEP(6)의 통신 timeout과 8초 목표, JDBC 물리 connection_id 교체, 실제 Spring JPA Service·Repository 트랜잭션의 풀 고갈·socket 장애 후 정상 조회를 검증한다. 이 테스트의 SLEEP은 테스트 컨테이너에서만 실행한다.
+- 테스트 MySQL: 운영 60000ms에서 6초 SQL의 정상 완료·같은 물리 연결 유지를 확인한다. 장애 재현 테스트 전용으로 socketTimeout 5000ms를 명시하고 SELECT SLEEP(6)의 통신 timeout과 8초 목표, JDBC 물리 connection_id 교체, 실제 Spring JPA Service·Repository 트랜잭션의 풀 고갈·socket 장애 후 정상 조회를 검증한다. 이 테스트의 SLEEP은 테스트 컨테이너에서만 실행한다.
 - 응모·미션 MySQL: beforeCommit 연결 예외 주입의 롤백과 afterCommit 예외 주입의 응답 유실을 구분하고, 동일 키 재전송·다른 본문 충돌·단일 차감/지급을 검증한다. 실제 소켓을 끊는 시험이나 실제 commit 응답 유실 재현과는 구분한다.
 - 실제 운영 RDS 전환 시간·장애 중 503·프론트 키 유지·대표 장기 업무 성능은 별도 증거가 필요하다. 실행하지 않은 항목은 NOT_RUN으로 남긴다.
 

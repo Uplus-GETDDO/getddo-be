@@ -53,7 +53,7 @@ class DatabaseConnectionRecoveryIntegrationTest {
 	void socketTimeoutReturns503AndPoolRecovers() throws Exception {
 		// given
 		// 연결 한 개짜리 별도 풀로 기존의 다른 유휴 연결을 재사용한 성공과 물리 연결 교체를 구분한다.
-		try (HikariDataSource isolated = singleConnectionPool()) {
+		try (HikariDataSource isolated = singleConnectionPool(5000)) {
 			JdbcTemplate probe = new JdbcTemplate(isolated);
 			Long before = probe.queryForObject("select connection_id()", Long.class);
 			MockMvc mvc = MockMvcBuilders.standaloneSetup(new QueryController(probe))
@@ -113,13 +113,30 @@ class DatabaseConnectionRecoveryIntegrationTest {
 		mvc.perform(get("/connection-test/jpa/normal")).andExpect(status().isOk()).andExpect(content().string("1"));
 	}
 
-	/** 배포 프로파일에서 바인딩한 URL·드라이버·시간 제한을 유지하고 테스트 소유 연결 수만 1개로 제한한다. */
-	private HikariDataSource singleConnectionPool() {
+	/** 5초 제한을 넘는 정상 SQL이 보수적인 운영 제한에서는 완료되며 같은 물리 연결을 유지하는지 확인한다. */
+	@Test
+	@DisplayName("운영 socket 60초 제한에서는 6초 정상 SQL을 끊지 않고 같은 물리 연결을 유지한다")
+	void finiteProductionBudgetAllowsQueryLongerThanFiveSeconds() {
+		// given
+		try (HikariDataSource isolated = singleConnectionPool(60000)) {
+			JdbcTemplate probe = new JdbcTemplate(isolated);
+			Long before = probe.queryForObject("select connection_id()", Long.class);
+			// when
+			Integer result = probe.queryForObject("select sleep(6)", Integer.class);
+			// then
+			assertThat(result).isZero();
+			assertThat(probe.queryForObject("select connection_id()", Long.class)).isEqualTo(before);
+		}
+	}
+
+	/** 테스트 소유 연결 수를 1개로 제한하고 장애 재현·정상 장기 SQL의 읽기 예산을 구분한다. */
+	private HikariDataSource singleConnectionPool(int socketTimeout) {
 		HikariConfig config = new HikariConfig();
 		config.setJdbcUrl(pool.getJdbcUrl());
 		config.setUsername(pool.getUsername());
 		config.setPassword(pool.getPassword());
-		config.setDataSourceProperties(pool.getDataSourceProperties());
+		config.getDataSourceProperties().putAll(pool.getDataSourceProperties());
+		config.addDataSourceProperty("socketTimeout", Integer.toString(socketTimeout));
 		config.setConnectionTimeout(pool.getConnectionTimeout());
 		config.setValidationTimeout(pool.getValidationTimeout());
 		config.setExceptionOverrideClassName(pool.getExceptionOverrideClassName());
