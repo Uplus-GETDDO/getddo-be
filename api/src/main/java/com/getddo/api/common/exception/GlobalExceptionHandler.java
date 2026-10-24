@@ -19,7 +19,7 @@ import com.getddo.core.common.exception.ErrorCode;
  * Spring MVC의 Controller 처리 과정에서 전달되는 예외를 공통 JSON 응답으로 변환한다.
  *
  * <p>업무 예외는 정의된 오류 계약을 사용하고, 표준 MVC 예외는 Spring이 정한 상태와 헤더를 유지한다.
- * 그 외 예상하지 못한 예외만 공통 500 응답으로 처리한다.
+ * DB 연결 장애는 공통 503으로, 그 외 예상하지 못한 예외는 공통 500 응답으로 처리한다.
  * ResponseEntityExceptionHandler를 상속하는 이유는 405·415 등의 요청 오류를
  * 일반 Exception 처리기가 잘못 500으로 바꾸지 않도록 하기 위해서다.</p>
  *
@@ -91,6 +91,18 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 	 */
 	@ExceptionHandler(Exception.class)
 	public ResponseEntity<ResponseEnvelope<Void>> handleUnexpected(Exception exception) {
+		String category = DatabaseConnectionFailures.classify(exception);
+		if (category == null && DatabaseConnectionFailures.isTransactionFailure(exception)) {
+			// 실제 JDBC 연결 오류가 같은 요청에서 확인됐을 때만 롤백·정리 오류에 가려진 근거를 사용한다.
+			category = RequestDatabaseConnectionFailure.currentFailure();
+		}
+		if (category != null) {
+			// SQL·호스트·개인정보가 들어갈 수 있는 원문과 스택은 이 경로에서 기록하지 않는다.
+			logger.warn("Database request unavailable: code=COMMON-007 category=" + category
+					+ " exceptionType=" + exception.getClass().getName());
+			ErrorCode unavailable = CommonErrorCode.DB_TEMPORARILY_UNAVAILABLE;
+			return ResponseEntity.status(unavailable.getStatus()).body(ResponseEnvelope.fail(unavailable));
+		}
 		logger.error("Unhandled request exception", exception);
 		ErrorCode errorCode = CommonErrorCode.INTERNAL_ERROR;
 		return ResponseEntity.status(errorCode.getStatus()).body(ResponseEnvelope.fail(errorCode));

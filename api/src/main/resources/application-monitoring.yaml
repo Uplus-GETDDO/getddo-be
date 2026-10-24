@@ -24,3 +24,15 @@ server:
   tomcat:
     mbeanregistry:
       enabled: true
+
+# 배포 Compose가 활성화하는 프로파일. JDBC URL·환경변수의 중복 속성과 실제 드라이버 해석을 배포 시 함께 확인한다.
+spring:
+  datasource:
+    hikari:
+      # 실행 중 쿼리 제한과 별개인 풀 연결 획득·유효성 확인 대기(ms).
+      connection-timeout: 2000
+      validation-timeout: 1000
+      data-source-properties:
+        connectTimeout: 2000
+        # 기존 50초 행 잠금 대기를 보존하는 유한 읽기 제한. 전체 HTTP 응답 시간은 보장하지 않는다.
+        socketTimeout: 60000

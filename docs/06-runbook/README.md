@@ -15,3 +15,5 @@
 - [차단 이력 빈 테이블 전환](entry-abuse-migration.md)
 
 - [어뷰징 차단 이력 저장 작업자](abuse-history-worker.md): Redis 저널 소비·DB 저장·재시도·오전 6시 배치·복구 점검
+
+- [DB 연결 장애 응답·설정·복구](database-connection-recovery.md)

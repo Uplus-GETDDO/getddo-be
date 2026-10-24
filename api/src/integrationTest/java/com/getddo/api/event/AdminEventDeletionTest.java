@@ -34,6 +34,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.ParameterizedPreparedStatementSetter;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -59,6 +60,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doAnswer;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -342,6 +345,7 @@ class AdminEventDeletionTest {
 		assertThat(jobRepository.claimNextJob(NOW)).isPresent();
 	}
 
+	/** 묶음 INSERT와 삭제 트랜잭션을 실제 잠금 지점에서 경합시켜 알림 보존과 생성 중지를 확인한다. */
 	@ParameterizedTest
 	@ValueSource(booleans = {false, true})
 	@DisplayName("알림 생성·삭제가 실제 잠금에 경합해도 먼저 생성된 알림을 보존하고 삭제 이후 추가 생성을 막는다")
@@ -370,7 +374,8 @@ class AdminEventDeletionTest {
 				held.countDown();
 				if (!release.await(20, TimeUnit.SECONDS)) { throw new IllegalStateException("알림 INSERT 대기 시간 초과"); }
 				return invocation.callRealMethod();
-			}).when(jdbc).update(argThat((String sql) -> sql.contains("insert into notifications")), any(Object[].class));
+			}).when(jdbc).batchUpdate(argThat((String sql) -> sql.contains("insert into notifications")),
+					anyList(), anyInt(), org.mockito.ArgumentMatchers.<ParameterizedPreparedStatementSetter<UUID>>any());
 		}
 		Callable<Boolean> deletion = () -> { deletions.delete(event, admin); return false; };
 		Callable<Boolean> generation = () -> jobRepository.createNotification(job, request, additionalRecipient, NOW);

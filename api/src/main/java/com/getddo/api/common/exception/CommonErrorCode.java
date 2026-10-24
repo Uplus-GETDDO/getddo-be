@@ -19,6 +19,8 @@ public enum CommonErrorCode implements ErrorCode {
 	INVALID_FORMAT(400, "COMMON-005", "요청 형식이 올바르지 않습니다."),
 	/** 같은 사용자의 요청이 정해진 빈도 한도를 넘은 경우. 응답의 {@code Retry-After}에 다시 시도할 수 있는 초가 담긴다. */
 	RATE_LIMIT_EXCEEDED(429, "COMMON-006", "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요."),
+	/** DB 연결 획득 실패·접속 단절. 요청이 커밋되지 않았음을 보장하지 않는다. */
+	DB_TEMPORARILY_UNAVAILABLE(503, "COMMON-007", "일시적으로 요청을 처리할 수 없습니다. 잠시 후 다시 시도해 주세요."),
 	// 사용자 문맥 오류의 기존 응답 코드는 호출부 호환성을 위해 유지한다.
 	/** 현재 사용자를 선택하는 필수 헤더가 누락된 경우. */
 	USER_CONTEXT_REQUIRED(401, "USER-003", "사용자 정보 헤더가 필요합니다."),
