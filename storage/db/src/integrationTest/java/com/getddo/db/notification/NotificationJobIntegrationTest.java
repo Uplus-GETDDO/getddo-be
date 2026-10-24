@@ -341,6 +341,7 @@ class NotificationJobIntegrationTest {
 		assertThat(service.processNextJob()).isFalse();
 	}
 
+	/** 같은 묶음의 일부 INSERT가 실패하면 원본 업무와 분리해 해당 묶음을 롤백한다. */
 	@Test
 	@DisplayName("같은 묶음의 FK 실패는 해당 묶음만 롤백하고 확정 업무는 보존한다")
 	void rollsBackEntireFailedGenerationChunk() {
@@ -360,6 +361,7 @@ class NotificationJobIntegrationTest {
 				.isEqualTo("묶음 전 업무 확정");
 	}
 
+	/** 두 실제 트랜잭션이 잠금에 경합해도 같은 알림을 중복 선점하지 않는지 검사한다. */
 	@Test
 	@DisplayName("두 작업자의 동시 묶음 선점은 서로 다른 20건씩만 확보한다")
 	void concurrentDeliveryBatchesDoNotOverlap() throws Exception {

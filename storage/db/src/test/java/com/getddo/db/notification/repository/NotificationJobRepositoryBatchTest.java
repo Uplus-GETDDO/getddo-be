@@ -61,6 +61,7 @@ class NotificationJobRepositoryBatchTest {
 				"제목", "본문", null, NOW, List.of(FIRST, SECOND));
 	}
 
+	/** 중지·만료·차수 불일치가 있으면 묶음 저장과 진행 갱신을 모두 차단한다. */
 	@ParameterizedTest
 	@CsvSource(value = {
 			"1,0,PROCESSING,NULL,60,true", "2,0,PROCESSING,NULL,60,false",
@@ -84,6 +85,7 @@ class NotificationJobRepositoryBatchTest {
 				any(byte[].class), any(LocalDateTime.class), any(byte[].class));
 	}
 
+	/** 저장 실패를 호출 트랜잭션에 전달하고 아직 확정되지 않은 위치로 진행하지 않는다. */
 	@Test
 	@DisplayName("묶음 INSERT 실패 시 진행 위치를 갱신하지 않는다")
 	void doesNotAdvanceProgressAfterFailedBatch() throws Exception {
@@ -99,6 +101,7 @@ class NotificationJobRepositoryBatchTest {
 				any(LocalDateTime.class), any(byte[].class));
 	}
 
+	/** 원본 내용을 보존한 UUID v7 알림들을 묶어 저장하고 마지막 수신자를 진행 위치로 삼는다. */
 	@Test
 	@DisplayName("묶음의 각 알림에 UUID v7·원본 내용·UTC 시각을 바인딩하고 마지막 사용자까지 진행한다")
 	void bindsOriginalFieldsAndLastRecipient() throws Exception {
@@ -132,6 +135,7 @@ class NotificationJobRepositoryBatchTest {
 				eq(utc(NOW.plusSeconds(60))), eq(UuidBinary.toBytes(JOB.getId())));
 	}
 
+	/** 빈 묶음 처리에서 불필요한 DB 접근이나 진행 갱신을 하지 않는다. */
 	@Test
 	@DisplayName("빈 생성 묶음은 DB에 접근하지 않는다")
 	void skipsEmptyGenerationBatch() {
@@ -140,6 +144,7 @@ class NotificationJobRepositoryBatchTest {
 		verifyNoInteractions(jdbc);
 	}
 
+	/** 복구 구간의 남은 시도와 소진된 시도를 구분해 발송을 선점한다. */
 	@Test
 	@DisplayName("발송 묶음에서 소진된 알림은 제외하고 복구 기준 차수를 유지한 채 선점한다")
 	void excludesExhaustedDeliveriesAndPreservesAttemptBase() {
@@ -167,6 +172,7 @@ class NotificationJobRepositoryBatchTest {
 				any(ParameterizedPreparedStatementSetter.class));
 	}
 
+	/** 소진된 행이 뒤의 실행 가능한 발송을 막지 않도록 다음 후보를 확인한다. */
 	@Test
 	@DisplayName("소진된 행만 있으면 다음 대상을 찾아보고 발송 대상을 만들지 않는다")
 	void continuesPastExhaustedRows() {

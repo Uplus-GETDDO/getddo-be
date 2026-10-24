@@ -12,6 +12,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.InOrder;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -34,6 +36,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -111,6 +114,7 @@ class NotificationJobServiceTest {
 		verifyNoInteractions(batches);
 	}
 
+	/** 모든 묶음이 성공한 뒤에만 작업 완료를 기록하는지 경계 크기로 검사한다. */
 	@Test
 	@DisplayName("201명은 100·100·1명으로 나누고 모든 묶음이 성공한 뒤 완료한다")
 	void generatesBoundedChunksBeforeCompleting() {
@@ -134,6 +138,7 @@ class NotificationJobServiceTest {
 		order.verifyNoMoreInteractions();
 	}
 
+	/** 개별 발송 실패가 뒤의 정상 대상까지 중단시키지 않는지 확인한다. */
 	@Test
 	@DisplayName("묶음 중 하나의 발송 실패가 다음 알림 발송과 각 결과 기록을 막지 않는다")
 	void recordsDeliveryBatchOutcomesSeparately() {
@@ -153,6 +158,45 @@ class NotificationJobServiceTest {
 		verify(repository, never()).claimNextJob(any());
 	}
 
+	/** 결과 기록이 실패해도 뒤의 선점 항목을 발송하고 민감한 오류 원문을 남기지 않는다. */
+	@ParameterizedTest
+	@ValueSource(booleans = {false, true})
+	@DisplayName("두 번째 알림의 결과 기록이 실패해도 세 번째 알림은 발송한다")
+	void continuesAfterDeliveryBookkeepingFailure(boolean completionFails, CapturedOutput output) {
+		// given
+		NotificationDelivery second = new NotificationDelivery(UUID.randomUUID(), SECOND, "제목", "내용", null, 1);
+		NotificationDelivery third = new NotificationDelivery(UUID.randomUUID(), new UUID(0, 3), "제목", "내용", null, 1);
+		when(batches.claimNextDeliveries(NOW, 20)).thenReturn(List.of(DELIVERY, second, third));
+		when(sender.send(DELIVERY)).thenReturn(MockDeliveryStatus.SENT);
+		when(sender.send(second)).thenReturn(completionFails ? MockDeliveryStatus.SENT : MockDeliveryStatus.FAILED);
+		when(sender.send(third)).thenReturn(MockDeliveryStatus.SENT);
+		if (completionFails) {
+			doThrow(new TransientDataAccessResourceException("private completion details"))
+					.when(repository).completeDelivery(second, NOW);
+		}
+		doThrow(new TransientDataAccessResourceException("private bookkeeping details"))
+				.when(repository).failDelivery(second, NOW.plusSeconds(10), "NOTIFICATION-005");
+
+		// when
+		assertThat(service.processNextDeliveries()).isEqualTo(3);
+
+		// then
+		InOrder order = inOrder(sender, repository);
+		order.verify(sender).send(DELIVERY);
+		order.verify(repository).completeDelivery(DELIVERY, NOW);
+		order.verify(sender).send(second);
+		if (completionFails) {
+			order.verify(repository).completeDelivery(second, NOW);
+		}
+		order.verify(repository).failDelivery(second, NOW.plusSeconds(10), "NOTIFICATION-005");
+		order.verify(sender).send(third);
+		order.verify(repository).completeDelivery(third, NOW);
+		assertThat(output.getOut()).contains("Notification delivery bookkeeping failed", second.getId().toString(),
+				"attempt=1", TransientDataAccessResourceException.class.getName())
+				.doesNotContain("private completion details", "private bookkeeping details", "제목", "내용");
+	}
+
+	/** 선점할 알림이 없는 폴링에서는 발송이나 결과 기록을 실행하지 않는다. */
 	@Test
 	@DisplayName("묶음 발송 대상이 없으면 발송기를 호출하지 않는다")
 	void skipsSendingEmptyDeliveryBatch() {

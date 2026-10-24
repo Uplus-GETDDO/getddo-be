@@ -236,8 +236,9 @@ public class NotificationJobRepositoryImpl implements NotificationJobRepository 
 	/** 묶음의 행 잠금과 선점 차수 갱신을 호출 Service의 트랜잭션에서 함께 확정한다. */
 	@Override
 	public List<NotificationDelivery> claimNextDeliveries(Instant now, int limit) {
-		if (limit < 1 || limit > 20) {
-			throw new IllegalArgumentException("알림 발송 선점 건수는 1~20이어야 합니다.");
+		if (limit < 1 || limit > NotificationJobRepository.MAX_DELIVERY_CLAIM) {
+			throw new IllegalArgumentException("알림 발송 선점 건수는 1~"
+					+ NotificationJobRepository.MAX_DELIVERY_CLAIM + "이어야 합니다.");
 		}
 		while (true) {
 			List<NotificationDelivery> rows = jdbc.query("""

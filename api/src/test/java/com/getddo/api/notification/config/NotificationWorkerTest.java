@@ -25,11 +25,13 @@ class NotificationWorkerTest {
 	@Mock private EventStartNotificationService starts;
 	private NotificationWorker worker;
 
+	/** 실제 시간 예약 없이 폴링 단계의 호출 순서와 상한을 검사할 워커를 준비한다. */
 	@BeforeEach
 	void setUp() {
 		worker = new NotificationWorker(jobs, starts);
 	}
 
+	/** 각 단계의 대상이 없으면 반복 조회 없이 순서대로 종료한다. */
 	@Test
 	@DisplayName("대상이 없으면 각 단계를 한 번 조회하고 등록·생성·발송 순서로 종료한다")
 	void stopsEachStageWhenEmpty() {
@@ -41,6 +43,7 @@ class NotificationWorkerTest {
 		order.verifyNoMoreInteractions();
 	}
 
+	/** 생성 작업의 반복 상한과 발송 묶음의 단일 호출을 구분해 검사한다. */
 	@Test
 	@DisplayName("등록·생성은 최대 20번, 발송은 최대 20건 묶음을 한 번 호출한다")
 	void boundsEachStage() {
@@ -52,6 +55,7 @@ class NotificationWorkerTest {
 		verify(jobs).processNextDeliveries();
 	}
 
+	/** 시작 작업 등록 오류가 이미 저장된 생성·발송 작업 처리를 막지 않도록 한다. */
 	@Test
 	@DisplayName("시작 작업 등록 실패에도 기존 작업을 처리하고 예외 원문은 로그에 남기지 않는다")
 	void continuesAfterRegistrationFailure(CapturedOutput output) {

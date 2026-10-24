@@ -31,7 +31,6 @@ import com.getddo.core.notification.repository.NotificationJobRepository;
 public class NotificationJobService {
 	private static final Log LOG = LogFactory.getLog(NotificationJobService.class);
 	private static final int GENERATION_BATCH_SIZE = 100;
-	private static final int DELIVERY_BATCH_SIZE = 20;
 	private final NotificationJobRepository repository;
 	private final TimeProvider timeProvider;
 	private final MockNotificationSender sender;
@@ -83,9 +82,16 @@ public class NotificationJobService {
 
 	/** 폴링 상한 20건을 함께 선점하고 각 알림의 성공·실패는 독립적으로 기록한다. */
 	public int processNextDeliveries() {
-		List<NotificationDelivery> deliveries = batches.claimNextDeliveries(timeProvider.now(), DELIVERY_BATCH_SIZE);
+		List<NotificationDelivery> deliveries = batches.claimNextDeliveries(timeProvider.now(),
+				NotificationJobRepository.MAX_DELIVERY_CLAIM);
 		for (NotificationDelivery delivery : deliveries) {
-			deliver(delivery);
+			try {
+				deliver(delivery);
+			} catch (RuntimeException failure) {
+				// 결과 기록까지 실패한 항목은 저장된 임대 만료 후 복구하고 나머지 선점 항목은 계속 처리한다.
+				LOG.warn("Notification delivery bookkeeping failed: notificationId=" + delivery.getId()
+						+ ", attempt=" + delivery.getAttemptCount() + ", exceptionType=" + failure.getClass().getName());
+			}
 		}
 		return deliveries.size();
 	}

@@ -11,6 +11,9 @@ import com.getddo.core.notification.domain.NotificationJobRequest;
 
 /** 알림 생성·모의 발송을 원본 업무와 분리해 저장하고 선점 차수로 동시 처리를 보호한다. */
 public interface NotificationJobRepository {
+	/** 한 번에 함께 선점할 수 있는 발송 대상의 최대 건수다. */
+	int MAX_DELIVERY_CLAIM = 20;
+
 	/** 호출자의 업무 트랜잭션에 참여하며 동일 발생 키·동일 입력에는 기존 작업 ID를 반환한다. */
 	UUID register(NotificationJobRequest request, Instant now);
 	/** 별도 트랜잭션에서 실행 시각이 된 작업 하나를 선점한다. 만료된 선점도 복구 대상이다. */
