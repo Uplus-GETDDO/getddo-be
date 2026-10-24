@@ -41,10 +41,6 @@ public class NotificationWorker {
 				break;
 			}
 		}
-		for (int count = 0; count < 20; count++) {
-			if (!service.processNextDelivery()) {
-				break;
-			}
-		}
+		service.processNextDeliveries();
 	}
 }
