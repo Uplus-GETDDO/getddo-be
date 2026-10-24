@@ -34,5 +34,3 @@ spring:
       validation-timeout: 1000
       data-source-properties:
         connectTimeout: 2000
-        # 통신 무응답 제한이며 SQL 취소·롤백 완료를 보장하지 않는다. 장기 업무 검증 후 운영 반영한다.
-        socketTimeout: 5000

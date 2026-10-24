@@ -22,9 +22,11 @@ MVC의 Controller·사용자 문맥 조회·Service 트랜잭션 시작/실행/�
 | Hikari connectionTimeout | 2000ms | 연결 획득 대기 |
 | Hikari validationTimeout | 1000ms | 기존 연결 유효성 확인 |
 | Connector/J connectTimeout | 2000ms | 새 소켓 연결 |
-| Connector/J socketTimeout | 5000ms | 소켓 무응답 대기 상한 |
+| Connector/J socketTimeout | 기본 미설정(드라이버 기본 0) / JDBC URL 명시적 설정 5000ms | 장기 업무 검증 전 기본 배포에서 변경하지 않음 |
 | JVM 양의 DNS TTL | 30초 | JVM 전체 DNS 조회 |
 | JVM 음의 DNS TTL | 5초 | 조회 실패 캐시 |
+
+`monitoring`의 기본 배포는 socketTimeout을 지정하지 않는다. 장기 SQL·집계·추첨·워커의 statement/transaction 예산과 정상 처리를 검증한 뒤에만 기존 Parameter Store의 `SPRING_DATASOURCE_URL`에 `socketTimeout=5000`을 명시한다. 중복 속성이 없도록 URL을 서버 내부에서 파싱해 확인하고, TLS 등 나머지 속성은 유지한다. [설정 반영 절차](parameter-store.md)를 통해 순차 배포하고 실제 드라이버 값을 확인한다. 새로운 Parameter Store 항목·프로파일이나 인프라 파일 변경은 필요하지 않다. 검증 전에는 URL의 socket 제한을 변경하지 않는다. rollback 시에는 이전 Parameter Store 버전을 정상 절차로 반영하고 이미지/직전 app.env도 확인한다.
 
 수치는 전체 HTTP 요청 시간 보장이 아니다. socketTimeout은 통신 읽기 제한이며 쿼리 취소·롤백 완료나 전체 업무 실행시간을 보장하지 않는다. 장기 집계·추첨·워커의 각 SQL이 5초를 넘으면 정상 업무도 연결 실패로 종료될 수 있다. 대표 정상 API·장기 업무 검증 결과와 별도 statement/transaction 예산을 확인한 뒤 운영 반영한다. 운영 성능이 확인되지 않았다면 시작값을 최종 운영값으로 표시하지 않는다.
 
@@ -44,7 +46,7 @@ JDBC URL의 같은 속성은 Hikari data-source-properties보다 드라이버에
 
 - MockMvc 단위: 연결 예외와 wrapper, 기존 4xx/429/500, 사용자 문맥 조회, 원인 순환 방어.
 - 설정 단위: 실제 배포 프로파일의 Hikari 바인딩·MySQL 드라이버 속성 해석 및 새 Java 21 프로세스의 보안 속성.
-- 테스트 MySQL: SELECT SLEEP(6)의 통신 timeout과 8초 목표, 실제 풀 고갈, 실패 후 정상 연결 확보. 이 테스트의 SLEEP은 테스트 컨테이너에서만 실행한다.
+- 테스트 MySQL: 테스트 전용으로 socketTimeout 5000ms를 명시하고 SELECT SLEEP(6)의 통신 timeout과 8초 목표, JDBC 물리 connection_id 교체, 실제 Spring JPA Service·Repository 트랜잭션의 풀 고갈·socket 장애 후 정상 조회를 검증한다. 이 테스트의 SLEEP은 테스트 컨테이너에서만 실행한다.
 - 응모·미션 MySQL: beforeCommit 연결 예외 주입의 롤백과 afterCommit 예외 주입의 응답 유실을 구분하고, 동일 키 재전송·다른 본문 충돌·단일 차감/지급을 검증한다. 실제 소켓을 끊는 시험이나 실제 commit 응답 유실 재현과는 구분한다.
 - 실제 운영 RDS 전환 시간·장애 중 503·프론트 키 유지·대표 장기 업무 성능은 별도 증거가 필요하다. 실행하지 않은 항목은 NOT_RUN으로 남긴다.
 
