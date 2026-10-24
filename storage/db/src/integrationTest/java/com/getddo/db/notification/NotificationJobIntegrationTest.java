@@ -405,7 +405,7 @@ class NotificationJobIntegrationTest {
 			List<NotificationDelivery> left = first.get(15, TimeUnit.SECONDS);
 
 			// then
-			assertThat(left).hasSizeLessThanOrEqualTo(20);
+			assertThat(left).hasSize(20);
 			assertThat(right).hasSizeLessThanOrEqualTo(20);
 			List<NotificationDelivery> claimed = new ArrayList<>(left);
 			claimed.addAll(right);
