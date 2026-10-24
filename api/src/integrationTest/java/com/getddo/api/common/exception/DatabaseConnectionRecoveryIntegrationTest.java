@@ -20,6 +20,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -58,9 +59,10 @@ class DatabaseConnectionRecoveryIntegrationTest {
 			MockMvc mvc = MockMvcBuilders.standaloneSetup(new QueryController(probe))
 					.setControllerAdvice(new GlobalExceptionHandler()).build();
 			long started = System.nanoTime();
-			// when / then
-			mvc.perform(get("/connection-test/slow"))
-					.andExpect(status().isServiceUnavailable())
+			// when
+			ResultActions result = mvc.perform(get("/connection-test/slow"));
+			// then
+			result.andExpect(status().isServiceUnavailable())
 					.andExpect(jsonPath("$.code").value("COMMON-007"))
 					.andExpect(header().doesNotExist("Retry-After"));
 			assertThat((System.nanoTime() - started) / 1_000_000).isLessThan(8000);
@@ -81,9 +83,10 @@ class DatabaseConnectionRecoveryIntegrationTest {
 				borrowed.add(pool.getConnection());
 			}
 			long started = System.nanoTime();
-			// when / then
-			mvc.perform(get("/connection-test/jpa/normal"))
-					.andExpect(status().isServiceUnavailable())
+			// when
+			ResultActions result = mvc.perform(get("/connection-test/jpa/normal"));
+			// then
+			result.andExpect(status().isServiceUnavailable())
 					.andExpect(jsonPath("$.code").value("COMMON-007"));
 			assertThat((System.nanoTime() - started) / 1_000_000).isLessThan(8000);
 		} finally {
@@ -101,9 +104,10 @@ class DatabaseConnectionRecoveryIntegrationTest {
 		// given
 		MockMvc mvc = mvc();
 		long started = System.nanoTime();
-		// when / then
-		mvc.perform(get("/connection-test/jpa/slow"))
-				.andExpect(status().isServiceUnavailable())
+		// when
+		ResultActions result = mvc.perform(get("/connection-test/jpa/slow"));
+		// then
+		result.andExpect(status().isServiceUnavailable())
 				.andExpect(jsonPath("$.code").value("COMMON-007"));
 		assertThat((System.nanoTime() - started) / 1_000_000).isLessThan(8000);
 		mvc.perform(get("/connection-test/jpa/normal")).andExpect(status().isOk()).andExpect(content().string("1"));

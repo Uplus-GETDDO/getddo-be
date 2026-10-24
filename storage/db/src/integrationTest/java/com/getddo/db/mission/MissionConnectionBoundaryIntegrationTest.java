@@ -72,8 +72,9 @@ class MissionConnectionBoundaryIntegrationTest extends MissionIntegrationTestSup
 			});
 			return result;
 		}).when(target).grant(any());
-		// when / then
+		// when
 		assertThatThrownBy(() -> submissions.submit(request)).isInstanceOf(DataAccessResourceFailureException.class);
+		// then
 		verify(target, times(1)).grant(any());
 		assertThat(count("select count(*) from mission_submissions where id = ?", bytes(key))).isEqualTo(committed ? 1 : 0);
 		assertThat(count("select count(*) from mission_reward_claims where user_id = ?", bytes(userId))).isEqualTo(committed ? 1 : 0);

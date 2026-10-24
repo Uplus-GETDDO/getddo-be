@@ -66,8 +66,9 @@ class EntryConnectionBoundaryIntegrationTest extends EntryIntegrationTestSupport
 			});
 			return null;
 		}).when(participants).addUsedTicketCount(any(UUID.class), anyLong());
-		// when / then
+		// when
 		assertThatThrownBy(() -> entryService.enter(request)).isInstanceOf(DataAccessResourceFailureException.class);
+		// then
 		verify(participants, times(1)).addUsedTicketCount(any(UUID.class), anyLong());
 		assertThat(count("select count(*) from event_entries where id = ?", bytes(key))).isEqualTo(committed ? 1 : 0);
 		assertThat(spentTickets(userId)).isEqualTo(committed ? 1 : 0);
