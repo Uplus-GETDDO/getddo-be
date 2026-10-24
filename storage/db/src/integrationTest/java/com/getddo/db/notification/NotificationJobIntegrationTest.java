@@ -47,6 +47,7 @@ import com.getddo.core.notification.exception.NotificationProcessingErrorCode;
 import com.getddo.core.notification.exception.NotificationProcessingException;
 import com.getddo.core.notification.repository.NotificationJobRepository;
 import com.getddo.core.notification.service.MockNotificationSender;
+import com.getddo.core.notification.service.NotificationBatchTransactionService;
 import com.getddo.core.notification.service.NotificationJobService;
 import com.getddo.core.notification.service.NotificationService;
 import com.getddo.core.common.exception.BusinessException;
@@ -74,12 +75,14 @@ class NotificationJobIntegrationTest {
 
 	@Autowired private NotificationJobService service;
 	@Autowired private NotificationService notificationService;
+	@Autowired private NotificationBatchTransactionService batches;
 	@MockitoSpyBean private NotificationJobRepository repository;
 	@Autowired private JdbcTemplate jdbc;
 	@Autowired private MutableClock clock;
 	@Autowired private PlatformTransactionManager transactionManager;
 	@MockitoBean private MockNotificationSender sender;
 	private String prefix;
+	private final List<UUID> additionalUsers = new ArrayList<>();
 
 	/** 각 시나리오의 시계·사용자·발송 결과를 초기화해 테스트 간 영향을 차단한다. */
 	@BeforeEach
@@ -105,6 +108,9 @@ class NotificationJobIntegrationTest {
 			jdbc.update("delete from notification_jobs where id = ?", id);
 		}
 		jdbc.update("delete from users where id in (?, ?)", bytes(USER), bytes(OTHER));
+		for (UUID id : additionalUsers) {
+			jdbc.update("delete from users where id = ?", bytes(id));
+		}
 	}
 
 	/** 검증 시나리오: 같은 발생 건과 수신자 순서 변경은 같은 작업이며 다른 문구는 충돌로 거절한다. */
@@ -300,14 +306,25 @@ class NotificationJobIntegrationTest {
 				bytes(original))).isEqualTo(1);
 	}
 
-	/** 검증 시나리오: 사용자 FK 위반은 즉시 최종 실패로 기록하며 이미 저장한 알림과 확정 업무 결과를 보존한다. */
+	/** 검증 시나리오: 다음 묶음의 FK 위반은 앞서 확정한 100건과 원본 업무를 롤백하지 않는다. */
 	@Test
-	@DisplayName("사용자 FK 위반은 즉시 최종 실패로 기록하며 이미 저장한 알림과 확정 업무 결과를 보존한다")
+	@DisplayName("다음 묶음의 FK 위반은 최종 실패로 기록하며 앞선 100건과 확정 업무를 보존한다")
 	void permanentGenerationFailureDoesNotUndoCommittedBusiness() {
 		// given
+		List<UUID> recipients = new ArrayList<>(List.of(USER));
+		for (int index = 0; index < 99; index++) {
+			UUID userId = new UUID(0, 10_000 + index);
+			additionalUsers.add(userId);
+			recipients.add(userId);
+			jdbc.update("""
+				insert into users (id, name, role, status, membership, created_at, updated_at)
+				values (?, '묶음 생성', 'USER', 'ACTIVE', 'VIP', ?, ?)
+				""", bytes(userId), utc(NOW), utc(NOW));
+		}
+		recipients.add(MISSING);
 		UUID id = new TransactionTemplate(transactionManager).execute(status -> {
 			jdbc.update("update users set name = '업무 확정' where id = ?", bytes(USER));
-			return service.register(request("invalid-user", NOW, List.of(USER, MISSING)));
+			return service.register(request("invalid-user", NOW, recipients));
 		});
 
 		// when
@@ -316,12 +333,64 @@ class NotificationJobIntegrationTest {
 		// then
 		assertThat(jobStatus(id)).isEqualTo("FAILED");
 		assertThat(count("select attempt_count from notification_jobs where id = ?", bytes(id))).isEqualTo(1);
-		assertThat(count("select count(*) from notifications where job_id = ?", bytes(id))).isEqualTo(1);
+		assertThat(count("select count(*) from notifications where job_id = ?", bytes(id))).isEqualTo(100);
 		assertThat(jdbc.queryForObject("select name from users where id = ?", String.class, bytes(USER))).isEqualTo("업무 확정");
 		assertThat(jdbc.queryForObject("select last_error from notification_jobs where id = ?", String.class, bytes(id)))
 				.isEqualTo("NOTIFICATION-006");
 		clock.set(NOW.plusSeconds(1000));
 		assertThat(service.processNextJob()).isFalse();
+	}
+
+	@Test
+	@DisplayName("같은 묶음의 FK 실패는 해당 묶음만 롤백하고 확정 업무는 보존한다")
+	void rollsBackEntireFailedGenerationChunk() {
+		// given
+		UUID id = new TransactionTemplate(transactionManager).execute(status -> {
+			jdbc.update("update users set name = '묶음 전 업무 확정' where id = ?", bytes(USER));
+			return service.register(request("failed-chunk", NOW, List.of(USER, MISSING)));
+		});
+
+		// when
+		assertThat(service.processNextJob()).isTrue();
+
+		// then
+		assertThat(jobStatus(id)).isEqualTo("FAILED");
+		assertThat(count("select count(*) from notifications where job_id = ?", bytes(id))).isZero();
+		assertThat(jdbc.queryForObject("select name from users where id = ?", String.class, bytes(USER)))
+				.isEqualTo("묶음 전 업무 확정");
+	}
+
+	@Test
+	@DisplayName("두 작업자의 동시 묶음 선점은 서로 다른 20건씩만 확보한다")
+	void concurrentDeliveryBatchesDoNotOverlap() throws Exception {
+		// given
+		for (int index = 0; index < 40; index++) {
+			service.register(request("batch-delivery-" + index, NOW, List.of(USER)));
+			assertThat(service.processNextJob()).isTrue();
+		}
+		CountDownLatch start = new CountDownLatch(1);
+
+		// when
+		try (java.util.concurrent.ExecutorService executor = Executors.newFixedThreadPool(2)) {
+			java.util.concurrent.Callable<List<NotificationDelivery>> claim = () -> {
+				assertThat(start.await(10, TimeUnit.SECONDS)).isTrue();
+				return batches.claimNextDeliveries(NOW, 20);
+			};
+			Future<List<NotificationDelivery>> first = executor.submit(claim);
+			Future<List<NotificationDelivery>> second = executor.submit(claim);
+			start.countDown();
+			List<NotificationDelivery> left = first.get(15, TimeUnit.SECONDS);
+			List<NotificationDelivery> right = second.get(15, TimeUnit.SECONDS);
+
+			// then
+			assertThat(left).hasSize(20);
+			assertThat(right).hasSize(20);
+			assertThat(java.util.stream.Stream.concat(left.stream(), right.stream())
+					.map(NotificationDelivery::getId).distinct().count()).isEqualTo(40);
+			assertThat(left).allMatch(delivery -> delivery.getAttemptCount() == 1);
+			assertThat(right).allMatch(delivery -> delivery.getAttemptCount() == 1);
+			assertThat(batches.claimNextDeliveries(NOW, 20)).isEmpty();
+		}
 	}
 
 	/** 검증 시나리오: 만료된 선점은 복구하고 이전 처리자의 생성·완료·실패 저장을 차단한다. */
@@ -361,7 +430,7 @@ class NotificationJobIntegrationTest {
 				clock.set(NOW.plusSeconds(elapsedSeconds));
 			}
 			return created;
-		}).when(repository).createNotification(any(), any(), any(), any());
+		}).when(repository).createNotifications(any(), any(), any(), any());
 
 		// when
 		assertThat(service.processNextJob()).isTrue();

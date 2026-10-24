@@ -37,20 +37,19 @@ class NotificationWorkerTest {
 		InOrder order = inOrder(starts, jobs);
 		order.verify(starts).registerNextDueEvent();
 		order.verify(jobs).processNextJob();
-		order.verify(jobs).processNextDelivery();
+		order.verify(jobs).processNextDeliveries();
 		order.verifyNoMoreInteractions();
 	}
 
 	@Test
-	@DisplayName("한 번의 폴링에서는 각 단계를 최대 20번 호출한다")
+	@DisplayName("등록·생성은 최대 20번, 발송은 최대 20건 묶음을 한 번 호출한다")
 	void boundsEachStage() {
 		when(starts.registerNextDueEvent()).thenReturn(true);
 		when(jobs.processNextJob()).thenReturn(true);
-		when(jobs.processNextDelivery()).thenReturn(true);
 		worker.poll();
 		verify(starts, times(20)).registerNextDueEvent();
 		verify(jobs, times(20)).processNextJob();
-		verify(jobs, times(20)).processNextDelivery();
+		verify(jobs).processNextDeliveries();
 	}
 
 	@Test
@@ -59,7 +58,7 @@ class NotificationWorkerTest {
 		when(starts.registerNextDueEvent()).thenThrow(new IllegalStateException("private event details"));
 		worker.poll();
 		verify(jobs).processNextJob();
-		verify(jobs).processNextDelivery();
+		verify(jobs).processNextDeliveries();
 		assertThat(output.getOut()).contains(IllegalStateException.class.getName())
 				.doesNotContain("private event details");
 	}

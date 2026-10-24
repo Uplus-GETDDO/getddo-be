@@ -1,6 +1,7 @@
 package com.getddo.core.notification.repository;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -20,12 +21,16 @@ public interface NotificationJobRepository {
 	NotificationJobRequest findRequestForComparison(UUID jobId);
 	/** 사용자별 별도 트랜잭션에서 중복 생성 없이 저장한다. 선점이 유효하지 않으면 false다. */
 	boolean createNotification(NotificationJob job, NotificationJobRequest request, UUID userId, Instant now);
+	/** Service의 독립 트랜잭션에서 한 묶음을 저장한다. 소유권이 없으면 생성하지 않고 false를 반환한다. */
+	boolean createNotifications(NotificationJob job, NotificationJobRequest request, List<UUID> userIds, Instant now);
 	/** 재선점되지 않은 자신의 선점 차수라면 제한 시간 이후에도 생성 완료를 확정한다. */
 	void completeJob(NotificationJob job, Instant now);
 	/** 자신의 선점 차수일 때만 실패·다음 시각을 기록한다. null은 최종 실패다. */
 	void failJob(NotificationJob job, Instant nextAttemptAt, String errorCode);
 	/** 생성된 알림 하나의 모의 발송을 별도 트랜잭션에서 선점한다. */
 	Optional<NotificationDelivery> claimNextDelivery(Instant now);
+	/** Service의 독립 트랜잭션에서 최대 limit건을 함께 선점하며 다른 처리자의 잠긴 행은 건너뛴다. */
+	List<NotificationDelivery> claimNextDeliveries(Instant now, int limit);
 	/** 재선점되지 않은 자신의 발송 차수라면 제한 시간 이후에도 성공을 기록하며 읽음 상태는 그대로 둔다. */
 	void completeDelivery(NotificationDelivery delivery, Instant now);
 	/** 생성 실패와 별개인 발송 실패·다음 시각을 기록한다. 읽음 상태는 그대로 둔다. */
