@@ -46,6 +46,7 @@ class DatabaseConnectionRecoveryIntegrationTest {
 	@Autowired
 	private JpaProbe jpa;
 
+	/** 한 연결짜리 테스트 풀에서 통신 오류 전·후의 MySQL 연결 ID를 비교해 유휴 연결 재사용과 물리 연결 교체를 구분한다. */
 	@Test
 	@DisplayName("테스트 DB의 6초 응답 대기는 socketTimeout으로 8초 이내 503이며 다음 정상 조회는 새 연결로 성공한다")
 	void socketTimeoutReturns503AndPoolRecovers() throws Exception {
@@ -68,6 +69,7 @@ class DatabaseConnectionRecoveryIntegrationTest {
 		}
 	}
 
+	/** 정상 DB의 연결을 모두 점유해 실제 JPA 트랜잭션 시작 실패의 503과 연결 반환 후 정상 결과를 검증한다. */
 	@Test
 	@DisplayName("정상 DB에서도 풀을 모두 점유하면 8초 이내 503이며 연결 반환 후 정상 조회로 회복한다")
 	void exhaustedPoolIsUnavailableWithoutClaimingDatabaseFailover() throws Exception {
@@ -92,6 +94,7 @@ class DatabaseConnectionRecoveryIntegrationTest {
 		mvc.perform(get("/connection-test/jpa/normal")).andExpect(status().isOk()).andExpect(content().string("1"));
 	}
 
+	/** 실제 JPA 조회의 통신 단절과 롤백 실패를 거친 뒤에도 503으로 응답하고 다음 트랜잭션이 정상 조회하는지 검증한다. */
 	@Test
 	@DisplayName("실제 JPA Service·Repository 트랜잭션의 socket 장애는 503이고 이후 새 트랜잭션 조회는 성공한다")
 	void jpaTransactionRecoversAfterSocketTimeout() throws Exception {
@@ -121,6 +124,7 @@ class DatabaseConnectionRecoveryIntegrationTest {
 		return new HikariDataSource(config);
 	}
 
+	/** Spring이 생성한 트랜잭션 프록시를 테스트 Controller에 연결해 HTTP 오류 변환까지 검증한다. */
 	private MockMvc mvc() {
 		return MockMvcBuilders.standaloneSetup(new JpaQueryController(jpa))
 				.setControllerAdvice(new GlobalExceptionHandler()).build();
@@ -129,6 +133,7 @@ class DatabaseConnectionRecoveryIntegrationTest {
 	/** 테스트 컨텍스트에만 프록시를 거치는 JPA 트랜잭션 진입점을 등록한다. */
 	@TestConfiguration(proxyBeanMethods = false)
 	static class JpaProbeConfiguration {
+		/** 실제 EntityManager와 사용자 Repository를 사용하는 테스트 전용 트랜잭션 진입점을 등록한다. */
 		@Bean
 		JpaProbe jpaProbe(EntityManager entityManager, UserRepository users) {
 			return new JpaProbe(entityManager, users);
@@ -145,6 +150,7 @@ class DatabaseConnectionRecoveryIntegrationTest {
 			this.users = users;
 		}
 
+		/** 같은 트랜잭션에서 실제 사용자 Repository를 조회한 뒤 정상 SQL 또는 통신 제한을 넘기는 SQL을 실행한다. */
 		@Transactional(readOnly = true)
 		public int query(boolean slow) {
 			users.findById(UUID.randomUUID());
@@ -153,6 +159,7 @@ class DatabaseConnectionRecoveryIntegrationTest {
 		}
 	}
 
+	/** 트랜잭션 프록시를 거치는 JPA 장애·복구의 HTTP 진입점이다. */
 	@RestController
 	static class JpaQueryController {
 		private final JpaProbe service;
@@ -161,17 +168,20 @@ class DatabaseConnectionRecoveryIntegrationTest {
 			this.service = service;
 		}
 
+		/** Spring 트랜잭션 안의 통신 제한 초과를 HTTP 경계까지 전달한다. */
 		@GetMapping("/connection-test/jpa/slow")
 		int slow() {
 			return service.query(true);
 		}
 
+		/** 복구 뒤 실제 JPA 정상 조회가 결과 1을 반환하는지 확인하는 경로다. */
 		@GetMapping("/connection-test/jpa/normal")
 		int normal() {
 			return service.query(false);
 		}
 	}
 
+	/** 독립된 JDBC 테스트 풀의 물리 연결 교체를 확인하는 HTTP 진입점이다. */
 	@RestController
 	static class QueryController {
 		private final JdbcTemplate jdbc;
@@ -180,11 +190,13 @@ class DatabaseConnectionRecoveryIntegrationTest {
 			this.jdbc = jdbc;
 		}
 
+		/** JDBC 통신 대기를 유발해 테스트 전용 풀의 연결 폐기·교체를 검증한다. */
 		@GetMapping("/connection-test/slow")
 		int slow() {
 			return jdbc.queryForObject("select sleep(6)", Integer.class);
 		}
 
+		/** 연결 교체 이후 JDBC 조회 결과를 확인하는 경로다. */
 		@GetMapping("/connection-test/normal")
 		int normal() {
 			return jdbc.queryForObject("select 1", Integer.class);

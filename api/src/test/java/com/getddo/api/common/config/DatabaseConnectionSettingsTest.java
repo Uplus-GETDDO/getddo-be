@@ -26,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** DB 접속 없이 배포 프로파일 바인딩·드라이버 해석과 Java 21 보안 속성의 실제 적용을 검증한다. */
 class DatabaseConnectionSettingsTest {
 
+	/** 기본 배포의 무제한 socket 설정과 JDBC URL로 명시한 5초 제한을 실제 드라이버 해석 결과로 대조한다. */
 	@ParameterizedTest
 	@ValueSource(booleans = {false, true})
 	@DisplayName("기본 배포는 socket 제한을 유지하고 기존 JDBC URL의 명시적 설정으로만 5초 제한을 적용한다")
@@ -53,6 +54,7 @@ class DatabaseConnectionSettingsTest {
 				});
 	}
 
+	/** 새 JVM으로 이미지에 포함할 보안 속성 파일을 읽어 DNS TTL이 실제 Java 보안 속성으로 적용되는지 검증한다. */
 	@Test
 	@DisplayName("컨테이너에 복사할 보안 속성 파일을 Java 21에 주입하면 DNS TTL 30초와 음성 TTL 5초가 적용된다")
 	void securityFileAppliesToNewJvm(@TempDir Path temporary) throws Exception {

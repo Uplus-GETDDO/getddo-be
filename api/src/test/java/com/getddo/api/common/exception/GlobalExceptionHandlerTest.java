@@ -158,6 +158,7 @@ class GlobalExceptionHandlerTest {
 				.andExpect(jsonPath("$.data").value(nullValue()));
 	}
 
+	/** 연결 장애의 포장 형태와 무관하게 공개 503 봉투를 유지하고 내부 정보·복구 시간 헤더를 노출하지 않는지 확인한다. */
 	@ParameterizedTest
 	@MethodSource("connectionFailures")
 	@DisplayName("연결 획득·실행·커밋의 연결 장애는 내부 정보와 Retry-After 없이 공통 503으로 응답한다")
@@ -174,6 +175,7 @@ class GlobalExceptionHandlerTest {
 				.andExpect(header().doesNotExist("Retry-After"));
 	}
 
+	/** 연결 획득·실행·커밋 실패와 풀 고갈을 나타내는 연결 전용 예외 표본을 제공한다. */
 	static Stream<Exception> connectionFailures() {
 		return Stream.of(
 				new SQLException("private SQL and host", "08006"),
@@ -185,6 +187,7 @@ class GlobalExceptionHandlerTest {
 						new SQLTransientConnectionException("pool exhausted"))));
 	}
 
+	/** 연결 장애로 단정할 수 없는 SQL 오류를 기존 서버 오류 계약으로 유지하는지 검증한다. */
 	@ParameterizedTest
 	@MethodSource("nonConnectionFailures")
 	@DisplayName("문법·무결성·쿼리 시간초과·교착과 근거 없는 일시 예외는 기존 500을 유지한다")
@@ -197,6 +200,7 @@ class GlobalExceptionHandlerTest {
 				.andExpect(jsonPath("$.code").value("COMMON-001"));
 	}
 
+	/** 문법·무결성·쿼리 제한·교착 등 503으로 일괄 변환하면 안 되는 오류 표본을 제공한다. */
 	static Stream<Exception> nonConnectionFailures() {
 		return Stream.of(new SQLSyntaxErrorException("syntax", "42000"),
 				new SQLIntegrityConstraintViolationException("duplicate", "23000", 1062),
@@ -205,6 +209,7 @@ class GlobalExceptionHandlerTest {
 				new CannotCreateTransactionException("no connection cause"));
 	}
 
+	/** DB 장애 분류를 추가해도 기존 빈도 제한의 상태·코드·Retry-After가 유지되는지 확인한다. */
 	@Test
 	@DisplayName("빈도 제한은 기존 429와 Retry-After를 유지한다")
 	void rateLimitPreservesRetryAfter() throws Exception {
@@ -217,6 +222,7 @@ class GlobalExceptionHandlerTest {
 				.andExpect(header().string("Retry-After", "12"));
 	}
 
+	/** Controller 실행 전 사용자 파라미터의 DB 조회에서 발생한 연결 오류도 MVC Advice가 처리하는지 확인한다. */
 	@Test
 	@DisplayName("사용자 문맥 DB 조회의 연결 장애도 MVC에서 공통 503으로 변환한다")
 	void userContextConnectionFailureReturnsUnavailable() throws Exception {
@@ -234,12 +240,15 @@ class GlobalExceptionHandlerTest {
 				.andExpect(jsonPath("$.code").value("COMMON-007"));
 	}
 
+	/** 실제 사용자 파라미터 해석 경로를 통과시키는 테스트 진입점이다. */
 	@RestController
 	static class UserContextController {
+		/** DB에서 사용자 문맥을 조회하다 발생한 예외가 Advice로 전달되게 한다. */
 		@GetMapping("/test/user")
 		void user(@CurrentUser(membershipRequired = false) User user) {}
 	}
 
+	/** 가려진 연결 근거를 트랜잭션 실패에만 사용하고 무관한 SQL 오류나 다음 요청에 재사용하지 않는지 검증한다. */
 	@Test
 	@DisplayName("단절 근거가 롤백 오류에 가려져도 503이며 다음 요청의 근거 없는 오류는 500을 유지한다")
 	void rollbackCannotHideConnectionFailureOrLeakToNextRequest() throws Exception {
@@ -261,8 +270,10 @@ class GlobalExceptionHandlerTest {
 				.andExpect(jsonPath("$.code").value("COMMON-001"));
 	}
 
+	/** 실제 JDBC 근거가 트랜잭션 정리 오류에 가려지는 모양을 재현한다. */
 	@RestController
 	static class RollbackFailureController {
+		/** 연결 근거·트랜잭션 실패 여부를 조합해 잘못된 503 변환과 요청 간 근거 유출을 검증한다. */
 		@GetMapping("/test/rollback")
 		void fail(@RequestParam(defaultValue = "", name = "state") String state,
 				@RequestParam(defaultValue = "true", name = "rollback") boolean rollback) {
@@ -275,11 +286,13 @@ class GlobalExceptionHandlerTest {
 		}
 	}
 
+	/** 선택한 예외를 던지는 테스트 Controller와 실제 Advice만 연결한다. */
 	private MockMvc failingMvc(Exception failure) {
 		return MockMvcBuilders.standaloneSetup(new FailureController(failure))
 				.setControllerAdvice(new GlobalExceptionHandler()).build();
 	}
 
+	/** 예외 표본을 실제 MVC 처리기에 전달하는 테스트 Controller다. */
 	@RestController
 	static class FailureController {
 		private final Exception failure;
@@ -288,6 +301,7 @@ class GlobalExceptionHandlerTest {
 			this.failure = failure;
 		}
 
+		/** 표본 예외를 포장하지 않고 던져 Advice의 분류 결과를 확인한다. */
 		@GetMapping("/test/failure")
 		void fail() throws Exception {
 			throw failure;

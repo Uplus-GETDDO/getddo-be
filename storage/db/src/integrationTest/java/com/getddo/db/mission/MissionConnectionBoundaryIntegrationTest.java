@@ -40,6 +40,7 @@ class MissionConnectionBoundaryIntegrationTest extends MissionIntegrationTestSup
 	@MockitoSpyBean
 	private TicketGrantService grants;
 
+	/** 실제 커밋 전·후의 제출·보상 상태를 확인하고 같은 키 재전송이 추가 지급 없이 기존 결과를 반환하는지 검증한다. */
 	@ParameterizedTest
 	@ValueSource(booleans = {false, true})
 	@DisplayName("미션 커밋 전 실패는 기록·보상을 롤백하고 커밋 후 유실은 같은 키로 보상을 재지급하지 않는다")
@@ -97,6 +98,7 @@ class MissionConnectionBoundaryIntegrationTest extends MissionIntegrationTestSup
 						failure -> assertThat(failure.getErrorCode()).isEqualTo(MissionErrorCode.IDEMPOTENCY_CONFLICT));
 	}
 
+	/** 운영 연결을 차단하지 않고 테스트의 커밋 경계에 주입할 연결 오류를 만든다. */
 	private static DataAccessResourceFailureException connectionFailure() {
 		return new DataAccessResourceFailureException("test connection boundary", new SQLException("test", "08007"));
 	}

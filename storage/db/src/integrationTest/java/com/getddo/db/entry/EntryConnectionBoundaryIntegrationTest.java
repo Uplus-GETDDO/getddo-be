@@ -37,6 +37,7 @@ class EntryConnectionBoundaryIntegrationTest extends EntryIntegrationTestSupport
 	@MockitoSpyBean
 	private EntryParticipantRepository participants;
 
+	/** 커밋 전·후에 주입한 오류의 저장 결과를 대조하고 클라이언트의 같은 키 재전송만 단일 차감으로 이어지는지 검증한다. */
 	@ParameterizedTest
 	@ValueSource(booleans = {false, true})
 	@DisplayName("커밋 전 연결 실패는 차감을 롤백하고 커밋 후 응답 유실은 같은 키로 추가 차감 없이 재조회한다")
@@ -89,6 +90,7 @@ class EntryConnectionBoundaryIntegrationTest extends EntryIntegrationTestSupport
 				.satisfies(failure -> assertEntryError(failure, EntryErrorCode.IDEMPOTENCY_CONFLICT));
 	}
 
+	/** 트랜잭션 동기화 시점에 주입할 연결 오류를 만든다. 실제 운영 연결은 끊지 않는다. */
 	private static DataAccessResourceFailureException connectionFailure() {
 		return new DataAccessResourceFailureException("test connection boundary", new SQLException("test", "08007"));
 	}
