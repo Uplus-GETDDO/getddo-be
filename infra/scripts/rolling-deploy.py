@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """ALB의 정상 상대 서버를 보존하며 기존 서버 단위 배포 엔진을 순서대로 실행한다."""
 import json
+import os
 import shlex
 import time
 
@@ -10,6 +11,7 @@ class UnknownOutcome(RuntimeError):
 
 
 def invocation(aws, instance, payload):
+    """준비는 660초, 교체는 2040초 이내 종료 증거를 확인한다. 모호하면 재발행 없이 잠금 보존을 요구한다."""
     # send-command 응답 자체가 유실돼도 명령이 실행됐을 수 있다. 자동 재시도하지 않는다.
     try:
         result = aws("ssm", "send-command", "--instance-ids", instance,
@@ -17,6 +19,10 @@ def invocation(aws, instance, payload):
                      "--parameters", json.dumps(payload))
         command_id = result["Command"]["CommandId"]
         print("SSM Command ID: " + command_id + " instance: " + instance, flush=True)
+        summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary:
+            with open(summary, "a") as output:
+                output.write("\n- SSM instance `" + instance + "`, command `" + command_id + "`\n")
         deadline = time.monotonic() + (660 if payload.get("executionTimeout") == ["600"] else 2040)
         while time.monotonic() < deadline:
             try:
@@ -58,6 +64,7 @@ def baseline_script(values):
 
 
 def run(values, key, checksum, aws, parameters, verify_current):
+    """같은 digest의 양쪽 준비 후 순차 교체한다. 부분 실패/모호한 SSM은 다음 서버를 차단한다."""
     a, c = values["EC2_INSTANCE_ID_A"], values["EC2_INSTANCE_ID_C"]
     group = values["TARGET_GROUP_ARN"]
     drain_timeout = 300
@@ -178,8 +185,8 @@ flock -n 9
                 healthy(target)
                 healthy(other)
                 if index == 0:
-                    # 업로드·원격 사전 검사 사이 main이 바뀌면 아직 정상인 두 서버를 건드리지 않는다.
-                    # A를 바꾼 이후에는 같은 산출물로 C까지 마쳐 불필요한 버전 혼재를 피한다.
+                    # 두 서버 준비 뒤 첫 교체 직전에 최신 main을 확인한다.
+                    # A 교체가 시작되면 C도 같은 검증 산출물로 완료하고 새 main은 다음 직렬 CD가 처리한다.
                     verify_current()
                 safe_to_unlock = False
                 aws("elbv2", "deregister-targets", "--target-group-arn", group,
@@ -205,6 +212,10 @@ flock -n 9
             expected = "DEPLOY_OK: " + values["SOURCE_SHA"] + " " + values["IMAGE_ID"]
             if expected not in result.get("StandardOutputContent", "").splitlines():
                 raise RuntimeError("SSM succeeded without verified container identity; retain lock")
+            summary = os.environ.get("GITHUB_STEP_SUMMARY")
+            if summary:
+                with open(summary, "a") as output:
+                    output.write("\n- Verified " + server.upper() + " container: `" + values["IMAGE_ID"] + "`, ECR `" + values["IMAGE_REF"] + "`\n")
             if not initial:
                 register(target, other)
             healthy(other)

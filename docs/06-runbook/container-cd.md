@@ -175,7 +175,7 @@ GitHub concurrency는 진행 중 실행을 취소하지 않는다. single/rollin
 
 두 서버 순차 배포의 SSM 대기·복구와 초기 C 배포의 직렬 SSM 사전 검사·배포는 한 시간을 넘을 수 있다. Terraform의 GitHub CD 역할 상한은 7200초, 자동 워크플로의 rolling 세션도 7200초로 맞춘다. initial-c 수동 CLI는 같은 상한 내에서 충분한 유효기간의 세션을 운영자가 준비한다. 기본 single은 기존 3600초를 유지한다. 역할 상한만 올리면 발급 세션의 기본 시간은 늘어나지 않는다. 120분 작업 제한·시간 초과에서의 미확인 명령 복구 절차도 유지한다.
 
-업로드·사전 검사 중 main이 바뀔 수 있어 운영 잠금 안의 첫 서버 제외 직전(단일 모드는 SSM 전송 직전)에도 최신 main을 확인한다. 이때 불일치하면 아직 정상인 서버를 변경하지 않고 잠금을 해제한다. A를 이미 변경한 뒤에는 C도 같은 승인 산출물로 완료하며, 두 서버 사이 장애는 부분 배포 복구 상태로 잠금을 보존한다. 최초 C의 승인된 기준 버전은 이 최신 main 검사에서 제외한다.
+업로드·사전 검사 중 main이 바뀔 수 있어 운영 잠금 안의 첫 서버 제외 직전(단일 모드는 SSM 전송 직전)에도 최신 main을 확인한다. 이때 불일치하면 아직 정상인 서버를 변경하지 않고 잠금을 해제한다. A 교체를 시작한 뒤에는 C도 같은 검증 산출물로 완료하며 새 main은 다음 직렬 CD가 처리한다. 두 서버 사이 장애는 부분 배포 상태로 잠금을 보존하고 실제 혼합 여부를 확인한다. 최초 C의 승인된 기준 버전은 이 최신 main 검사에서 제외한다.
 
 OIDC 역할에 정확한 `releases/*` 쓰기 외 **해당 버킷의 `locks/container-deploy.json` 한 객체**에 `s3:PutObject`·`s3:DeleteObject`가 필요하다. 정상 단일 모드도 이 잠금 권한을 먼저 준비한다. 대상 조회용 `ec2:DescribeInstances`·`ssm:DescribeInstanceInformation`, 대상 그룹 조회/health 조회와 `elasticloadbalancing:DescribeTargetGroupAttributes`, 해당 TG만의 `elasticloadbalancing:RegisterTargets`·`DeregisterTargets`, 정확한 A/C 인스턴스·AWS-RunShellScript에 한정한 기존 SSM 권한을 준비한다. draining은 조회한 `deregistration_delay.timeout_seconds`에 관측 여유 60초를 더하고 최소 300초까지 기다린다. 조회 API의 리소스 범위 제한 가능 여부는 IAM 정책에서 구분한다. EC2 런타임 역할과 GitHub 역할을 혼동하거나 관리자 권한을 추가하지 않는다. 정상 attachment는 Terraform이 계속 관리한다. CloudFormation/RDS 자원 변경은 없다.
 

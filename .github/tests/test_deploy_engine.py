@@ -18,7 +18,7 @@ OLD_REF = REPOSITORY + '@sha256:' + 'e' * 64
 
 
 class DeploymentEngineTest(unittest.TestCase):
-    def execute(self, previous=True, fail_new=False, fail_stop=False, fail_cleanup=False, metadata="10.0.1.20", fail_metadata=False, fail_metrics=False, legacy=False, previous_monitoring=False, metrics_response="samples", fail_metadata_ip=False, deploy_environment="dev"):
+    def execute(self, previous=True, fail_new=False, fail_stop=False, fail_cleanup=False, metadata="10.0.1.20", fail_metadata=False, fail_metrics=False, legacy=False, previous_monitoring=False, metrics_response="samples", fail_metadata_ip=False, deploy_environment="dev", fail_restore=False):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             host = base / 'opt/getddo'
@@ -130,6 +130,9 @@ else:
             curl.chmod(0o700)
             (mock_bin / 'sleep').write_text('#!/bin/sh\nexit 0\n')
             (mock_bin / 'sleep').chmod(0o700)
+            install = mock_bin / 'install'
+            install.write_text('#!/usr/bin/env python3\nimport os, sys\nif os.environ["FAIL_RESTORE"] == "1" and any("restore.env" in a for a in sys.argv): raise SystemExit(1)\nos.execv("/usr/bin/install", ["install"]+sys.argv[1:])\n')
+            install.chmod(0o700)
             sync = mock_bin / 'sync'
             sync.write_text('#!/bin/sh\nexit 0\n')
             sync.chmod(0o700)
@@ -138,7 +141,7 @@ else:
                 sync.write_text('#!/usr/bin/env python3\nimport os,sys\nsys.exit(1 if sys.argv[-1] == os.environ["CONFIG_DIR"] else 0)\n')
             environment = dict(os.environ, PATH=str(mock_bin) + ':' + os.environ['PATH'],
                                METRICS_RESPONSE=metrics_response, API_PRIVATE_IP='0.0.0.0', METADATA_IP=metadata, FAIL_METADATA=str(int(fail_metadata)), FAIL_METADATA_IP=str(int(fail_metadata_ip)),
-                               FAIL_METRICS=str(int(fail_metrics)), FAIL_NEW=str(int(fail_new)), FAIL_STOP=str(int(fail_stop)),
+                               FAIL_RESTORE=str(int(fail_restore)), FAIL_METRICS=str(int(fail_metrics)), FAIL_NEW=str(int(fail_new)), FAIL_STOP=str(int(fail_stop)),
                                STATE_FILE=str(base/'state'), HAS_PREVIOUS=str(host/'current'), CONFIG_DIR=str(config),
                                NEW_IMAGE=NEW if deploy_environment == 'staging' else NEW_REF, NEW_ID=NEW, OLD_ID=OLD, OLD_REF=OLD_REF, SOURCE_SHA=SHA, GETDDO_DEPLOY_SERVER='c',
                                GETDDO_DEPLOY_METRICS_ENABLED='true', GETDDO_DEPLOY_ENVIRONMENT=deploy_environment)
@@ -183,6 +186,14 @@ else:
         self.assertEqual('PREVIOUS=raw$"value\nGETDDO_METRICS_SERVER=a\n', env)
         self.assertIn('ROLLBACK_CONFIRMED_HEALTHY: ' + SHA + ' ' + OLD, result.stdout)
         self.assertFalse(marker)
+        self.assertEqual('old', current.name)
+
+    def test_env_restore_failure_preserves_marker_and_never_confirms_rollback(self):
+        result, env, marker, current = self.execute(fail_new=True, fail_restore=True)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('ROLLBACK_FAILED:', result.stderr)
+        self.assertNotIn('ROLLBACK_CONFIRMED_HEALTHY:', result.stdout)
+        self.assertTrue(marker)
         self.assertEqual('old', current.name)
 
     def test_cleanup_failure_never_emits_confirmation_and_preserves_marker(self):

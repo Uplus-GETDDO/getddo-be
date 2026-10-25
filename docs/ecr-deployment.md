@@ -32,7 +32,7 @@ S3 `release.tar`는 Compose·공개 배포 스크립트·metadata만 담는다. 
 
 1. 기존 S3 전역 배포 잠금, 서버별 flock, 미완료 마커, 상대 서버 healthy, 최신 main을 검사한다.
 2. ALB 제외 전에 A/C 각각의 후보와 이전 ECR 복구 이미지를 준비하고 ID·revision·플랫폼을 검증한다. 준비 실패 시 env/current/컨테이너/ALB는 유지한다.
-3. 두 서버의 준비 완료 출력이 같은 후보 digest와 ID를 나타낼 때 A→C 순서로 진행한다. 각 교체 직전 상대 서버 healthy를 다시 확인한다.
+3. 두 서버의 준비 완료 출력이 같은 후보 digest와 ID를 나타낼 때 A→C 순서로 진행한다. 각 교체 직전 상대 서버 healthy를 다시 확인한다. 최신 main 검사는 두 서버 준비 뒤 첫 A 교체 직전에 수행하고, A 교체가 시작되면 C도 같은 산출물로 완료하며 새 main은 다음 직렬 CD가 처리한다.
 4. ALB 제외·연결 정리 뒤 로컬 이미지를 재검증하고 설정을 원자 교체한다. `pull_policy: never`와 `up --pull never`로 실행한다.
 5. 컨테이너 `.Config.Image`는 ECR digest 참조, `.Image`는 로컬 ID와 일치해야 한다. HTTP와 필수 지표를 확인한 뒤 current를 갱신하고 ALB에 재등록한다.
 
@@ -73,4 +73,4 @@ sudo python3 /root/ecr-tools/convert-ecr-baseline.py \
 
 ## 배포 회귀 검증
 
-Python 3.12의 `.github/tests` 회귀 110개에서 metadata 출처·허용 저장소·manifest/config 구분·로컬 revision/플랫폼 거부, 양쪽 사전 준비 순서와 실패 보존, baseline current 원자 전환과 후속 변경 감지 복원, 기존 env 복구·SSM 불명확·Stage tar 경계를 확인했다. Compose v2.40.3 실제 config와 actionlint v1.7.12, Bash 구문 검사를 함께 통과했다. AWS 응답과 Docker 실행은 대역을 사용한 케이스가 포함되며 이 결과를 실제 ECR 게시·운영 배포·자동 복구 성공으로 해석하지 않는다.
+Python 3.12의 `.github/tests` 회귀 112개에서 metadata 출처·허용 저장소·manifest/config 구분·로컬 revision/플랫폼 거부, 양쪽 사전 준비 순서와 실패 보존, baseline current 원자 전환과 후속 변경 감지 복원, 기존 env 복구·SSM 불명확·Stage tar 경계를 확인했다. Compose v2.40.3 실제 config와 actionlint v1.7.12, Bash 구문 검사를 함께 통과했다. AWS 응답과 Docker 실행은 대역을 사용한 케이스가 포함되며 이 결과를 실제 ECR 게시·운영 배포·자동 복구 성공으로 해석하지 않는다.

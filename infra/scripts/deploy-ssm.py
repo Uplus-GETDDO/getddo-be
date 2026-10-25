@@ -20,8 +20,9 @@ spec.loader.exec_module(metadata)
 
 
 def settings(environment):
+    """정확한 운영 계정·리전·선행 Build 출처를 요구하며 잘못된 입력은 AWS 쓰기 전에 거부한다."""
     required = ("AWS_REGION", "AWS_ROLE_ARN", "DEPLOY_BUCKET", "SOURCE_SHA",
-                "GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "RUNNER_TEMP")
+                "GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "RUNNER_TEMP", "BUILD_RUN_ID", "BUILD_RUN_ATTEMPT")
     values = {key: environment.get(key, "") for key in required}
     values["DEPLOY_MODE"] = environment.get("DEPLOY_MODE") or "single"
     if values["DEPLOY_MODE"] not in ("single", "rolling", "initial-c"):
@@ -50,7 +51,8 @@ def settings(environment):
     if values["ACCOUNT_ID"] != "942466928325" or values["AWS_REGION"] != metadata.REGION:
         raise ValueError("Production account/region mismatch")
     for key in ("BUILD_RUN_ID", "BUILD_RUN_ATTEMPT"):
-        values[key] = environment.get(key, "")
+        if not re.fullmatch(r"[1-9][0-9]*", values[key]):
+            raise ValueError("Exact successful Build run/attempt required")
     if values["DEPLOY_MODE"] != "single":
         if values["EC2_INSTANCE_ID_A"] == values["EC2_INSTANCE_ID_C"]:
             raise ValueError("A and C must be distinct exact instance IDs")
@@ -190,6 +192,13 @@ def main(check_only=False):
     values["IMAGE_REF"] = metadata.reference(document)
     values["IMAGE_ID"] = document["image_id"]
     values["PHASE"] = "deploy"
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a") as output:
+            output.write("\n- Source SHA: `" + values["SOURCE_SHA"] + "`\n"
+                         "- Build run/attempt: `" + values["BUILD_RUN_ID"] + "/" + values["BUILD_RUN_ATTEMPT"] + "`\n"
+                         "- ECR image: `" + values["IMAGE_REF"] + "`\n"
+                         "- Verified local config ID: `" + values["IMAGE_ID"] + "`\n")
     checksum = ecr_bundle(app_source, temporary / "container-image", archive, source)
     key = ("releases/" + values["SOURCE_SHA"] + "/" + values["GITHUB_RUN_ID"]
            + "-" + values["GITHUB_RUN_ATTEMPT"] + "/release.tar")
@@ -227,6 +236,8 @@ def main(check_only=False):
     if prepared["Status"] != "Success" or prepared["ResponseCode"] != 0 or (
             "IMAGE_PREPARED: " + values["SOURCE_SHA"] + " " + values["IMAGE_REF"] + " " + values["IMAGE_ID"]) not in prepared.get("StandardOutputContent", ""):
         raise RuntimeError("Single host ECR preparation failed; deployment lock retained")
+    # 준비 중 main이 갱신되면 기존 앱을 유지하고 잠금은 운영자가 확인한다.
+    verify_main(values)
     result = aws("ssm", "send-command", "--instance-ids", values["EC2_INSTANCE_ID"],
                  "--document-name", "AWS-RunShellScript", "--timeout-seconds", "120",
                  "--parameters", json.dumps(parameters(values, key, checksum)),

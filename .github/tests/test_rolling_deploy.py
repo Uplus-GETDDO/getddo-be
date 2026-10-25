@@ -30,7 +30,7 @@ REF = '942466928325.dkr.ecr.ap-northeast-2.amazonaws.com/getddo-be@sha256:' + 'c
 def values(mode='rolling'):
     result = dict(AWS_REGION='ap-northeast-2', AWS_ROLE_ARN='arn:aws:iam::942466928325:role/cd',
                   DEPLOY_BUCKET='getddo-deploy', SOURCE_SHA=SHA, GITHUB_REPOSITORY='org/repo',
-                  GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', RUNNER_TEMP='/tmp',
+                  GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', RUNNER_TEMP='/tmp', BUILD_RUN_ID='12', BUILD_RUN_ATTEMPT='1',
                   DEPLOY_MODE=mode, ROLLING_DEPLOY_ENABLED='true', EC2_INSTANCE_ID_A=A,
                   EC2_INSTANCE_ID_C=C, EC2_INSTANCE_ID=A,
                   TARGET_GROUP_ARN='arn:aws:elasticloadbalancing:ap-northeast-2:942466928325:targetgroup/api/123abc',
@@ -171,6 +171,17 @@ class RollingTest(unittest.TestCase):
                 if e[0] == 'prepare': self.assertIn('releases/approved', e[2])
                 self.assertIn('c' * 64, e[2])
                 self.assertIn(SHA, e[2])
+        self.assertFalse(fake.lock)
+
+    def test_main_after_a_does_not_interrupt_same_candidate_completion_on_c(self):
+        fake = FakeAWS()
+        attempts = []
+        def verify():
+            attempts.append(True)
+            if len(attempts)>1: raise RuntimeError('new main belongs to next serialized CD')
+        self.run_roll(fake,verify_current=verify)
+        self.assertEqual([A,C],self.deployments(fake))
+        self.assertEqual(1,len(attempts))
         self.assertFalse(fake.lock)
 
     def test_both_hosts_prepared_before_first_target_exclusion(self):
@@ -472,7 +483,7 @@ class SettingsAndEnvTest(unittest.TestCase):
             self.assertTrue(path.read_text().startswith(original + '\nGETDDO_METRICS_SERVER=c\n'))
 
     def test_duplicate_instance_ids_and_gate_rejected(self):
-        for changes in ({'EC2_INSTANCE_ID_C': A}, {'ROLLING_DEPLOY_ENABLED': ''},
+        for changes in ({'EC2_INSTANCE_ID_C': A}, {'ROLLING_DEPLOY_ENABLED': ''}, {'BUILD_RUN_ID': ''}, {'BUILD_RUN_ATTEMPT': '0'},
                         {'TARGET_GROUP_ARN': values()['TARGET_GROUP_ARN'].replace('942466928325', '999999999999')}):
             with self.assertRaises(ValueError):
                 deploy.settings(dict(values(), **changes))
