@@ -59,7 +59,7 @@ flowchart LR
 | 프레임워크 | ![Spring Boot 4.1.1](https://img.shields.io/badge/Spring_Boot-4.1.1-6DB33F?style=for-the-badge&logo=springboot&logoColor=white) ![Spring MVC](https://img.shields.io/badge/Spring_MVC-6DB33F?style=for-the-badge&logo=spring&logoColor=white) |
 | 빌드 | ![Gradle 9.7.1](https://img.shields.io/badge/Gradle-9.7.1-02303A?style=for-the-badge&logo=gradle&logoColor=white) |
 | 데이터베이스 | ![MySQL 8.4](https://img.shields.io/badge/MySQL-8.4-4479A1?style=for-the-badge&logo=mysql&logoColor=white) |
-| 캐시 | ![Redis](https://img.shields.io/badge/Redis-FF4438?style=for-the-badge&logo=redis&logoColor=white) |
+| 요청 제한 저장소 | ![Redis](https://img.shields.io/badge/Redis-FF4438?style=for-the-badge&logo=redis&logoColor=white) |
 | 영속성·마이그레이션 | ![Spring Data JPA](https://img.shields.io/badge/Spring_Data_JPA-6DB33F?style=for-the-badge&logo=spring&logoColor=white) ![Flyway](https://img.shields.io/badge/Flyway-CC0200?style=for-the-badge&logo=flyway&logoColor=white) |
 | 객체 매핑 | ![MapStruct 1.6.3](https://img.shields.io/badge/MapStruct-1.6.3-455A64?style=for-the-badge) ![Lombok](https://img.shields.io/badge/Lombok-BC4521?style=for-the-badge) |
 | API 문서 | ![springdoc-openapi 3.1.1](https://img.shields.io/badge/springdoc--openapi-3.1.1-85EA2D?style=for-the-badge&logo=swagger&logoColor=black) ![Swagger UI](https://img.shields.io/badge/Swagger_UI-85EA2D?style=for-the-badge&logo=swagger&logoColor=black) |
@@ -71,9 +71,9 @@ flowchart LR
 
 | # | 고민 | 결론 | 상세 |
 | --- | --- | --- | --- |
-| 1 | 코드를 어떤 구조로 나눌까 | `api`·`core`·`storage:db`·`storage:s3` 네 모듈. `core`는 HTTP DTO와 JPA Entity에 의존하지 않고 Repository 인터페이스에만 의존한다 | [아키텍처](#아키텍처) |
+| 1 | 코드를 어떤 구조로 나눌까 | `api`·`core`·`storage:db`·`storage:s3`·`storage:redis` 다섯 모듈. `core`는 HTTP DTO와 JPA Entity에 의존하지 않고 Repository 인터페이스에만 의존한다 | [아키텍처](#아키텍처) |
 | 2 | 응모권을 금액처럼 다룰까, 한 장씩 다룰까 | 응모권 한 장이 한 행, 바뀔 때마다 이력을 **추가만** 한다. 잔액·합계 대신 "현재 상태와 마지막 이력의 일치"를 검사한다 | [프로젝트 수행 경과](#프로젝트-수행-경과) |
-| 3 | 같은 요청이 동시에 오면 | 행 잠금과 고정된 잠금 순서, 요청 ID 기반 멱등 처리, DB 제약을 마지막 방어선으로 쓴다. 응모는 마감을 차감 뒤와 커밋 직전에 두 번 확인한다 | [프로젝트 수행 경과](#프로젝트-수행-경과) |
+| 3 | 같은 요청이 동시에 오면 | 행 잠금과 고정된 잠금 순서, 요청 ID 기반 멱등 처리, DB 제약을 마지막 방어선으로 쓴다. 응모는 마감을 시작·차감 뒤·커밋 직전에 세 번 확인한다 | [프로젝트 수행 경과](#프로젝트-수행-경과) |
 | 4 | 추첨 결과를 어떻게 믿게 할까 | 후보·가중치·조건을 스냅샷으로 저장하고, 확정된 결과는 같은 실행을 다시 요청해도 바뀌지 않는다. 공개 시점은 관리자가 정한다 | [프로젝트 수행 경과](#프로젝트-수행-경과) |
 | 5 | 업무 성공과 알림을 어떻게 묶을까 | 업무가 성공하면 알림 작업을 같은 트랜잭션에 저장하고, 사용자별 알림은 워커가 만든다. 발송 성공과 읽음은 별개 상태로 둔다 | [프로젝트 수행 경과](#프로젝트-수행-경과) |
 | 6 | 서버가 여러 대일 때 한도와 만료를 어떻게 맞출까 | 요청 횟수는 Redis 한곳에서 세고, 만료 워커는 이미 잡힌 행을 건너뛴다 | [프로젝트 수행 경과](#프로젝트-수행-경과) |
@@ -582,7 +582,7 @@ flowchart LR
 
 **설계·기술 선택과 사용 이유**
 
-- 이벤트 행을 공유 잠금으로 읽어서 응모끼리 서로 기다리지 않게 했고, 마감은 차감 뒤와 커밋 직전에 두 번 확인합니다.
+- 이벤트 행을 공유 잠금으로 읽어서 응모끼리 서로 기다리지 않게 했고, 마감은 시작·차감 뒤·커밋 직전에 세 번 확인합니다.
 - 거절 기록은 응모가 취소돼도 남도록 별도 트랜잭션에 씁니다.
 
 **문제와 해결 과정**
@@ -619,7 +619,7 @@ flowchart LR
 
 **문제와 해결 과정**
 
-- 서버가 여러 대일 때 한도가 서버마다 따로 적용되는 한계를 Redis 구현으로 풀었습니다. 개발 서버는 Redis 저장소 설정을 사용합니다. 서버 두 대에서의 실측은 아직 하지 않았습니다.
+- 서버가 여러 대일 때 한도가 서버마다 따로 적용되는 한계를 Redis 구현으로 풀었습니다. 개발 서버는 Redis 저장소 설정을 사용합니다. 스테이징 API 서버 2대에서 같은 사용자가 25번 호출했을 때 11번째부터 429가 나와 한도가 합산되는 것을 확인했습니다(25번이 두 서버에 고르게 나뉜 것은 요청별로 확인하지 못했습니다).
 
 자세한 내용은 [Wiki](https://github.com/Uplus-GETDDO/getddo-be/wiki/Mentoring-Domain-Flows#요청-빈도-제한)
 
