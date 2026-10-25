@@ -54,7 +54,7 @@ def safe_error(error):
 
 
 def convert(root, metadata_path, name):
-    """root 전용·전역 잠금 보유 호출자를 요구한다. 원복이 불명확하면 기존 배포 마커로 후속 배포를 차단한다."""
+    """호출자는 S3 전역 잠금을 보유한다. 함수가 서버 orchestration/deploy flock을 직접 획득하며 원복 불명확 시 마커를 보존한다."""
     if os.geteuid() != 0 or not re.fullmatch(r'baseline-[A-Za-z0-9][A-Za-z0-9_.-]{0,100}', name):
         raise ValueError('Root and unique baseline release name required')
     root = Path(root).resolve(strict=True)
@@ -72,7 +72,7 @@ def convert(root, metadata_path, name):
     def clear_marker():
         """확인된 current를 먼저 영속화한다. 삭제 실패 시 기존 디렉터리가 다음 배포를 막는다."""
         prepare.command(['sync', '-f', str(root)])
-        (marker / 'context').unlink()
+        (marker / 'context').unlink(missing_ok=True)
         marker.rmdir()
 
     try:

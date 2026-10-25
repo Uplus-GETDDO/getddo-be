@@ -370,6 +370,24 @@ class BaselineTest(unittest.TestCase):
             self.assertFalse((root/'deploy-in-progress').exists())
             convert.convert(root, path, 'baseline-copy-1')
 
+    def test_partial_marker_cleanup_can_finish_after_confirmed_rollback(self):
+        with self.fixture() as (root, old, path, evidence), patch.object(convert, 'snapshot', return_value=evidence):
+            rmdir = Path.rmdir
+            attempts = []
+            def fail_first_marker_rmdir(directory):
+                if directory == root/'deploy-in-progress':
+                    attempts.append(True)
+                    if len(attempts) == 1:
+                        raise PermissionError('marker cleanup temporarily unavailable')
+                return rmdir(directory)
+            with patch.object(Path, 'rmdir', fail_first_marker_rmdir):
+                with self.assertRaises(PermissionError):
+                    convert.convert(root, path, 'baseline-copy-1')
+            self.assertEqual(2, len(attempts))
+            self.assertEqual(old, (root/'current').resolve())
+            self.assertFalse((root/'deploy-in-progress').exists())
+            self.assertTrue(old.is_dir())
+
     def test_safe_subprocess_diagnostic_does_not_print_captured_output(self):
         error = subprocess.CalledProcessError(2, ['docker','inspect'], output='private-value', stderr='private-value')
         self.assertEqual('CalledProcessError exit=2', convert.safe_error(error))

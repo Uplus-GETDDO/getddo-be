@@ -26,7 +26,7 @@ main 전용 `image-publish.yml`의 호출 job에만 `id-token: write`를 부여�
 
 repository Variables는 `ECR_REPOSITORY_URI`, `ECR_PUBLISH_ROLE_ARN`, `ECR_AWS_REGION`이며 Terraform의 실제 출력과 대조한다. 게시 역할은 `arn:aws:iam::942466928325:role/getddo-dev-github-image-publish`다. 장기 키나 Docker 암호를 Variables/Artifact에 저장하지 않는다.
 
-CD 역할은 지정 저장소의 `ecr:BatchGetImage`·`ecr:DescribeImages` 읽기 권한을 사용한다. 서버 역할은 지정 저장소의 `ecr:BatchGetImage`·`ecr:GetDownloadUrlForLayer`·`ecr:BatchCheckLayerAvailability`만 허용하며 push·삭제 권한은 부여하지 않는다. `ecr:GetAuthorizationToken`은 별도 `Resource: *` statement에 서울 리전 조건으로 제한한다. 서버에서 ECR API·dkr 엔드포인트와 레이어용 S3 경로에 도달할 수 있어야 한다. 기존 SSM·S3 배포 파일·Parameter Store 권한과 경로도 유지한다.
+CD의 metadata 검증은 지정 저장소의 `ecr:BatchGetImage` 읽기 권한을 사용한다. 서버 역할은 지정 저장소의 `ecr:BatchGetImage`·`ecr:GetDownloadUrlForLayer`·`ecr:BatchCheckLayerAvailability`만 허용하며 push·삭제 권한은 부여하지 않는다. `ecr:GetAuthorizationToken`은 별도 `Resource: *` statement에 서울 리전 조건으로 제한한다. 서버에서 ECR API·dkr 엔드포인트와 레이어용 S3 경로에 도달할 수 있어야 한다. 기존 SSM·S3 배포 파일·Parameter Store 권한과 경로도 유지한다.
 
 S3 `release.tar`는 Compose·공개 배포 스크립트·metadata만 담는다. checksum·버킷 소유자 검사와 고유 경로의 덮어쓰기 거부를 유지한다. 운영 경로에는 이미지 tar와 S3 이미지 복귀 코드가 없다. Stage만 `prepare-staging-image.sh`로 tar를 불러온 뒤 같은 교체·복구 엔진을 실행한다.
 
@@ -75,4 +75,4 @@ sudo python3 /root/ecr-tools/convert-ecr-baseline.py \
 
 ## 배포 회귀 검증
 
-Python 3.12의 `.github/tests` 회귀 123개에서 metadata 출처·허용 저장소·manifest/config 구분·로컬 revision/플랫폼 거부, 양쪽 사전 준비 순서와 실패 보존, baseline current 원자 전환과 후속 변경 감지 복원, 기존 env 복구·SSM 불명확·Stage tar 경계를 확인했다. Compose v2.40.3 실제 config와 actionlint v1.7.12, Bash 구문 검사를 함께 통과했다. AWS 응답과 Docker 실행은 대역을 사용한 케이스가 포함되며 이 결과를 실제 ECR 게시·운영 배포·자동 복구 성공으로 해석하지 않는다.
+Python 3.12의 `.github/tests` 회귀 124개에서 metadata 출처·허용 저장소·manifest/config 구분·로컬 revision/플랫폼 거부, 양쪽 사전 준비 순서와 실패 보존, baseline current 원자 전환과 후속 변경 감지 복원, 기존 env 복구·SSM 불명확·Stage tar 경계를 확인했다. Compose v2.40.3 실제 config와 actionlint v1.7.12, Bash 구문 검사를 함께 통과했다. AWS 응답과 Docker 실행은 대역을 사용한 케이스가 포함되며 이 결과를 실제 ECR 게시·운영 배포·자동 복구 성공으로 해석하지 않는다.
