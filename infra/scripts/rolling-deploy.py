@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """ALB의 정상 상대 서버를 보존하며 기존 서버 단위 배포 엔진을 순서대로 실행한다."""
 import json
+import os
 import shlex
 import time
 
@@ -10,6 +11,7 @@ class UnknownOutcome(RuntimeError):
 
 
 def invocation(aws, instance, payload):
+    """준비는 660초, 교체는 2040초 이내 종료 증거를 확인한다. 모호하면 재발행 없이 잠금 보존을 요구한다."""
     # send-command 응답 자체가 유실돼도 명령이 실행됐을 수 있다. 자동 재시도하지 않는다.
     try:
         result = aws("ssm", "send-command", "--instance-ids", instance,
@@ -17,7 +19,11 @@ def invocation(aws, instance, payload):
                      "--parameters", json.dumps(payload))
         command_id = result["Command"]["CommandId"]
         print("SSM Command ID: " + command_id + " instance: " + instance, flush=True)
-        deadline = time.monotonic() + 2040
+        summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary:
+            with open(summary, "a") as output:
+                output.write("\n- SSM instance `" + instance + "`, command `" + command_id + "`\n")
+        deadline = time.monotonic() + (660 if payload.get("executionTimeout") == ["600"] else 2040)
         while time.monotonic() < deadline:
             try:
                 result = aws("ssm", "get-command-invocation", "--command-id", command_id,
@@ -58,6 +64,7 @@ def baseline_script(values):
 
 
 def run(values, key, checksum, aws, parameters, verify_current):
+    """같은 digest의 양쪽 준비 후 순차 교체한다. 부분 실패/모호한 SSM은 다음 서버를 차단한다."""
     a, c = values["EC2_INSTANCE_ID_A"], values["EC2_INSTANCE_ID_C"]
     group = values["TARGET_GROUP_ARN"]
     drain_timeout = 300
@@ -161,6 +168,14 @@ flock -n 9
             checked(aws, a, baseline_script(values))
             checked(aws, c, "set -eu\ntest ! -e /opt/getddo/current\ntest ! -L /opt/getddo/current")
         hosts_to_update = (("c", c, a),) if initial else (("a", a, c), ("c", c, a))
+        # 모든 후보/복구 이미지가 준비된 다음에만 최초 ALB 제외가 가능하다.
+        for server, target, other in hosts_to_update:
+            healthy(other)
+            payload = parameters(dict(values, SERVER=server, PHASE="prepare"), key, checksum)
+            result = invocation(aws, target, payload)
+            expected = "IMAGE_PREPARED: " + values["SOURCE_SHA"] + " " + values["IMAGE_REF"] + " " + values["IMAGE_ID"]
+            if result["Status"] != "Success" or result["ResponseCode"] != 0 or expected not in result.get("StandardOutputContent", "").splitlines():
+                raise RuntimeError("ECR preparation failed before target exclusion: " + target)
         for index, (server, target, other) in enumerate(hosts_to_update):
             # 첫 서버를 변경한 뒤에는 상대 health 확인 실패도 부분 배포 복구 대상으로 남긴다.
             if index > 0:
@@ -170,15 +185,15 @@ flock -n 9
                 healthy(target)
                 healthy(other)
                 if index == 0:
-                    # 업로드·원격 사전 검사 사이 main이 바뀌면 아직 정상인 두 서버를 건드리지 않는다.
-                    # A를 바꾼 이후에는 같은 산출물로 C까지 마쳐 불필요한 버전 혼재를 피한다.
+                    # 두 서버 준비 뒤 첫 교체 직전에 최신 main을 확인한다.
+                    # A 교체가 시작되면 C도 같은 검증 산출물로 완료하고 새 main은 다음 직렬 CD가 처리한다.
                     verify_current()
                 safe_to_unlock = False
                 aws("elbv2", "deregister-targets", "--target-group-arn", group,
                     "--targets", "Id=" + target + ",Port=8080")
                 wait(target, "unused", other)
             healthy(other)
-            payload = parameters(dict(values, SERVER=server), key, checksum)
+            payload = parameters(dict(values, SERVER=server, PHASE="deploy"), key, checksum)
             # 잠금은 다운로드부터 엔진 종료까지 유지한다. flock는 exec 뒤에도 상속된다.
             payload["commands"][0] = ("set -eu\nexec 8>/opt/getddo/orchestration.lock\nflock -n 8\n" +
                                        payload["commands"][0])
@@ -194,6 +209,13 @@ flock -n 9
                 else:
                     safe_to_unlock = False
                 raise RuntimeError("Deployment failed; next host stopped: " + target)
+            expected = "DEPLOY_OK: " + values["SOURCE_SHA"] + " " + values["IMAGE_ID"]
+            if expected not in result.get("StandardOutputContent", "").splitlines():
+                raise RuntimeError("SSM succeeded without verified container identity; retain lock")
+            summary = os.environ.get("GITHUB_STEP_SUMMARY")
+            if summary:
+                with open(summary, "a") as output:
+                    output.write("\n- Verified " + server.upper() + " container: `" + values["IMAGE_ID"] + "`, ECR `" + values["IMAGE_REF"] + "`\n")
             if not initial:
                 register(target, other)
             healthy(other)

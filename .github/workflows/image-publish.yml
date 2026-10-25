@@ -1,0 +1,48 @@
+name: ECR Image Publisher
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    name: Docker 이미지
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      SOURCE_SHA: ${{ github.sha }}
+      ECR_REPOSITORY_URI: ${{ vars.ECR_REPOSITORY_URI }}
+      ECR_AWS_REGION: ${{ vars.ECR_AWS_REGION }}
+      ECR_PUBLISH_ROLE_ARN: ${{ vars.ECR_PUBLISH_ROLE_ARN }}
+      AWS_PAGER: ''
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - name: 게시 대상 확인
+        run: |
+          test "$ECR_REPOSITORY_URI" = '942466928325.dkr.ecr.ap-northeast-2.amazonaws.com/getddo-be'
+          test "$ECR_AWS_REGION" = 'ap-northeast-2'
+          test "$ECR_PUBLISH_ROLE_ARN" = 'arn:aws:iam::942466928325:role/getddo-dev-github-image-publish'
+      - name: AWS 게시 전용 임시 권한
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ env.ECR_PUBLISH_ROLE_ARN }}
+          aws-region: ${{ env.ECR_AWS_REGION }}
+          role-session-name: getddo-image-${{ github.run_id }}
+      - name: 단일 플랫폼 빌드와 불변 이미지 게시
+        run: python3 infra/scripts/publish-image.py
+      - name: CI 이미지 메타데이터 보관
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: image-metadata-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/container-image/image-metadata.json
+          retention-days: 7
+          if-no-files-found: error

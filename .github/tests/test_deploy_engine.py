@@ -1,5 +1,6 @@
 """실제 Bash 엔진을 임시 경로·Docker 대역으로 실행해 복구 확인 신호를 검증한다."""
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -11,10 +12,13 @@ ROOT = Path(__file__).resolve().parents[2]
 SHA = 'a' * 40
 NEW = 'sha256:' + 'b' * 64
 OLD = 'sha256:' + 'd' * 64
+REPOSITORY = '942466928325.dkr.ecr.ap-northeast-2.amazonaws.com/getddo-be'
+NEW_REF = REPOSITORY + '@sha256:' + 'c' * 64
+OLD_REF = REPOSITORY + '@sha256:' + 'e' * 64
 
 
 class DeploymentEngineTest(unittest.TestCase):
-    def execute(self, previous=True, fail_new=False, fail_stop=False, fail_cleanup=False, metadata="10.0.1.20", fail_metadata=False, fail_metrics=False, legacy=False, previous_monitoring=False, metrics_response="samples", fail_metadata_ip=False, deploy_environment="dev"):
+    def execute(self, previous=True, fail_new=False, fail_stop=False, fail_cleanup=False, metadata="10.0.1.20", fail_metadata=False, fail_metrics=False, legacy=False, previous_monitoring=False, metrics_response="samples", fail_metadata_ip=False, deploy_environment="dev", fail_restore=False, wrong_new_image_id=False):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             host = base / 'opt/getddo'
@@ -24,7 +28,16 @@ class DeploymentEngineTest(unittest.TestCase):
             config.mkdir(parents=True)
             engine = (ROOT / 'infra/scripts/deploy-container.sh').read_text().replace('/etc/getddo', str(config))
             (release / 'deploy-container.sh').write_text(engine)
-            shutil.copy(ROOT / 'infra/scripts/inject-host-env.py', release)
+            for filename in ('inject-host-env.py', 'prepare-image.py', 'image-metadata.py', 'prepare-staging-image.sh'):
+                shutil.copy(ROOT / 'infra/scripts' / filename, release)
+            def identity(directory, image_id, digest):
+                document = dict(schema_version=1, source_sha=SHA, build_run_id='12', build_run_attempt='1',
+                                repository_uri=REPOSITORY, image_tag=SHA + '-12-1', image_digest=digest,
+                                image_id=image_id, platform='linux/amd64')
+                (directory / 'image-metadata.json').write_text(json.dumps(document))
+                (directory / 'image-ref.txt').write_text(REPOSITORY + '@' + digest)
+                (directory / 'source-sha.txt').write_text(SHA)
+            identity(release, NEW, 'sha256:' + 'c' * 64)
             (release / 'fetch-app-env.py').write_text('import sys, pathlib, os\nargs = sys.argv[1:]\nexpected = os.environ.get("GETDDO_DEPLOY_ENVIRONMENT", "dev")\npassed = args[args.index("--environment")+1] if "--environment" in args else "dev"\nif passed != expected:\n    raise SystemExit(3)\np = pathlib.Path(args[args.index("--output")+1])\np.write_text("AWS_REGION=ap-northeast-2\\n")\np.chmod(0o600)\n')
             (release / 'compose.deploy.yaml').write_text('services: {}\n' if legacy else (ROOT / 'compose.deploy.yaml').read_text())
             (release / 'image-id.txt').write_text(NEW)
@@ -35,6 +48,7 @@ class DeploymentEngineTest(unittest.TestCase):
                 old = host / 'releases/old'
                 old.mkdir()
                 (old / 'image-id.txt').write_text(OLD)
+                identity(old, OLD, 'sha256:' + 'e' * 64)
                 (old / 'compose.deploy.yaml').write_text((ROOT / 'compose.deploy.yaml').read_text() if previous_monitoring else 'services: {}\n')
                 (host / 'current').symlink_to(old)
                 (config / 'app.env').write_text('PREVIOUS=raw$"value\nGETDDO_METRICS_SERVER=a\n')
@@ -43,7 +57,7 @@ class DeploymentEngineTest(unittest.TestCase):
             mock_bin.mkdir()
             docker = mock_bin / 'docker'
             docker.write_text('''#!/usr/bin/env python3
-import os, pathlib, sys
+import os, pathlib, sys, json
 args=sys.argv[1:]
 if args[0]=='compose':
     assert os.environ.get('GETDDO_API_LOG_GROUP') == '/getddo/' + os.environ['GETDDO_DEPLOY_ENVIRONMENT'] + '/api'
@@ -58,12 +72,25 @@ if args[0]=='compose':
         pathlib.Path(os.environ['STATE_FILE']).write_text(image)
         sys.exit(0)
     if 'stop' in args: sys.exit(int(os.environ['FAIL_STOP']))
+if args[0]=='ps':
+    if pathlib.Path(os.environ['HAS_PREVIOUS']).exists(): print('f'*64)
+    sys.exit(0)
 if args[0]=='inspect':
-    print('true '+pathlib.Path(os.environ['STATE_FILE']).read_text())
+    if 'revision' in args[args.index('--format')+1]:
+        print('true '+os.environ['OLD_ID']+' '+os.environ['SOURCE_SHA'])
+        sys.exit(0)
+    image=pathlib.Path(os.environ['STATE_FILE']).read_text()
+    image_id=os.environ['OLD_ID'] if image in (os.environ['OLD_REF'], os.environ['OLD_ID']) else os.environ['NEW_ID']
+    if os.environ['WRONG_NEW_IMAGE_ID']=='1' and image==os.environ['NEW_IMAGE']: image_id='sha256:'+'f'*64
+    print('true '+image+' '+image_id)
     sys.exit(0)
 if args[:2]==['image','inspect']:
+    if '--format' not in args:
+        ref=args[-1]
+        image_id=os.environ['OLD_ID'] if ref==os.environ['OLD_REF'] else os.environ['NEW_ID']
+        print(json.dumps([dict(Id=image_id, RepoDigests=[ref], Os='linux', Architecture='amd64', Config=dict(Labels={'org.opencontainers.image.revision':os.environ['SOURCE_SHA']}))]))
     if '--format' in args:
-        print(os.environ['SOURCE_SHA'] if 'revision' in args[args.index('--format')+1] else os.environ['NEW_IMAGE'])
+        print(os.environ['SOURCE_SHA'] if 'revision' in args[args.index('--format')+1] else os.environ['NEW_ID'])
     sys.exit(0)
 if args[:2]==['image','load']: sys.exit(0)
 raise SystemExit(2)
@@ -104,6 +131,9 @@ else:
             curl.chmod(0o700)
             (mock_bin / 'sleep').write_text('#!/bin/sh\nexit 0\n')
             (mock_bin / 'sleep').chmod(0o700)
+            install = mock_bin / 'install'
+            install.write_text('#!/usr/bin/env python3\nimport os, sys\nif os.environ["FAIL_RESTORE"] == "1" and any("restore.env" in a for a in sys.argv): raise SystemExit(1)\nos.execv("/usr/bin/install", ["install"]+sys.argv[1:])\n')
+            install.chmod(0o700)
             sync = mock_bin / 'sync'
             sync.write_text('#!/bin/sh\nexit 0\n')
             sync.chmod(0o700)
@@ -112,9 +142,9 @@ else:
                 sync.write_text('#!/usr/bin/env python3\nimport os,sys\nsys.exit(1 if sys.argv[-1] == os.environ["CONFIG_DIR"] else 0)\n')
             environment = dict(os.environ, PATH=str(mock_bin) + ':' + os.environ['PATH'],
                                METRICS_RESPONSE=metrics_response, API_PRIVATE_IP='0.0.0.0', METADATA_IP=metadata, FAIL_METADATA=str(int(fail_metadata)), FAIL_METADATA_IP=str(int(fail_metadata_ip)),
-                               FAIL_METRICS=str(int(fail_metrics)), FAIL_NEW=str(int(fail_new)), FAIL_STOP=str(int(fail_stop)),
-                               STATE_FILE=str(base/'state'), CONFIG_DIR=str(config),
-                               NEW_IMAGE=NEW, SOURCE_SHA=SHA, GETDDO_DEPLOY_SERVER='c',
+                               WRONG_NEW_IMAGE_ID=str(int(wrong_new_image_id)), FAIL_RESTORE=str(int(fail_restore)), FAIL_METRICS=str(int(fail_metrics)), FAIL_NEW=str(int(fail_new)), FAIL_STOP=str(int(fail_stop)),
+                               STATE_FILE=str(base/'state'), HAS_PREVIOUS=str(host/'current'), CONFIG_DIR=str(config),
+                               NEW_IMAGE=NEW if deploy_environment == 'staging' else NEW_REF, NEW_ID=NEW, OLD_ID=OLD, OLD_REF=OLD_REF, SOURCE_SHA=SHA, GETDDO_DEPLOY_SERVER='c',
                                GETDDO_DEPLOY_METRICS_ENABLED='true', GETDDO_DEPLOY_ENVIRONMENT=deploy_environment)
             result = subprocess.run(['bash', str(release/'deploy-container.sh'), SHA, 'ap-northeast-2'],
                                     env=environment, capture_output=True, text=True, timeout=20)
@@ -157,6 +187,21 @@ else:
         self.assertEqual('PREVIOUS=raw$"value\nGETDDO_METRICS_SERVER=a\n', env)
         self.assertIn('ROLLBACK_CONFIRMED_HEALTHY: ' + SHA + ' ' + OLD, result.stdout)
         self.assertFalse(marker)
+        self.assertEqual('old', current.name)
+
+    def test_matching_ecr_ref_with_wrong_container_local_id_rolls_back(self):
+        result, env, marker, current = self.execute(wrong_new_image_id=True)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('ROLLBACK_CONFIRMED_HEALTHY: ' + SHA + ' ' + OLD, result.stdout)
+        self.assertEqual('old', current.name)
+        self.assertFalse(marker)
+
+    def test_env_restore_failure_preserves_marker_and_never_confirms_rollback(self):
+        result, env, marker, current = self.execute(fail_new=True, fail_restore=True)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('ROLLBACK_FAILED:', result.stderr)
+        self.assertNotIn('ROLLBACK_CONFIRMED_HEALTHY:', result.stdout)
+        self.assertTrue(marker)
         self.assertEqual('old', current.name)
 
     def test_cleanup_failure_never_emits_confirmation_and_preserves_marker(self):
