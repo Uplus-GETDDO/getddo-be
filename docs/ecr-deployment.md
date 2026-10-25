@@ -26,6 +26,8 @@ main 전용 `image-publish.yml`의 호출 job에만 `id-token: write`를 부여�
 
 repository Variables는 `ECR_REPOSITORY_URI`, `ECR_PUBLISH_ROLE_ARN`, `ECR_AWS_REGION`이며 Terraform의 실제 출력과 대조한다. 게시 역할은 `arn:aws:iam::942466928325:role/getddo-dev-github-image-publish`다. 장기 키나 Docker 암호를 Variables/Artifact에 저장하지 않는다.
 
+CD 역할은 지정 저장소의 `ecr:BatchGetImage`·`ecr:DescribeImages` 읽기 권한을 사용한다. 서버 역할은 지정 저장소의 `ecr:BatchGetImage`·`ecr:GetDownloadUrlForLayer`·`ecr:BatchCheckLayerAvailability`만 허용하며 push·삭제 권한은 부여하지 않는다. `ecr:GetAuthorizationToken`은 별도 `Resource: *` statement에 서울 리전 조건으로 제한한다. 서버에서 ECR API·dkr 엔드포인트와 레이어용 S3 경로에 도달할 수 있어야 한다. 기존 SSM·S3 배포 파일·Parameter Store 권한과 경로도 유지한다.
+
 S3 `release.tar`는 Compose·공개 배포 스크립트·metadata만 담는다. checksum·버킷 소유자 검사와 고유 경로의 덮어쓰기 거부를 유지한다. 운영 경로에는 이미지 tar와 S3 이미지 복귀 코드가 없다. Stage만 `prepare-staging-image.sh`로 tar를 불러온 뒤 같은 교체·복구 엔진을 실행한다.
 
 ## 사전 준비와 교체
@@ -65,7 +67,7 @@ sudo python3 /root/ecr-tools/convert-ecr-baseline.py \
 
 도구는 서버의 orchestration/deploy flock와 마커를 검사한다. 기존 release의 공개 Compose·설정 조회 스크립트를 새 기준 release로 복사하고 `image-metadata.json`, `image-ref.txt`, `image-id.txt`, `source-sha.txt`, `baseline-evidence.json`을 기록한다. 기존 release와 env는 수정하지 않는다. 변환 전 실행 `.Config.Image`가 로컬 ID여도 실행 `.Image`와 revision의 동일성을 검증한다.
 
-컨테이너 ID·재시작 횟수·이미지 ID·revision·env SHA256·HTTP가 유지되는지 전후 비교한 뒤 current만 원자 전환한다. 후속 검사가 실패하면 이전 current로 복원하며 만들어진 기록은 증거로 보존한다. 이 전환을 앱 배포나 재시작 성공으로 보고하지 않는다. 호출자는 A/C 양쪽 증거와 ALB healthy, SSM 종료를 확인한 뒤 자신이 소유한 전역 잠금만 해제한다. 결과가 모호하면 잠금을 보존하고 조정자에게 확인한다.
+컨테이너 ID·재시작 횟수·이미지 ID·revision·env SHA256·HTTP가 유지되는지 전후 비교한 뒤 current만 원자 전환한다. current 전환 전 기존 `deploy-in-progress` 마커를 영속화한다. 후속 검사가 실패하면 이전 current 복원을 시도하고, 링크·앱 상태의 원복까지 확인됐을 때만 마커를 해제한다. 원복이나 확인이 불명확하면 마커와 양쪽 release를 보존해 후속 배포를 차단한다. 전환 전 실패에서 current가 이전 release를 계속 가리키는 것이 확인되면 이번에 만든 불완전 release만 정리하며, 정리 실패는 진단과 함께 보존한다. baseline 마커의 `context`는 operation·previous·destination을 담은 공개 JSON이며 env 백업을 뜻하지 않는다. 남아 있으면 이 기록과 실제 current·컨테이너·env 해시를 대조해 원인을 확인한 뒤 처리한다. 이 전환을 앱 배포나 재시작 성공으로 보고하지 않는다. 호출자는 A/C 양쪽 증거와 ALB healthy, SSM 종료를 확인한 뒤 자신이 소유한 전역 잠금만 해제한다. 결과가 모호하면 잠금을 보존하고 조정자에게 확인한다.
 
 ## 운영 검증
 
@@ -73,4 +75,4 @@ sudo python3 /root/ecr-tools/convert-ecr-baseline.py \
 
 ## 배포 회귀 검증
 
-Python 3.12의 `.github/tests` 회귀 112개에서 metadata 출처·허용 저장소·manifest/config 구분·로컬 revision/플랫폼 거부, 양쪽 사전 준비 순서와 실패 보존, baseline current 원자 전환과 후속 변경 감지 복원, 기존 env 복구·SSM 불명확·Stage tar 경계를 확인했다. Compose v2.40.3 실제 config와 actionlint v1.7.12, Bash 구문 검사를 함께 통과했다. AWS 응답과 Docker 실행은 대역을 사용한 케이스가 포함되며 이 결과를 실제 ECR 게시·운영 배포·자동 복구 성공으로 해석하지 않는다.
+Python 3.12의 `.github/tests` 회귀 123개에서 metadata 출처·허용 저장소·manifest/config 구분·로컬 revision/플랫폼 거부, 양쪽 사전 준비 순서와 실패 보존, baseline current 원자 전환과 후속 변경 감지 복원, 기존 env 복구·SSM 불명확·Stage tar 경계를 확인했다. Compose v2.40.3 실제 config와 actionlint v1.7.12, Bash 구문 검사를 함께 통과했다. AWS 응답과 Docker 실행은 대역을 사용한 케이스가 포함되며 이 결과를 실제 ECR 게시·운영 배포·자동 복구 성공으로 해석하지 않는다.

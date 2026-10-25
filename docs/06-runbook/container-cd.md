@@ -18,9 +18,10 @@ GD-112의 기존 9개에 GD-111의 Redis 설정 4개와 GD-208의 RATE_LIMIT_STO
 6. OIDC 임시 권한으로 배포 파일을 전용 S3 버킷에 올리고 SSM으로 서버에 명령을 보낸다. 서버는 ALB 제외 전에 후보와 복구 이미지를 ECR에서 준비·검증한다. 그 뒤 Parameter Store의 필수 설정을 조회·검증하고 설정과 앱을 교체해 HTTP와 지표를 확인한다. 설정 교체 후 앱 교체나 응답 확인에 실패하면 배포 직전 app.env를 먼저 복원하고 이전 이미지·Compose로 앱을 재생성한다.
 7. SSM의 최종 상태와 종료 코드가 성공이어야 CD도 성공한다. 복구에 성공했더라도 새 배포는 실패로 표시한다.
 
-`image.yml`은 독립 push 트리거 없이 `workflow_call`로 호출한다. 호출한 `Build` 실행의 커밋·이벤트·실행 ID·재시도 번호를 사용하므로 기존 CD의 다운로드 기준을 유지한다. 이미지 작업까지 끝나야 `Build` 전체가 성공한다. CI 동시 실행 제한은 워크플로 전체에 적용해 테스트와 이미지 작업을 함께 취소한다.
+`image.yml`은 독립 push 트리거 없이 PR·dev 이미지 검증과 Stage tar 보관을 담당한다. main은 `publish-image` 작업이 `image-publish.yml`을 호출해 ECR에 게시하며 CD는 이미지 tar 대신 정확한 선행 Build의 metadata Artifact를 받는다. 이미지 작업까지 끝나야 `Build` 전체가 성공한다. CI 동시 실행 제한은 워크플로 전체에 적용해 테스트와 이미지 작업을 함께 취소한다.
 
-브랜치 보호에서 상태 검사를 등록할 때는 기존 `빌드·테스트` 외 분리된 이미지 작업도 필수로 등록해야 이미지 실패 상태로 병합되는 것을 막을 수 있다. 재사용 작업의 실제 표시 이름은 Actions 실행 후 확인하며 이번 작업에서는 GitHub 보호 설정을 변경하지 않았다.
+브랜치 보호의 PR 검사에는 PR에서 실제 실행하는 `빌드·테스트`와 `이미지 / Docker 이미지`를 사용한다. main push의 배포 게이트는 `main 이미지 / Docker 이미지`까지 성공해야 한다. main 전용 게시 검사를 PR의 공통 필수 context로 등록하지 않는다. 이번 작업에서는 GitHub 보호 설정을 변경하지 않았다.
+
 
 CI 실패·취소, dev의 CI, PR의 CI, 다른 저장소의 CI로는 CD 작업을 시작하지 않는다. `workflow_run`은 CI가 종료되면 발생하므로 main CI가 실패한 경우 CD 실행 항목이 표시돼도 작업은 건너뛴다.
 
@@ -102,7 +103,7 @@ CI 성공은 테스트·이미지 빌드·ECR 게시·metadata 보관 성공을 
 
 워크플로 분리 참고: [GitHub 재사용 워크플로](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows).
 
-이미지 전달 방식 참고: [다른 실행의 아티팩트 다운로드](https://github.com/actions/download-artifact/tree/v5#download-artifacts-from-other-workflow-runs-or-repositories), [Docker 이미지 저장](https://docs.docker.com/reference/cli/docker/image/save/), [Docker 이미지 불러오기](https://docs.docker.com/reference/cli/docker/image/load/).
+Stage tar 전달 방식 참고: [다른 실행의 아티팩트 다운로드](https://github.com/actions/download-artifact/tree/v5#download-artifacts-from-other-workflow-runs-or-repositories), [Docker 이미지 저장](https://docs.docker.com/reference/cli/docker/image/save/), [Docker 이미지 불러오기](https://docs.docker.com/reference/cli/docker/image/load/).
 
 ## 서버 배포 성공과 버전 릴리스
 

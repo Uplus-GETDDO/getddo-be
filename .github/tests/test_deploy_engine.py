@@ -18,7 +18,7 @@ OLD_REF = REPOSITORY + '@sha256:' + 'e' * 64
 
 
 class DeploymentEngineTest(unittest.TestCase):
-    def execute(self, previous=True, fail_new=False, fail_stop=False, fail_cleanup=False, metadata="10.0.1.20", fail_metadata=False, fail_metrics=False, legacy=False, previous_monitoring=False, metrics_response="samples", fail_metadata_ip=False, deploy_environment="dev", fail_restore=False):
+    def execute(self, previous=True, fail_new=False, fail_stop=False, fail_cleanup=False, metadata="10.0.1.20", fail_metadata=False, fail_metrics=False, legacy=False, previous_monitoring=False, metrics_response="samples", fail_metadata_ip=False, deploy_environment="dev", fail_restore=False, wrong_new_image_id=False):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             host = base / 'opt/getddo'
@@ -81,6 +81,7 @@ if args[0]=='inspect':
         sys.exit(0)
     image=pathlib.Path(os.environ['STATE_FILE']).read_text()
     image_id=os.environ['OLD_ID'] if image in (os.environ['OLD_REF'], os.environ['OLD_ID']) else os.environ['NEW_ID']
+    if os.environ['WRONG_NEW_IMAGE_ID']=='1' and image==os.environ['NEW_IMAGE']: image_id='sha256:'+'f'*64
     print('true '+image+' '+image_id)
     sys.exit(0)
 if args[:2]==['image','inspect']:
@@ -141,7 +142,7 @@ else:
                 sync.write_text('#!/usr/bin/env python3\nimport os,sys\nsys.exit(1 if sys.argv[-1] == os.environ["CONFIG_DIR"] else 0)\n')
             environment = dict(os.environ, PATH=str(mock_bin) + ':' + os.environ['PATH'],
                                METRICS_RESPONSE=metrics_response, API_PRIVATE_IP='0.0.0.0', METADATA_IP=metadata, FAIL_METADATA=str(int(fail_metadata)), FAIL_METADATA_IP=str(int(fail_metadata_ip)),
-                               FAIL_RESTORE=str(int(fail_restore)), FAIL_METRICS=str(int(fail_metrics)), FAIL_NEW=str(int(fail_new)), FAIL_STOP=str(int(fail_stop)),
+                               WRONG_NEW_IMAGE_ID=str(int(wrong_new_image_id)), FAIL_RESTORE=str(int(fail_restore)), FAIL_METRICS=str(int(fail_metrics)), FAIL_NEW=str(int(fail_new)), FAIL_STOP=str(int(fail_stop)),
                                STATE_FILE=str(base/'state'), HAS_PREVIOUS=str(host/'current'), CONFIG_DIR=str(config),
                                NEW_IMAGE=NEW if deploy_environment == 'staging' else NEW_REF, NEW_ID=NEW, OLD_ID=OLD, OLD_REF=OLD_REF, SOURCE_SHA=SHA, GETDDO_DEPLOY_SERVER='c',
                                GETDDO_DEPLOY_METRICS_ENABLED='true', GETDDO_DEPLOY_ENVIRONMENT=deploy_environment)
@@ -187,6 +188,13 @@ else:
         self.assertIn('ROLLBACK_CONFIRMED_HEALTHY: ' + SHA + ' ' + OLD, result.stdout)
         self.assertFalse(marker)
         self.assertEqual('old', current.name)
+
+    def test_matching_ecr_ref_with_wrong_container_local_id_rolls_back(self):
+        result, env, marker, current = self.execute(wrong_new_image_id=True)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('ROLLBACK_CONFIRMED_HEALTHY: ' + SHA + ' ' + OLD, result.stdout)
+        self.assertEqual('old', current.name)
+        self.assertFalse(marker)
 
     def test_env_restore_failure_preserves_marker_and_never_confirms_rollback(self):
         result, env, marker, current = self.execute(fail_new=True, fail_restore=True)

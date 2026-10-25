@@ -1,5 +1,7 @@
 """ECR 출처 거부, 양쪽 사전 준비, 기준 기록 변환과 Stage 경계를 검증한다."""
 import copy
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
+import io
 import importlib.util
 import json
 from pathlib import Path
@@ -119,6 +121,81 @@ class PreparationTest(unittest.TestCase):
             self.assertTrue(all(not path.exists() for path in configs))
             self.assertFalse(any('compose' in call or 'load' in call for call in commands))
 
+    def prepare_case(self, local_only=False, missing=None, invalid=None):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidate = root/'releases/new'
+            previous = root/'releases/old'
+            candidate.mkdir(parents=True)
+            previous.mkdir()
+            old = dict(document(), image_id='sha256:'+'d'*64, image_digest='sha256:'+'e'*64)
+            (candidate/'image-metadata.json').write_text(json.dumps(document()))
+            for filename, value in (('image-metadata.json',json.dumps(old)), ('image-id.txt',old['image_id']),
+                                    ('image-ref.txt',metadata.reference(old)), ('source-sha.txt',SHA)):
+                (previous/filename).write_text(value)
+            (root/'current').symlink_to(previous)
+            if invalid == 'outside':
+                (root/'current').unlink()
+                (root/'current').symlink_to(root)
+            calls, configs, old_checks = [], [], []
+            def command(arguments, **kwargs):
+                calls.append(arguments)
+                if arguments[:2] == ['docker','ps']:
+                    return 'invalid container' if invalid == 'container' else 'f'*64
+                if arguments[:2] == ['docker','inspect']:
+                    return 'true '+('sha256:'+'f'*64 if invalid == 'identity' else old['image_id'])+' '+SHA
+                if arguments[:2] == ['docker','login']:
+                    configs.append(Path(kwargs['env']['DOCKER_CONFIG']))
+                return 'private-token'
+            def verify(item, **kwargs):
+                if item['image_id'] == old['image_id']:
+                    old_checks.append(True)
+                    if len(old_checks) == 1 and missing:
+                        raise missing('old image not local')
+            temporary_directory = tempfile.TemporaryDirectory
+            output = io.StringIO()
+            with patch.object(prepare.tempfile,'TemporaryDirectory',side_effect=lambda **kwargs: temporary_directory(dir=directory)), \
+                 patch.object(prepare.os,'geteuid',return_value=0), patch.object(prepare,'command',side_effect=command), \
+                 patch.object(prepare,'verify',side_effect=verify), redirect_stdout(output):
+                if invalid:
+                    with self.assertRaises(ValueError):
+                        prepare.prepare(candidate,SHA,local_only=local_only)
+                else:
+                    prepare.prepare(candidate,SHA,local_only=local_only)
+            if invalid:
+                self.assertFalse((candidate/'image-ref.txt').exists())
+            else:
+                self.assertEqual(ID,(candidate/'image-id.txt').read_text().strip())
+                self.assertEqual(REF,(candidate/'image-ref.txt').read_text().strip())
+                self.assertEqual(SHA,(candidate/'source-sha.txt').read_text().strip())
+                self.assertEqual('IMAGE_PREPARED: '+SHA+' '+REF+' '+ID,output.getvalue().strip())
+            pulls = [call[-1] for call in calls if call[:2] == ['docker','pull']]
+            if local_only or invalid:
+                self.assertEqual([],pulls)
+                self.assertEqual([],configs)
+            else:
+                self.assertEqual([REF]+([metadata.reference(old)] if missing else []),pulls)
+                self.assertTrue(configs)
+                self.assertTrue(all(not path.exists() for path in configs))
+            if missing:
+                self.assertEqual(2,len(old_checks))
+
+    def test_prepare_success_records_exact_metadata_and_cleans_temporary_auth(self):
+        self.prepare_case()
+
+    def test_previous_missing_value_or_key_error_pulls_digest_and_revalidates(self):
+        for error in (ValueError,KeyError):
+            with self.subTest(error=error):
+                self.prepare_case(missing=error)
+
+    def test_local_only_never_authenticates_or_pulls(self):
+        self.prepare_case(local_only=True)
+
+    def test_current_outside_releases_or_wrong_running_identity_fails_before_pull(self):
+        for invalid in ('outside','container','identity'):
+            with self.subTest(invalid=invalid):
+                self.prepare_case(invalid=invalid)
+
 
 class BundleAndWorkflowTest(unittest.TestCase):
     def test_prod_small_bundle_has_no_tar_and_stage_explicitly_keeps_tar(self):
@@ -168,7 +245,7 @@ class PublisherTest(unittest.TestCase):
                 with self.assertRaises(ValueError): publisher.publish(dict(environment,**change))
                 commands.assert_not_called()
 
-    def test_success_records_exact_digest_and_config_id_and_cleans_auth(self):
+    def publish_case(self, failure=None):
         with tempfile.TemporaryDirectory() as directory:
             environment=dict(SOURCE_SHA=SHA,GITHUB_RUN_ID='123',GITHUB_RUN_ATTEMPT='2',
                              GITHUB_EVENT_NAME='push',GITHUB_REF='refs/heads/main',RUNNER_TEMP=directory,
@@ -182,48 +259,120 @@ class PublisherTest(unittest.TestCase):
                     configs.append(Path(kwargs['env']['DOCKER_CONFIG']))
                     self.assertEqual(0o700,configs[-1].stat().st_mode & 0o777)
                 if arguments[:3]==['aws','ecr','batch-get-image']:
-                    return json.dumps({'images':[dict(imageId={'imageDigest':DIGEST,'imageTag':SHA+'-123-2'},imageManifest=json.dumps({'config':{'digest':ID}}))]})
+                    row = dict(imageId={'imageDigest':DIGEST,'imageTag':SHA+'-123-2'},imageManifest=json.dumps({'config':{'digest':ID}}))
+                    return json.dumps({'images': [] if failure == 'missing' else [row,row] if failure == 'multiple' else [row]})
                 return 'private-token'
             with patch.object(publisher,'command',side_effect=command), \
-                 patch.object(publisher.subprocess,'run',return_value=subprocess.CompletedProcess([],0)):
-                publisher.publish(environment)
-            self.assertEqual(document(),json.loads((Path(directory)/'container-image/image-metadata.json').read_text()))
+                 patch.object(publisher.subprocess,'run',return_value=subprocess.CompletedProcess([],1 if failure == 'push' else 0)):
+                if failure:
+                    with self.assertRaises(ValueError):
+                        publisher.publish(environment)
+                else:
+                    publisher.publish(environment)
+            metadata_file = Path(directory)/'container-image/image-metadata.json'
+            if failure:
+                self.assertFalse(metadata_file.exists())
+            else:
+                self.assertEqual(document(),json.loads(metadata_file.read_text()))
             self.assertTrue(configs)
             self.assertTrue(all(not path.exists() for path in configs))
 
+    def test_success_records_exact_digest_and_config_id_and_cleans_auth(self):
+        self.publish_case()
+
+    def test_push_failure_or_ecr_cardinality_never_writes_metadata_and_cleans_auth(self):
+        for failure in ('push','missing','multiple'):
+            with self.subTest(failure=failure):
+                self.publish_case(failure)
+
 
 class BaselineTest(unittest.TestCase):
-    def run_conversion(self, changed=False):
+    @contextmanager
+    def fixture(self):
         with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory)
-            old=root/'releases/old'
+            root = Path(directory)
+            old = root / 'releases/old'
             old.mkdir(parents=True)
-            (old/'compose.deploy.yaml').write_text('services: {}\n')
-            (old/'fetch-app-env.py').write_text('# public\n')
-            (old/'image-id.txt').write_text(ID)
-            (root/'current').symlink_to(old)
-            item=dict(document(),image_tag='baseline-'+SHA+'-copy-1')
-            path=root/'input.json'
+            (old / 'compose.deploy.yaml').write_text('services: {}\n')
+            (old / 'fetch-app-env.py').write_text('# public\n')
+            (old / 'image-id.txt').write_text(ID)
+            (root / 'current').symlink_to(old)
+            item = dict(document(), image_tag='baseline-'+SHA+'-copy-1')
+            path = root / 'input.json'
             path.write_text(json.dumps(item))
-            evidence=dict(container_id='d'*64,restart_count=0,image_id=ID,revision=SHA,env_sha256='e'*64)
-            snapshots=[evidence,evidence,dict(evidence,restart_count=1) if changed else evidence]
-            with patch.object(convert.os,'geteuid',return_value=0), \
-                 patch.object(convert.prepare,'verify') as verify, \
-                 patch.object(convert.prepare,'command') as commands, \
-                 patch.object(convert,'snapshot',side_effect=snapshots):
-                if changed:
-                    with self.assertRaises(ValueError): convert.convert(root,path,'baseline-copy-1')
-                else:
-                    convert.convert(root,path,'baseline-copy-1')
-                verify.assert_called_once_with(item)
-                self.assertTrue(all(call.args[0][0]=='sync' for call in commands.call_args_list))
-            self.assertEqual(ID,(old/'image-id.txt').read_text())
-            self.assertFalse((old/'image-ref.txt').exists())
-            self.assertEqual(old if changed else root/'releases/baseline-copy-1',(root/'current').resolve())
-            self.assertEqual(REF,(root/'releases/baseline-copy-1/image-ref.txt').read_text().strip())
+            evidence = dict(container_id='d'*64, restart_count=0, image_id=ID, revision=SHA, env_sha256='e'*64)
+            with patch.object(convert.os, 'geteuid', return_value=0), \
+                 patch.object(convert.prepare, 'verify'), patch.object(convert.prepare, 'command'):
+                yield root, old, path, evidence
 
-    def test_no_restart_conversion_preserves_original_release(self): self.run_conversion()
-    def test_changed_application_restores_original_current(self): self.run_conversion(changed=True)
+    def test_no_restart_conversion_preserves_original_release_and_clears_marker(self):
+        with self.fixture() as (root, old, path, evidence), patch.object(convert, 'snapshot', return_value=evidence):
+            replace = convert.os.replace
+            def checked_replace(pending, current):
+                self.assertTrue((root/'deploy-in-progress/context').is_file())
+                return replace(pending, current)
+            with patch.object(convert.os, 'replace', side_effect=checked_replace):
+                convert.convert(root, path, 'baseline-copy-1')
+            self.assertEqual(root/'releases/baseline-copy-1', (root/'current').resolve())
+            self.assertFalse((root/'deploy-in-progress').exists())
+            self.assertEqual(ID, (old/'image-id.txt').read_text())
+            self.assertFalse((old/'image-ref.txt').exists())
+            self.assertEqual(REF, (root/'releases/baseline-copy-1/image-ref.txt').read_text().strip())
+
+    def test_changed_application_restores_original_current_and_confirms_before_marker_cleanup(self):
+        with self.fixture() as (root, old, path, evidence):
+            changed = dict(evidence, restart_count=1)
+            with patch.object(convert, 'snapshot', side_effect=[evidence,evidence,changed,evidence]):
+                with self.assertRaisesRegex(ValueError, 'Application changed'):
+                    convert.convert(root, path, 'baseline-copy-1')
+            self.assertEqual(old, (root/'current').resolve())
+            self.assertFalse((root/'deploy-in-progress').exists())
+            self.assertTrue((root/'releases/baseline-copy-1').is_dir())
+
+    def test_rollback_failure_keeps_marker_first_error_and_blocks_next_conversion(self):
+        with self.fixture() as (root, old, path, evidence):
+            changed = dict(evidence, restart_count=1)
+            replace = convert.os.replace
+            attempts = []
+            def fail_rollback(pending, current):
+                attempts.append(True)
+                if len(attempts) == 2:
+                    raise OSError('restore rename unavailable')
+                return replace(pending, current)
+            errors = io.StringIO()
+            with patch.object(convert, 'snapshot', side_effect=[evidence,evidence,changed]), \
+                 patch.object(convert.os, 'replace', side_effect=fail_rollback), redirect_stderr(errors):
+                with self.assertRaisesRegex(ValueError, 'Application changed'):
+                    convert.convert(root, path, 'baseline-copy-1')
+            self.assertTrue((root/'deploy-in-progress').is_dir())
+            self.assertIn('original=ValueError: Application changed', errors.getvalue())
+            self.assertIn('recovery=OSError', errors.getvalue())
+            self.assertTrue(old.is_dir())
+            with self.assertRaisesRegex(ValueError, 'Unresolved deployment'):
+                convert.convert(root, path, 'baseline-another')
+
+    def test_unconfirmed_app_state_keeps_marker_after_link_restore(self):
+        with self.fixture() as (root, old, path, evidence):
+            changed = dict(evidence, restart_count=1)
+            with patch.object(convert, 'snapshot', side_effect=[evidence,evidence,changed,changed]):
+                with self.assertRaisesRegex(ValueError, 'Application changed'):
+                    convert.convert(root, path, 'baseline-copy-1')
+            self.assertEqual(old, (root/'current').resolve())
+            self.assertTrue((root/'deploy-in-progress').is_dir())
+
+    def test_copy_failure_removes_only_own_pretransition_directory_and_allows_retry(self):
+        with self.fixture() as (root, old, path, evidence), patch.object(convert, 'snapshot', return_value=evidence):
+            with patch.object(convert.shutil, 'copyfile', side_effect=OSError('copy unavailable')):
+                with self.assertRaises(OSError):
+                    convert.convert(root, path, 'baseline-copy-1')
+            self.assertEqual(old, (root/'current').resolve())
+            self.assertFalse((root/'releases/baseline-copy-1').exists())
+            self.assertFalse((root/'deploy-in-progress').exists())
+            convert.convert(root, path, 'baseline-copy-1')
+
+    def test_safe_subprocess_diagnostic_does_not_print_captured_output(self):
+        error = subprocess.CalledProcessError(2, ['docker','inspect'], output='private-value', stderr='private-value')
+        self.assertEqual('CalledProcessError exit=2', convert.safe_error(error))
 
 
 if __name__=='__main__': unittest.main()

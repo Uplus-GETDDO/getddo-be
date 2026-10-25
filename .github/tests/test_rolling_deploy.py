@@ -525,6 +525,36 @@ class SettingsAndEnvTest(unittest.TestCase):
             self.assertLess(locks[0], sent[0])
             self.assertEqual(0 if fail else 1, len([call for call in calls if call[1] == 'delete-object']))
 
+    def test_single_prepare_known_failure_unlocks_unknown_keeps_lock_and_no_app_command(self):
+        for failure in ('pull', 'main', 'marker', 'unknown'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+                calls = []
+                def aws_call(service, operation, *args, **kwargs):
+                    calls.append((service, operation, args))
+                    if operation == 'send-command':
+                        return {'Command': {'CommandId': 'prepare-command'}}
+                    if operation == 'get-command-invocation':
+                        if failure == 'unknown':
+                            raise RuntimeError('unresolved SSM')
+                        return dict(Status='Failed' if failure == 'pull' else 'Success',
+                                    ResponseCode=1 if failure == 'pull' else 0,
+                                    StandardOutputContent=('prefix-' if failure == 'marker' else '') +
+                                    'IMAGE_PREPARED: ' + SHA + ' ' + REF + ' ' + IMAGE)
+                    return {}
+                checks = [None, None, RuntimeError('main advanced')] if failure == 'main' else None
+                with patch.dict(deploy.os.environ, dict(values('single'), RUNNER_TEMP=temporary), clear=True), \
+                     patch.object(deploy, 'verify_main', side_effect=checks), \
+                     patch.object(deploy, 'ecr_bundle', return_value='a'*64), \
+                     patch.object(deploy, 'aws', side_effect=aws_call):
+                    with self.assertRaises(RuntimeError):
+                        deploy.main()
+                self.assertEqual(0 if failure == 'unknown' else 1,
+                                 len([call for call in calls if call[1] == 'delete-object']))
+                sent = [call for call in calls if call[1] == 'send-command']
+                self.assertEqual(1, len(sent))
+                self.assertIn('prepare-image.py', sent[0][2][sent[0][2].index('--parameters')+1])
+                self.assertNotIn('bash deploy-container.sh', sent[0][2][sent[0][2].index('--parameters')+1])
+
     def test_single_main_advance_after_upload_unlocks_without_sending(self):
         calls = []
         def aws_call(service, operation, *args, **kwargs):

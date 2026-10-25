@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
 
 spec = importlib.util.spec_from_file_location('image_metadata', Path(__file__).with_name('image-metadata.py'))
 metadata = importlib.util.module_from_spec(spec)
@@ -34,8 +35,8 @@ def publish(environment):
     if aws('sts', 'get-caller-identity')['Account'] != '942466928325':
         raise ValueError('Publisher AWS account mismatch')
     ref = metadata.REPOSITORY + ':' + tag
-    command(['docker', 'build', '--platform', 'linux/amd64', '--tag', ref,
-             '--label', 'org.opencontainers.image.revision=' + sha, '.'])
+    subprocess.run(['docker', 'build', '--platform', 'linux/amd64', '--tag', ref,
+                    '--label', 'org.opencontainers.image.revision=' + sha, '.'], check=True, timeout=1800)
     image = json.loads(command(['docker', 'image', 'inspect', ref], timeout=30))[0]
     if (image['Os'] + '/' + image['Architecture'] != 'linux/amd64' or
             image.get('Config', {}).get('Labels', {}).get('org.opencontainers.image.revision') != sha):
@@ -48,9 +49,9 @@ def publish(environment):
                 timeout=30, input=password, env=secure_env)
         del password
         # 동일 run 재호출도 push 실패를 숨기지 않는다. 재실행 차수는 새 불변 태그를 사용한다.
-        pushed = subprocess.run(['docker', 'push', ref], capture_output=True, text=True, timeout=600, env=secure_env)
+        pushed = subprocess.run(['docker', 'push', ref], check=False, capture_output=True, text=True, timeout=600, env=secure_env)
         if pushed.returncode:
-            raise ValueError('ECR push failed; immutable tags must not be overwritten')
+            raise ValueError('ECR push failed (exit ' + str(pushed.returncode) + '); immutable tags must not be overwritten')
         result = aws('ecr', 'batch-get-image', '--registry-id', '942466928325', '--repository-name', 'getddo-be', '--image-ids', 'imageTag=' + tag)
         rows = result.get('images', [])
         if result.get('failures') or len(rows) != 1:
@@ -67,5 +68,11 @@ def publish(environment):
 if __name__ == '__main__':
     try:
         publish(os.environ)
-    except (ValueError, KeyError, OSError, subprocess.SubprocessError):
+    except (ValueError, KeyError, OSError, subprocess.SubprocessError) as error:
+        if isinstance(error, subprocess.CalledProcessError):
+            print("IMAGE_PUBLISH_FAILED: process exit=" + str(error.returncode), file=sys.stderr)
+        elif isinstance(error, ValueError):
+            print("IMAGE_PUBLISH_FAILED: " + str(error), file=sys.stderr)
+        else:
+            print("IMAGE_PUBLISH_FAILED: " + type(error).__name__, file=sys.stderr)
         raise SystemExit('Image publishing failed; no deployment metadata accepted') from None

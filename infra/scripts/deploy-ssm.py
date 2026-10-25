@@ -232,12 +232,23 @@ def main(check_only=False):
     rolling_spec = importlib.util.spec_from_file_location("single_rolling", source / "infra/scripts/rolling-deploy.py")
     rolling = importlib.util.module_from_spec(rolling_spec)
     rolling_spec.loader.exec_module(rolling)
-    prepared = rolling.invocation(aws, values["EC2_INSTANCE_ID"], parameters(dict(values, PHASE="prepare"), key, checksum))
-    if prepared["Status"] != "Success" or prepared["ResponseCode"] != 0 or (
-            "IMAGE_PREPARED: " + values["SOURCE_SHA"] + " " + values["IMAGE_REF"] + " " + values["IMAGE_ID"]) not in prepared.get("StandardOutputContent", ""):
-        raise RuntimeError("Single host ECR preparation failed; deployment lock retained")
-    # 준비 중 main이 갱신되면 기존 앱을 유지하고 잠금은 운영자가 확인한다.
-    verify_main(values)
+    try:
+        prepared = rolling.invocation(aws, values["EC2_INSTANCE_ID"], parameters(dict(values, PHASE="prepare"), key, checksum))
+        expected = "IMAGE_PREPARED: " + values["SOURCE_SHA"] + " " + values["IMAGE_REF"] + " " + values["IMAGE_ID"]
+        if (prepared["Status"] != "Success" or prepared["ResponseCode"] != 0 or
+                expected not in prepared.get("StandardOutputContent", "").splitlines()):
+            raise RuntimeError("Single host ECR preparation failed; application unchanged")
+        # 준비가 확정 종료했고 앱을 바꾸기 전 main이 달라지면 이 실행의 잠금을 해제한다.
+        verify_main(values)
+    except rolling.UnknownOutcome:
+        raise
+    except Exception:
+        try:
+            aws("s3api", "delete-object", "--bucket", values["DEPLOY_BUCKET"], "--key", lock_key,
+                "--expected-bucket-owner", values["ACCOUNT_ID"])
+        except Exception:
+            print("Deployment lock cleanup failed; inspect the lock before retrying.", file=sys.stderr)
+        raise
     result = aws("ssm", "send-command", "--instance-ids", values["EC2_INSTANCE_ID"],
                  "--document-name", "AWS-RunShellScript", "--timeout-seconds", "120",
                  "--parameters", json.dumps(parameters(values, key, checksum)),
