@@ -213,6 +213,58 @@ class MissionSubmissionRecorderTest {
 	}
 
 	@Test
+	@DisplayName("퀴즈는 사용자 행을 먼저 잠근 뒤에 완료 여부와 정답 진행을 조회한다")
+	void locksUserBeforeReadingQuizProgress() {
+		// given
+		when(submissionRepository.findById(submissionId)).thenReturn(Optional.empty());
+		when(missionRepository.findDetailById(missionId)).thenReturn(Optional.of(quiz()));
+		when(submissionRepository.findCompleted(userId, missionId)).thenReturn(Optional.empty());
+		when(progressRepository.findCorrectQuestionIds(any(), any())).thenReturn(Set.of());
+		stubInsertEchoWithAnswerIds();
+		// when
+		recorder.record(command(option(q1, q1No)));
+		// then
+		org.mockito.InOrder order = org.mockito.Mockito.inOrder(submissionRepository, progressRepository);
+		order.verify(submissionRepository).lockUser(userId);
+		order.verify(submissionRepository).findCompleted(userId, missionId);
+		order.verify(progressRepository).findCorrectQuestionIds(any(), any());
+	}
+
+	@Test
+	@DisplayName("설문은 문항을 나눠 보낼 수 없어 사용자 행을 잠그지 않는다")
+	void doesNotLockUserForSurvey() {
+		// given
+		when(submissionRepository.findById(submissionId)).thenReturn(Optional.empty());
+		when(missionRepository.findDetailById(missionId)).thenReturn(Optional.of(survey()));
+		when(submissionRepository.findCompleted(userId, missionId)).thenReturn(Optional.empty());
+		stubInsertEchoWithAnswerIds();
+		stubClaimAndGrant();
+		// when
+		recorder.record(command(option(q1, q1Ok)));
+		// then
+		verify(submissionRepository, never()).lockUser(any());
+	}
+
+	@Test
+	@DisplayName("잠금을 기다리는 동안 같은 제출 ID가 먼저 확정됐으면 새로 저장하지 않고 기존 결과를 돌려준다")
+	void replaysWhenSameSubmissionCommittedWhileWaitingForLock() {
+		// given: 처음 확인에서는 없었고, 잠금을 얻은 뒤에는 먼저 확정된 같은 제출이 보인다
+		MissionSubmission stored = new MissionSubmission(submissionId, missionId, UUID.randomUUID(), userId, false,
+				NOW.minusSeconds(1), command(option(q1, q1No)).getRequestHash(),
+				List.of(new QuizAnswer(UUID.randomUUID(), q1, q1No, null, false)), List.of());
+		when(submissionRepository.findById(submissionId)).thenReturn(Optional.empty(), Optional.of(stored));
+		when(missionRepository.findDetailById(missionId)).thenReturn(Optional.of(quiz()));
+		// when
+		MissionSubmissionResult replayed = recorder.record(command(option(q1, q1No)));
+		// then
+		assertThat(replayed.isCreated()).isFalse();
+		assertThat(replayed.getSubmissionId()).isEqualTo(submissionId);
+		verify(submissionRepository).lockUser(userId);
+		verify(submissionRepository, never()).insert(any());
+		verifyNoInteractions(progressRepository, claimRepository, grantService);
+	}
+
+	@Test
 	@DisplayName("이전 제출에서 맞힌 문항은 누적되어 남은 문항만 맞히면 완료한다")
 	void completesByAccumulatingPreviousCorrectQuestions() {
 		// given

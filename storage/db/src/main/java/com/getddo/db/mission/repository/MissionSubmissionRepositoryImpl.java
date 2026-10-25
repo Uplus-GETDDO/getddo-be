@@ -85,6 +85,11 @@ public class MissionSubmissionRepositoryImpl implements MissionSubmissionReposit
 		return new HashSet<>(submissionJpaRepository.findCompletedMissionIds(userId, missionIds));
 	}
 
+	@Override
+	public void lockUser(UUID userId) {
+		submissionJpaRepository.lockUser(userId);
+	}
+
 	/** 제출 목록의 답변을 두 번의 조회로 모아 붙인다. 입력 순서를 유지한다. */
 	private List<MissionSubmission> withAnswers(List<MissionSubmissionEntity> submissions) {
 		if (submissions.isEmpty()) {

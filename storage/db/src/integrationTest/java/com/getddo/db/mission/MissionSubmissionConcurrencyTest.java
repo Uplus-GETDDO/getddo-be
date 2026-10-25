@@ -177,6 +177,80 @@ class MissionSubmissionConcurrencyTest extends MissionIntegrationTestSupport {
 		}
 	}
 
+	/** 문항마다 정답 한 개씩만 담은 제출 답변. 전 문항 정답 배열의 각 원소가 한 문항의 답변이다. */
+	private static MissionAnswerInput[] singleCorrectAnswers(MissionDetail quiz) {
+		return allCorrect(quiz);
+	}
+
+	@RepeatedTest(REPEATS)
+	@DisplayName("같은 사용자가 퀴즈 정답을 문항별로 나눠 동시에 제출해도 오류 없이 한 번만 완료되고 보상은 1회다")
+	void sameUserQuizAnswersSplitAcrossRequestsCompletesOnce() throws Exception {
+		// given
+		MissionDetail quiz = saveQuizMission("퀴즈 미션");
+		UUID missionId = quiz.getMission().getId();
+		MissionAnswerInput[] singles = singleCorrectAnswers(quiz);
+		// when
+		List<Object> outcomes = runSimultaneously(List.of(
+				submit(userId, missionId, UUID.randomUUID(), singles[0]),
+				submit(userId, missionId, UUID.randomUUID(), singles[1]),
+				submit(userId, missionId, UUID.randomUUID(), singles[2])));
+		// then
+		assertThat(outcomes).allSatisfy(outcome -> assertThat(outcome).isInstanceOf(MissionSubmissionResult.class));
+		List<MissionSubmissionResult> results = outcomes.stream().map(MissionSubmissionResult.class::cast).toList();
+		assertThat(results.stream().filter(MissionSubmissionResult::isCompleted)).hasSize(1);
+		assertThat(count("quiz_question_progress", userId)).isEqualTo(3);
+		assertThat(count("mission_submissions", userId)).isEqualTo(3);
+		assertThat(count("mission_reward_claims", userId)).isEqualTo(1);
+		assertThat(count("tickets", userId)).isEqualTo(1);
+	}
+
+	@RepeatedTest(REPEATS)
+	@DisplayName("정답을 문항별로 나눈 제출과 전 문항 제출이 동시에 와도 오류 없이 한 번만 완료되고 보상은 1회다")
+	void sameUserSplitAndFullQuizSubmissionsCompleteOnce() throws Exception {
+		// given
+		MissionDetail quiz = saveQuizMission("퀴즈 미션");
+		UUID missionId = quiz.getMission().getId();
+		MissionAnswerInput[] singles = singleCorrectAnswers(quiz);
+		// when
+		List<Object> outcomes = runSimultaneously(List.of(
+				submit(userId, missionId, UUID.randomUUID(), singles[0]),
+				submit(userId, missionId, UUID.randomUUID(), singles[1]),
+				submit(userId, missionId, UUID.randomUUID(), singles[2]),
+				submit(userId, missionId, UUID.randomUUID(), allCorrect(quiz))));
+		// then
+		assertThat(outcomes).allSatisfy(outcome -> assertThat(outcome).isInstanceOf(MissionSubmissionResult.class));
+		assertThat(count("quiz_question_progress", userId)).isEqualTo(3);
+		assertThat(count("mission_reward_claims", userId)).isEqualTo(1);
+		assertThat(count("tickets", userId)).isEqualTo(1);
+		assertThat(count("select count(*) from mission_submissions where user_id = ? and is_completed = true",
+				bytes(userId))).isEqualTo(1);
+	}
+
+	@RepeatedTest(REPEATS)
+	@DisplayName("문항별 동시 제출이 끝난 뒤 같은 제출 ID로 다시 보내면 같은 결과를 돌려주고 보상은 늘지 않는다")
+	void retryingSplitSubmissionsKeepsSingleReward() throws Exception {
+		// given
+		MissionDetail quiz = saveQuizMission("퀴즈 미션");
+		UUID missionId = quiz.getMission().getId();
+		MissionAnswerInput[] singles = singleCorrectAnswers(quiz);
+		List<UUID> submissionIds = List.of(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+		List<Object> first = runSimultaneously(List.of(
+				submit(userId, missionId, submissionIds.get(0), singles[0]),
+				submit(userId, missionId, submissionIds.get(1), singles[1]),
+				submit(userId, missionId, submissionIds.get(2), singles[2])));
+		assertThat(first).allSatisfy(outcome -> assertThat(outcome).isInstanceOf(MissionSubmissionResult.class));
+		// when
+		for (int i = 0; i < submissionIds.size(); i++) {
+			MissionSubmissionResult retried = submit(userId, missionId, submissionIds.get(i), singles[i]).call();
+			// then
+			assertThat(retried.getSubmissionId()).isEqualTo(submissionIds.get(i));
+			assertThat(retried.isCreated()).isFalse();
+		}
+		assertThat(count("mission_submissions", userId)).isEqualTo(3);
+		assertThat(count("mission_reward_claims", userId)).isEqualTo(1);
+		assertThat(count("tickets", userId)).isEqualTo(1);
+	}
+
 	private List<Object> runSimultaneously(List<? extends Callable<?>> works) throws Exception {
 		CountDownLatch start = new CountDownLatch(1);
 		ExecutorService executor = Executors.newFixedThreadPool(works.size());

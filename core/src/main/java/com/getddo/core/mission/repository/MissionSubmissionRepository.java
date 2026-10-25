@@ -57,4 +57,13 @@ public interface MissionSubmissionRepository {
 	 * @return 완료한 미션 ID. 없으면 빈 집합
 	 */
 	Set<UUID> findCompletedMissionIds(UUID userId, Collection<UUID> missionIds);
+
+	/**
+	 * 사용자 행을 잠가({@code FOR UPDATE}) 같은 사용자의 퀴즈 제출 처리를 직렬화한다. 잠금은 호출한 트랜잭션이 끝날 때 풀리므로
+	 * 호출하는 서비스의 트랜잭션 안에서 호출해야 한다. 먼저 잠근 요청이 커밋한 정답 진행을 뒤 요청이 읽을 수 있어, 문항별로 나뉘어
+	 * 동시에 온 제출도 완료를 놓치지 않는다. 사용자 행을 읽거나 바꾸지는 않는다.
+	 *
+	 * @param userId 사용자 ID
+	 */
+	void lockUser(UUID userId);
 }

@@ -52,7 +52,8 @@
 
 - 제출 ID는 `Idempotency-Key` UUID이며 `mission_submissions`의 PK다. 응모와 같은 방식으로 별도 멱등 테이블 없이 PK가 같은 키의 동시 요청을 직렬화한다. 재전송이 처음 요청과 같은 본문인지는 처음 요청(사용자·미션·답변)의 SHA-256(`request_hash`)로 판정한다. 퀴즈에서 이미 정답으로 완료한 문항의 답변은 저장하지 않으므로 저장된 답변만으로는 처음 요청을 복원할 수 없기 때문이다.
 - `MissionSubmissionRecorder`는 `READ_COMMITTED` 한 트랜잭션에서 같은 제출 ID 확인 → 미션 조회와 기존 완료 확인 → 서버가 받은 시각의 운영 기간 판정 → 채점 → 제출·답변 저장 → 새로 맞힌 문항 기록 → 완료 시 보상 청구 → 응모권 지급(`MANDATORY`) 순서로 처리한다. 지급이 실패하면 제출·답변·정답 진행·청구가 모두 취소된다.
-- 같은 사용자의 동시 완료는 유일 제약 세 개가 직렬화한다: 제출 PK, `(user_id, quiz_question_id)`(문항별 정답 진행), `(user_id, mission_id)`(보상 청구). 바깥 `MissionSubmissionService`는 트랜잭션 없이(`NOT_SUPPORTED`) 중복 키 위반(MySQL 1062)과 잠금 실패를 새 트랜잭션에서 한 번 다시 처리한다. 다시 처리하면 먼저 확정된 결과(완료한 제출이나 기존 제출)를 읽어 돌려준다.
+- 같은 사용자의 퀴즈 제출은 `MissionSubmissionRecorder`가 미션을 읽은 직후 `users` 행을 `FOR UPDATE`로 잠가(`MissionSubmissionRepository.lockUser`) 직렬화한다. 정답을 문항별로 나눠 동시에 보내면, 잠금이 없을 때는 요청마다 읽은 정답 진행이 서로의 기록을 보지 못해 아무도 완료를 판정하지 못했고(GD-351), 중복 키 재시도에서도 같은 충돌이 나 `500`이 됐다. 잠금을 얻은 뒤에 같은 제출 ID, 기존 완료, 정답 진행을 읽으므로 먼저 커밋된 요청의 기록이 보인다. 설문은 문항을 나눠 보낼 수 없어 잠그지 않는다.
+- 유일 제약 세 개는 마지막 방어선이다: 제출 PK, `(user_id, quiz_question_id)`(문항별 정답 진행), `(user_id, mission_id)`(보상 청구). 바깥 `MissionSubmissionService`는 트랜잭션 없이(`NOT_SUPPORTED`) 중복 키 위반(MySQL 1062)과 잠금 실패를 새 트랜잭션에서 한 번 다시 처리한다. 다시 처리하면 먼저 확정된 결과(완료한 제출이나 기존 제출)를 읽어 돌려준다.
 - 새로 맞힌 문항은 문항 ID 순서로 기록해, 같은 사용자의 동시 요청이 서로의 행을 반대 순서로 기다리는 교착을 피한다.
 
 ### 만료 (`TicketExpiryService`, `TicketExpiryWorker`)
