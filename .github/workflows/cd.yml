@@ -50,6 +50,8 @@ jobs:
       EC2_INSTANCE_ID_A: ${{ vars.EC2_INSTANCE_ID_A }}
       EC2_INSTANCE_ID_C: ${{ vars.EC2_INSTANCE_ID_C }}
       TARGET_GROUP_ARN: ${{ vars.TARGET_GROUP_ARN }}
+      BUILD_RUN_ID: ${{ github.event.workflow_run.id }}
+      BUILD_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
       AWS_PAGER: ''
 
     steps:
@@ -77,36 +79,27 @@ jobs:
 
       # 현재 CD 실행이 아니라, 실행을 시작하게 한 CI의 파일을 정확히 지정한다.
       - name: 성공한 CI의 이미지 받기
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
-          name: container-image-${{ github.event.workflow_run.head_sha }}-${{ github.event.workflow_run.run_attempt }}
+          name: image-metadata-${{ github.event.workflow_run.head_sha }}-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
           path: ${{ runner.temp }}/container-image
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      # CD에서 다시 빌드하지 않고 CI가 만든 이미지를 그대로 사용한다.
-      - name: 이미지 불러오기 및 동일성 확인
-        shell: bash
-        run: |
-          cd "$RUNNER_TEMP/container-image"
-          sha256sum --check image.tar.gz.sha256
-          docker image load --input image.tar.gz
-          image="getddo-be:$SOURCE_SHA"
-          expected_id=$(cat image-id.txt)
-          [[ "$expected_id" =~ ^sha256:[a-f0-9]{64}$ ]]
-          [[ "$(docker image inspect --format '{{.Id}}' "$image")" == "$expected_id" ]]
-          revision=$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
-          [[ "$revision" == "$SOURCE_SHA" ]]
-
       # 장기 Access Key 대신 production 환경에 허용된 OIDC 역할을 사용한다.
       - name: AWS 임시 권한 받기
-        uses: aws-actions/configure-aws-credentials@v6.3.0
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: getddo-cd-${{ github.run_id }}
           # 순차 배포의 직렬 SSM 검사·배포 대기를 포함한다. Terraform 역할 상한도 7200으로 맞춘다.
           role-duration-seconds: ${{ env.DEPLOY_MODE == 'single' && 3600 || 7200 }}
+
+      - name: 선행 CI 출처와 ECR 실물 확인
+        run: >-
+          python3 infra/scripts/image-metadata.py "$RUNNER_TEMP/container-image/image-metadata.json"
+          --sha "$SOURCE_SHA" --run-id "$BUILD_RUN_ID" --attempt "$BUILD_RUN_ATTEMPT"
 
       - name: 서버 앱 교체 및 상태 확인
         env:

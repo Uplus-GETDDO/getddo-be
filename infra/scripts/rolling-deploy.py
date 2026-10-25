@@ -17,7 +17,7 @@ def invocation(aws, instance, payload):
                      "--parameters", json.dumps(payload))
         command_id = result["Command"]["CommandId"]
         print("SSM Command ID: " + command_id + " instance: " + instance, flush=True)
-        deadline = time.monotonic() + 2040
+        deadline = time.monotonic() + (660 if payload.get("executionTimeout") == ["600"] else 2040)
         while time.monotonic() < deadline:
             try:
                 result = aws("ssm", "get-command-invocation", "--command-id", command_id,
@@ -161,6 +161,14 @@ flock -n 9
             checked(aws, a, baseline_script(values))
             checked(aws, c, "set -eu\ntest ! -e /opt/getddo/current\ntest ! -L /opt/getddo/current")
         hosts_to_update = (("c", c, a),) if initial else (("a", a, c), ("c", c, a))
+        # 모든 후보/복구 이미지가 준비된 다음에만 최초 ALB 제외가 가능하다.
+        for server, target, other in hosts_to_update:
+            healthy(other)
+            payload = parameters(dict(values, SERVER=server, PHASE="prepare"), key, checksum)
+            result = invocation(aws, target, payload)
+            expected = "IMAGE_PREPARED: " + values["SOURCE_SHA"] + " " + values["IMAGE_REF"] + " " + values["IMAGE_ID"]
+            if result["Status"] != "Success" or result["ResponseCode"] != 0 or expected not in result.get("StandardOutputContent", "").splitlines():
+                raise RuntimeError("ECR preparation failed before target exclusion: " + target)
         for index, (server, target, other) in enumerate(hosts_to_update):
             # 첫 서버를 변경한 뒤에는 상대 health 확인 실패도 부분 배포 복구 대상으로 남긴다.
             if index > 0:
@@ -178,7 +186,7 @@ flock -n 9
                     "--targets", "Id=" + target + ",Port=8080")
                 wait(target, "unused", other)
             healthy(other)
-            payload = parameters(dict(values, SERVER=server), key, checksum)
+            payload = parameters(dict(values, SERVER=server, PHASE="deploy"), key, checksum)
             # 잠금은 다운로드부터 엔진 종료까지 유지한다. flock는 exec 뒤에도 상속된다.
             payload["commands"][0] = ("set -eu\nexec 8>/opt/getddo/orchestration.lock\nflock -n 8\n" +
                                        payload["commands"][0])
@@ -194,6 +202,9 @@ flock -n 9
                 else:
                     safe_to_unlock = False
                 raise RuntimeError("Deployment failed; next host stopped: " + target)
+            expected = "DEPLOY_OK: " + values["SOURCE_SHA"] + " " + values["IMAGE_ID"]
+            if expected not in result.get("StandardOutputContent", "").splitlines():
+                raise RuntimeError("SSM succeeded without verified container identity; retain lock")
             if not initial:
                 register(target, other)
             healthy(other)

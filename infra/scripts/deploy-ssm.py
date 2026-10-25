@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""CI 이미지를 배포용 S3에 보관하고 SSM의 최종 배포 결과를 확인한다."""
+"""ECR metadata와 공개 배포 파일만 S3로 전달하고 SSM 결과를 검증한다."""
 import argparse
+import importlib.util
 import hashlib
 import json
 import os
@@ -11,6 +12,11 @@ import subprocess
 import sys
 import tarfile
 import time
+
+
+spec = importlib.util.spec_from_file_location("image_metadata", Path(__file__).with_name("image-metadata.py"))
+metadata = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(metadata)
 
 
 def settings(environment):
@@ -41,6 +47,10 @@ def settings(environment):
     if "tfstate" in bucket or "terraform" in bucket:
         raise ValueError("Terraform State 버킷을 배포에 사용할 수 없습니다.")
     values["ACCOUNT_ID"] = role.group(1)
+    if values["ACCOUNT_ID"] != "942466928325" or values["AWS_REGION"] != metadata.REGION:
+        raise ValueError("Production account/region mismatch")
+    for key in ("BUILD_RUN_ID", "BUILD_RUN_ATTEMPT"):
+        values[key] = environment.get(key, "")
     if values["DEPLOY_MODE"] != "single":
         if values["EC2_INSTANCE_ID_A"] == values["EC2_INSTANCE_ID_C"]:
             raise ValueError("A and C must be distinct exact instance IDs")
@@ -75,6 +85,7 @@ def verify_main(values):
 
 
 def bundle(source, artifact, destination, tool_source=None):
+    """Stage 전용 tar 준비기를 포함한다. 운영 호출은 ecr_bundle만 사용한다."""
     # .env·State·소스 전체 대신 배포에 필요한 공개 파일만 포함한다.
     files = {"compose.deploy.yaml": source / "compose.deploy.yaml",
              "deploy-container.sh": source / "infra/scripts/deploy-container.sh",
@@ -82,6 +93,7 @@ def bundle(source, artifact, destination, tool_source=None):
     if tool_source is not None:
         files["deploy-container.sh"] = tool_source / "infra/scripts/deploy-container.sh"
         files["inject-host-env.py"] = tool_source / "infra/scripts/inject-host-env.py"
+    files["prepare-staging-image.sh"] = (tool_source or source) / "infra/scripts/prepare-staging-image.sh"
     files.update({name: artifact / name for name in ("image.tar.gz", "image.tar.gz.sha256", "image-id.txt")})
     with tarfile.open(destination, "w") as archive:
         for name, path in files.items():
@@ -95,23 +107,43 @@ def bundle(source, artifact, destination, tool_source=None):
     return digest.hexdigest()
 
 
+def ecr_bundle(source, artifact, destination, tool_source=None):
+    """명시한 공개 파일만 묶고 symlink를 거부한다. 이미지 tar와 비밀 env는 포함하지 않는다."""
+    files = {"compose.deploy.yaml": source / "compose.deploy.yaml", "image-metadata.json": artifact / "image-metadata.json"}
+    for name in ("deploy-container.sh", "fetch-app-env.py", "inject-host-env.py", "prepare-image.py", "image-metadata.py"):
+        files[name] = (tool_source or source) / "infra/scripts" / name
+    with tarfile.open(destination, "w") as archive:
+        for name, path in files.items():
+            if not path.is_file() or path.is_symlink():
+                raise ValueError("Invalid public deployment file: " + name)
+            archive.add(path, arcname=name, recursive=False)
+    return hashlib.sha256(destination.read_bytes()).hexdigest()
+
+
 def parameters(values, key, checksum):
+    """prepare는 내려받아 검증만, deploy는 준비된 release만 실행한다. Stage는 기존 단계를 사용한다."""
     release = "/opt/getddo/releases/" + values["GITHUB_RUN_ID"] + "-" + values["GITHUB_RUN_ATTEMPT"]
     quote = shlex.quote
     # SSM은 root로 실행한다. 명령에는 공개 리전만 전달하고 설정값은 서버 역할로 조회한다.
+    phase = values.get("PHASE", "deploy")
     commands = ["set -eu", "umask 077", "install -d -m 700 /opt/getddo/releases",
-                "mkdir -m 700 -- " + quote(release), "cd -- " + quote(release)]
-    download = ["timeout", "600", "aws", "s3api", "get-object", "--bucket", values["DEPLOY_BUCKET"],
+                ("test -d " if phase == "deploy" else "mkdir -m 700 -- ") + quote(release), "cd -- " + quote(release)]
+    download = ["timeout", "600" if phase == "stage" else "30", "aws", "s3api", "get-object", "--bucket", values["DEPLOY_BUCKET"],
                 "--key", key, "--expected-bucket-owner", values["ACCOUNT_ID"],
                 "--region", values["AWS_REGION"], "release.tar", "--no-cli-pager"]
-    commands.extend([" ".join(map(quote, download)) + " >/dev/null",
+    if phase != "deploy":
+        commands.append(" ".join(map(quote, download)) + " >/dev/null")
+    commands.extend([
                      "printf '%s\\n' " + quote(checksum + "  release.tar") + " | sha256sum --check -",
-                     "tar --extract --file release.tar --no-same-owner --no-same-permissions",
+                     *(["tar --extract --file release.tar --no-same-owner --no-same-permissions"] if phase != "deploy" else []),
                      "exec env GETDDO_DEPLOY_SERVER=" + quote(values.get("SERVER", "")) + " GETDDO_DEPLOY_METRICS_ENABLED=" + quote("false" if values["DEPLOY_MODE"] == "initial-c" else "true") + " bash deploy-container.sh " + quote(values["SOURCE_SHA"]) + " " + quote(values["AWS_REGION"])])
-    return {"commands": ["\n".join(commands)], "executionTimeout": ["1800"]}
+    if phase == "prepare":
+        commands[-1] = "exec python3 prepare-image.py " + quote(values["SOURCE_SHA"])
+        commands.insert(1, "exec 8>/opt/getddo/orchestration.lock\nflock -n 8\nexec 9>/opt/getddo/deploy.lock\nflock -n 9\ntest ! -e /opt/getddo/deploy-in-progress\ntest ! -L /opt/getddo/deploy-in-progress\nfor context in /etc/getddo/.deploy-env.*/context; do test ! -e \"$context\"; done")
+    return {"commands": ["\n".join(commands)], "executionTimeout": ["600" if phase == "prepare" else "1800"]}
 
 
-def wait_for_command(command_id, instance_id, deadline_seconds=2040):
+def wait_for_command(command_id, instance_id, deadline_seconds=2040, expected=None):
     deadline = time.monotonic() + deadline_seconds
     while time.monotonic() < deadline:
         try:
@@ -123,6 +155,8 @@ def wait_for_command(command_id, instance_id, deadline_seconds=2040):
         else:
             status = result["Status"]
             if status == "Success" and result.get("ResponseCode") == 0:
+                if expected and expected not in result.get("StandardOutputContent", "").splitlines():
+                    raise RuntimeError("SSM succeeded without verified container identity; retain lock")
                 print("서버 교체와 상태 확인이 정상 종료됐습니다.")
                 return
             if status not in ("Pending", "InProgress", "Delayed", "Cancelling"):
@@ -148,10 +182,15 @@ def main(check_only=False):
             raise ValueError("Baseline source checkout SHA mismatch")
         command(["git", "-C", str(app_source), "diff", "--exit-code", "HEAD", "--",
                  "compose.deploy.yaml", "infra/scripts/fetch-app-env.py"])
-        if (temporary / "container-image/image-id.txt").read_text().strip() != values["APPROVED_BASELINE_IMAGE_ID"]:
+        if metadata.read(temporary / "container-image/image-metadata.json", baseline=True)["image_id"] != values["APPROVED_BASELINE_IMAGE_ID"]:
             raise ValueError("Approved baseline image mismatch")
-    checksum = bundle(app_source, temporary / "container-image", archive,
-                      source if values["DEPLOY_MODE"] != "single" else None)
+    document = metadata.read(temporary / "container-image/image-metadata.json", sha=values["SOURCE_SHA"],
+                             run_id=values["BUILD_RUN_ID"], attempt=values["BUILD_RUN_ATTEMPT"], baseline=values["DEPLOY_MODE"] == "initial-c")
+    metadata.verify_ecr(document, aws)
+    values["IMAGE_REF"] = metadata.reference(document)
+    values["IMAGE_ID"] = document["image_id"]
+    values["PHASE"] = "deploy"
+    checksum = ecr_bundle(app_source, temporary / "container-image", archive, source)
     key = ("releases/" + values["SOURCE_SHA"] + "/" + values["GITHUB_RUN_ID"]
            + "-" + values["GITHUB_RUN_ATTEMPT"] + "/release.tar")
     # 고유 실행 경로만 쓰며 이미 존재하는 파일은 덮어쓰지 않는다.
@@ -159,7 +198,6 @@ def main(check_only=False):
         "--body", str(archive), "--server-side-encryption", "AES256",
         "--expected-bucket-owner", values["ACCOUNT_ID"], "--if-none-match", "*", timeout=600)
     if values["DEPLOY_MODE"] != "single":
-        import importlib.util
         spec = importlib.util.spec_from_file_location("rolling", source / "infra/scripts/rolling-deploy.py")
         rolling = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(rolling)
@@ -182,6 +220,13 @@ def main(check_only=False):
         except Exception:
             print("Deployment lock cleanup failed; inspect the lock before retrying.", file=sys.stderr)
         raise
+    rolling_spec = importlib.util.spec_from_file_location("single_rolling", source / "infra/scripts/rolling-deploy.py")
+    rolling = importlib.util.module_from_spec(rolling_spec)
+    rolling_spec.loader.exec_module(rolling)
+    prepared = rolling.invocation(aws, values["EC2_INSTANCE_ID"], parameters(dict(values, PHASE="prepare"), key, checksum))
+    if prepared["Status"] != "Success" or prepared["ResponseCode"] != 0 or (
+            "IMAGE_PREPARED: " + values["SOURCE_SHA"] + " " + values["IMAGE_REF"] + " " + values["IMAGE_ID"]) not in prepared.get("StandardOutputContent", ""):
+        raise RuntimeError("Single host ECR preparation failed; deployment lock retained")
     result = aws("ssm", "send-command", "--instance-ids", values["EC2_INSTANCE_ID"],
                  "--document-name", "AWS-RunShellScript", "--timeout-seconds", "120",
                  "--parameters", json.dumps(parameters(values, key, checksum)),
@@ -192,7 +237,7 @@ def main(check_only=False):
     if summary:
         with open(summary, "a") as output:
             output.write(f"\n- 배포 커밋: `{values['SOURCE_SHA']}`\n- SSM Command ID: `{command_id}`\n")
-    wait_for_command(command_id, values["EC2_INSTANCE_ID"])
+    wait_for_command(command_id, values["EC2_INSTANCE_ID"], expected="DEPLOY_OK: " + values["SOURCE_SHA"] + " " + values["IMAGE_ID"])
     aws("s3api", "delete-object", "--bucket", values["DEPLOY_BUCKET"], "--key", lock_key,
         "--expected-bucket-owner", values["ACCOUNT_ID"])
 

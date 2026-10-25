@@ -151,7 +151,7 @@ def validate_artifact(source, artifact, sha, image_id, checksum):
 def parameters(config, server, sha, key, checksum, attempt="1"):
     values = {"GITHUB_RUN_ID": config["run_id"], "GITHUB_RUN_ATTEMPT": attempt,
               "DEPLOY_BUCKET": config["deploy_bucket"], "ACCOUNT_ID": config["account_id"],
-              "AWS_REGION": config["region"], "SOURCE_SHA": sha, "SERVER": server, "DEPLOY_MODE": "rolling"}
+              "AWS_REGION": config["region"], "SOURCE_SHA": sha, "SERVER": server, "DEPLOY_MODE": "rolling", "PHASE": "stage"}
     payload = deploy.parameters(values, key, checksum)
     # Only this Stage entry point selects staging. Production parameters remain untouched.
     payload["commands"][0] = payload["commands"][0].replace(
