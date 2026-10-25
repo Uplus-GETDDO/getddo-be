@@ -72,5 +72,15 @@ jobs:
   # 테스트가 성공해야 호출한다. 이미지 작업도 Build 전체 성공 조건에 포함된다.
   image:
     name: 이미지
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
     needs: build
     uses: ./.github/workflows/image.yml
+
+  publish-image:
+    name: main 이미지
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/image-publish.yml

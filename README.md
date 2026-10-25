@@ -220,7 +220,7 @@ flowchart LR
 flowchart LR
     Source["PR / dev·main push"] --> Test["Gradle 빌드·테스트"]
     Test --> Image["Docker 이미지 생성"]
-    Image -->|"main push"| Artifact["CI 이미지 보관"]
+    Image -->|"main push"| Registry["ECR 이미지 · metadata 보관"]
 ```
 
 #### 정기 릴리스
@@ -248,7 +248,8 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    Files["S3 다운로드·검증"] --> Env["Parameter Store 조회"]
+    Files["작은 S3 배포 파일 검증"] --> Prepare["A/C ECR 이미지 사전 준비"]
+    Prepare --> Env["Parameter Store 조회"]
     Env --> Validate["설정·이미지 검증"] --> Replace["컨테이너 교체"]
     Replace --> Health{"정상 응답?"}
     Health -->|"성공"| Done["배포 확정"]
@@ -287,7 +288,7 @@ flowchart LR
 | Parameter Store·IAM | 비밀값 보관과 서버별 접근 권한 |
 | Terraform·IAM 정책 파일 | 리소스 정의와 변경 검토 방식 |
 
-배포 코드: [CI](.github/workflows/build.yml) · [이미지 생성](.github/workflows/image.yml) · [CD](.github/workflows/cd.yml) · [서버 배포](infra/scripts/deploy-container.sh) · [정기 릴리스](https://github.com/Uplus-GETDDO/getddo-be/blob/6daa51196d24cce298d2824cdeae0ef883fa4408/.github/workflows/daily-release.yml)
+배포 코드: [CI](.github/workflows/build.yml) · [이미지 검증](.github/workflows/image.yml) · [ECR 게시](.github/workflows/image-publish.yml) · [ECR 배포·복구](docs/ecr-deployment.md) · [CD](.github/workflows/cd.yml) · [서버 배포](infra/scripts/deploy-container.sh) · [정기 릴리스](https://github.com/Uplus-GETDDO/getddo-be/blob/6daa51196d24cce298d2824cdeae0ef883fa4408/.github/workflows/daily-release.yml)
 
 </details>
 

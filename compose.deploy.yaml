@@ -4,7 +4,7 @@ services:
   app:
     # 실행할 이미지 참조를 서버에서 주입한다.
     image: ${APP_IMAGE:?실행할 이미지 참조가 필요합니다}
-    # CI에서 받은 이미지를 서버에 불러온 뒤 그 이미지 ID로 실행한다.
+    # 운영은 검증한 ECR digest를 사전 pull하고 Stage는 검증한 tar를 준비한 뒤 실행한다.
     pull_policy: never
     restart: unless-stopped
     ports:

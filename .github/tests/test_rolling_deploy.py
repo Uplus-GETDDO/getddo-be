@@ -24,18 +24,20 @@ env = load('inject_env', 'inject-host-env.py')
 A, C = 'i-' + 'a' * 17, 'i-' + 'c' * 17
 SHA = 'a' * 40
 IMAGE = 'sha256:' + 'b' * 64
+REF = '942466928325.dkr.ecr.ap-northeast-2.amazonaws.com/getddo-be@sha256:' + 'c' * 64
 
 
 def values(mode='rolling'):
-    result = dict(AWS_REGION='ap-northeast-2', AWS_ROLE_ARN='arn:aws:iam::123456789012:role/cd',
+    result = dict(AWS_REGION='ap-northeast-2', AWS_ROLE_ARN='arn:aws:iam::942466928325:role/cd',
                   DEPLOY_BUCKET='getddo-deploy', SOURCE_SHA=SHA, GITHUB_REPOSITORY='org/repo',
-                  GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', RUNNER_TEMP='/tmp',
+                  GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', RUNNER_TEMP='/tmp', BUILD_RUN_ID='12', BUILD_RUN_ATTEMPT='1',
                   DEPLOY_MODE=mode, ROLLING_DEPLOY_ENABLED='true', EC2_INSTANCE_ID_A=A,
                   EC2_INSTANCE_ID_C=C, EC2_INSTANCE_ID=A,
-                  TARGET_GROUP_ARN='arn:aws:elasticloadbalancing:ap-northeast-2:123456789012:targetgroup/api/123abc',
+                  TARGET_GROUP_ARN='arn:aws:elasticloadbalancing:ap-northeast-2:942466928325:targetgroup/api/123abc',
                   APP_SOURCE_DIR='/tmp/baseline', APPROVED_BASELINE_SHA=SHA,
                   APPROVED_BASELINE_IMAGE_ID=IMAGE)
-    return deploy.settings(result)
+    result = deploy.settings(result)
+    return dict(result, IMAGE_REF=REF, IMAGE_ID=IMAGE, BUILD_RUN_ID="12", BUILD_RUN_ATTEMPT="1")
 
 
 class AutomaticDeployModeTests(unittest.TestCase):
@@ -73,6 +75,8 @@ class FakeAWS:
         self.other_fails = False
         self.stale = False
         self.incomplete = False
+        self.prepare_failure = None
+        self.prepare_unknown = False
 
     def __call__(self, service, operation, *args, **kwargs):
         def value(flag):
@@ -87,7 +91,7 @@ class FakeAWS:
                 self.lock = False
             return {}
         if service == 'sts':
-            return {'Account': '123456789012'}
+            return {'Account': '942466928325'}
         if service == 'ec2':
             return {'Reservations': [{'Instances': [dict(InstanceId=i, State={'Name': 'running'}, VpcId='vpc-1') for i in (A, C)]}]}
         if operation == 'describe-instance-information':
@@ -115,13 +119,17 @@ class FakeAWS:
             import json
             instance = value('--instance-ids')
             script = json.loads(value('--parameters'))['commands'][0]
-            kind = 'deploy' if 'deploy-container.sh' in script else 'preflight'
+            kind = 'prepare' if 'prepare-image.py' in script else ('deploy' if 'deploy-container.sh' in script else 'preflight')
             self.events.append((kind, instance, script))
             self.command = (kind, instance)
             self.command_count += 1
             return {'Command': {'CommandId': str(self.command_count)}}
         if operation == 'get-command-invocation':
             kind, instance = self.command
+            if kind == 'prepare' and self.prepare_unknown:
+                raise RuntimeError('Preparation outcome unknown')
+            if kind == 'prepare' and instance == self.prepare_failure:
+                return dict(Status='Failed', ResponseCode=1, StandardOutputContent='pull failed')
             if kind == 'deploy' and self.unknown:
                 raise RuntimeError('Network outcome unknown')
             if kind == 'deploy' and instance == self.fail:
@@ -129,7 +137,8 @@ class FakeAWS:
                          'ROLLBACK_CONFIRMED_HEALTHY: ' + SHA + ' ' + IMAGE) if self.rollback else 'ROLLBACK_FAILED'
                 return dict(Status='Failed', ResponseCode=1, StandardOutputContent=token,
                             StandardErrorContent='DEPLOY_INCOMPLETE:' if self.incomplete else '')
-            return dict(Status='Success', ResponseCode=0, StandardOutputContent='DEPLOY_OK: ' + SHA)
+            token = 'IMAGE_PREPARED: ' + SHA + ' ' + REF + ' ' + IMAGE if kind == 'prepare' else 'DEPLOY_OK: ' + SHA + ' ' + IMAGE
+            return dict(Status='Success', ResponseCode=0, StandardOutputContent=token)
         raise AssertionError((service, operation, args))
 
 
@@ -158,11 +167,46 @@ class RollingTest(unittest.TestCase):
         self.assertEqual([('deregister-targets', A), ('deploy', A), ('register-targets', A),
                           ('deregister-targets', C), ('deploy', C), ('register-targets', C)], mutations)
         for e in fake.events:
-            if e[0] == 'deploy':
-                self.assertIn('releases/approved', e[2])
+            if e[0] in ('prepare', 'deploy'):
+                if e[0] == 'prepare': self.assertIn('releases/approved', e[2])
                 self.assertIn('c' * 64, e[2])
                 self.assertIn(SHA, e[2])
         self.assertFalse(fake.lock)
+
+    def test_main_after_a_does_not_interrupt_same_candidate_completion_on_c(self):
+        fake = FakeAWS()
+        attempts = []
+        def verify():
+            attempts.append(True)
+            if len(attempts)>1: raise RuntimeError('new main belongs to next serialized CD')
+        self.run_roll(fake,verify_current=verify)
+        self.assertEqual([A,C],self.deployments(fake))
+        self.assertEqual(1,len(attempts))
+        self.assertFalse(fake.lock)
+
+    def test_both_hosts_prepared_before_first_target_exclusion(self):
+        fake = FakeAWS()
+        self.run_roll(fake)
+        prepared = [(i,e[1]) for i,e in enumerate(fake.events) if e[0]=='prepare']
+        first_drain = next(i for i,e in enumerate(fake.events) if e[0]=='deregister-targets')
+        self.assertEqual([A,C],[instance for i,instance in prepared])
+        self.assertLess(max(i for i,instance in prepared),first_drain)
+
+    def test_preparation_failure_changes_no_targets_or_apps(self):
+        for selected in (A,C):
+            with self.subTest(selected=selected):
+                fake = FakeAWS()
+                fake.prepare_failure = selected
+                with self.assertRaisesRegex(RuntimeError,'preparation failed'): self.run_roll(fake)
+                self.assertFalse(any(e[0] in ('deregister-targets','register-targets','deploy') for e in fake.events))
+                self.assertFalse(fake.lock)
+
+    def test_unknown_preparation_preserves_lock_without_draining(self):
+        fake = FakeAWS()
+        fake.prepare_unknown = True
+        with self.assertRaises(rolling.UnknownOutcome): self.run_roll(fake)
+        self.assertTrue(fake.lock)
+        self.assertFalse(any(e[0] in ('deregister-targets','deploy') for e in fake.events))
 
     def test_a_failure_restores_only_a_and_stops_c(self):
         fake = FakeAWS(fail=A)
@@ -389,6 +433,17 @@ class RollingTest(unittest.TestCase):
 
 
 class SettingsAndEnvTest(unittest.TestCase):
+    def setUp(self):
+        document = dict(schema_version=1, source_sha=SHA, build_run_id='12', build_run_attempt='1',
+                        repository_uri=REF.split('@')[0], image_tag=SHA+'-12-1', image_digest=REF.split('@')[1],
+                        image_id=IMAGE, platform='linux/amd64')
+        read = patch.object(deploy.metadata, 'read', return_value=document)
+        verify = patch.object(deploy.metadata, 'verify_ecr')
+        read.start()
+        verify.start()
+        self.addCleanup(read.stop)
+        self.addCleanup(verify.stop)
+
     def test_aws_accepts_empty_success_output_but_rejects_malformed_json(self):
         with patch.dict(deploy.os.environ, AWS_REGION='ap-northeast-2'):
             for output in ('', ' \n', '{"ETag": "test"}'):
@@ -410,7 +465,7 @@ class SettingsAndEnvTest(unittest.TestCase):
             configuration = dict(values('single'), RUNNER_TEMP=temporary)
             with patch.dict(deploy.os.environ, configuration, clear=True), \
                  patch.object(deploy, 'verify_main', side_effect=[None, RuntimeError('main advanced')]), \
-                 patch.object(deploy, 'bundle', return_value='a'*64), \
+                 patch.object(deploy, 'ecr_bundle', return_value='a'*64), \
                  patch.object(deploy, 'aws', side_effect=aws_call), \
                  patch.object(deploy.sys, 'stderr') as stderr:
                 with self.assertRaisesRegex(RuntimeError, 'main advanced'):
@@ -428,8 +483,8 @@ class SettingsAndEnvTest(unittest.TestCase):
             self.assertTrue(path.read_text().startswith(original + '\nGETDDO_METRICS_SERVER=c\n'))
 
     def test_duplicate_instance_ids_and_gate_rejected(self):
-        for changes in ({'EC2_INSTANCE_ID_C': A}, {'ROLLING_DEPLOY_ENABLED': ''},
-                        {'TARGET_GROUP_ARN': values()['TARGET_GROUP_ARN'].replace('123456789012', '999999999999')}):
+        for changes in ({'EC2_INSTANCE_ID_C': A}, {'ROLLING_DEPLOY_ENABLED': ''}, {'BUILD_RUN_ID': ''}, {'BUILD_RUN_ATTEMPT': '0'},
+                        {'TARGET_GROUP_ARN': values()['TARGET_GROUP_ARN'].replace('942466928325', '999999999999')}):
             with self.assertRaises(ValueError):
                 deploy.settings(dict(values(), **changes))
 
@@ -451,12 +506,13 @@ class SettingsAndEnvTest(unittest.TestCase):
             calls = []
             def aws_call(service, operation, *args, **kwargs):
                 calls.append((service, operation, args))
-                return {'Command': {'CommandId': 'single-command'}} if operation == 'send-command' else {}
+                return ({'Command': {'CommandId': 'single-command'}} if operation == 'send-command' else
+                        {'Status': 'Success', 'ResponseCode': 0, 'StandardOutputContent': 'IMAGE_PREPARED: ' + SHA + ' ' + REF + ' ' + IMAGE} if operation == 'get-command-invocation' else {})
             with tempfile.TemporaryDirectory() as temporary:
                 configuration = values('single')
                 configuration['RUNNER_TEMP'] = temporary
                 with patch.dict(deploy.os.environ, configuration, clear=True), \
-                     patch.object(deploy, 'verify_main'), patch.object(deploy, 'bundle', return_value='a'*64), \
+                     patch.object(deploy, 'verify_main'), patch.object(deploy, 'ecr_bundle', return_value='a'*64), \
                      patch.object(deploy, 'aws', side_effect=aws_call), \
                      patch.object(deploy, 'wait_for_command', side_effect=RuntimeError('unknown') if fail else None):
                     if fail:
@@ -469,6 +525,36 @@ class SettingsAndEnvTest(unittest.TestCase):
             self.assertLess(locks[0], sent[0])
             self.assertEqual(0 if fail else 1, len([call for call in calls if call[1] == 'delete-object']))
 
+    def test_single_prepare_known_failure_unlocks_unknown_keeps_lock_and_no_app_command(self):
+        for failure in ('pull', 'main', 'marker', 'unknown'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+                calls = []
+                def aws_call(service, operation, *args, **kwargs):
+                    calls.append((service, operation, args))
+                    if operation == 'send-command':
+                        return {'Command': {'CommandId': 'prepare-command'}}
+                    if operation == 'get-command-invocation':
+                        if failure == 'unknown':
+                            raise RuntimeError('unresolved SSM')
+                        return dict(Status='Failed' if failure == 'pull' else 'Success',
+                                    ResponseCode=1 if failure == 'pull' else 0,
+                                    StandardOutputContent=('prefix-' if failure == 'marker' else '') +
+                                    'IMAGE_PREPARED: ' + SHA + ' ' + REF + ' ' + IMAGE)
+                    return {}
+                checks = [None, None, RuntimeError('main advanced')] if failure == 'main' else None
+                with patch.dict(deploy.os.environ, dict(values('single'), RUNNER_TEMP=temporary), clear=True), \
+                     patch.object(deploy, 'verify_main', side_effect=checks), \
+                     patch.object(deploy, 'ecr_bundle', return_value='a'*64), \
+                     patch.object(deploy, 'aws', side_effect=aws_call):
+                    with self.assertRaises(RuntimeError):
+                        deploy.main()
+                self.assertEqual(0 if failure == 'unknown' else 1,
+                                 len([call for call in calls if call[1] == 'delete-object']))
+                sent = [call for call in calls if call[1] == 'send-command']
+                self.assertEqual(1, len(sent))
+                self.assertIn('prepare-image.py', sent[0][2][sent[0][2].index('--parameters')+1])
+                self.assertNotIn('bash deploy-container.sh', sent[0][2][sent[0][2].index('--parameters')+1])
+
     def test_single_main_advance_after_upload_unlocks_without_sending(self):
         calls = []
         def aws_call(service, operation, *args, **kwargs):
@@ -479,7 +565,7 @@ class SettingsAndEnvTest(unittest.TestCase):
             configuration['RUNNER_TEMP'] = temporary
             with patch.dict(deploy.os.environ, configuration, clear=True), \
                  patch.object(deploy, 'verify_main', side_effect=[None, RuntimeError('main advanced')]), \
-                 patch.object(deploy, 'bundle', return_value='a'*64), \
+                 patch.object(deploy, 'ecr_bundle', return_value='a'*64), \
                  patch.object(deploy, 'aws', side_effect=aws_call):
                 with self.assertRaisesRegex(RuntimeError, 'main advanced'):
                     deploy.main()
