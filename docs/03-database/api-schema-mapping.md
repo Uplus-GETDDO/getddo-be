@@ -98,7 +98,7 @@
 | M03 제출 | 같음 | `mission_reward_claims` | 완료하면 사용자·미션당 한 번 청구한다. 이미 완료한 미션의 재제출은 기존 완료 결과를 돌려준다. 응답의 `reward.claimId`는 이 청구의 ID이고, 새 제출·같은 키의 재전송·M04 조회가 같은 값을 돌려준다. |
 | M03 제출 | 같음 | `tickets`, `ticket_histories` | 보상 청구 저장 뒤 지급 서비스가 같은 트랜잭션에서 응모권을 지급한다(`GRANT` 이력, 사유는 미션 제목). |
 
-제출·답변·정답 진행·보상 청구·응모권 지급은 한 트랜잭션(`READ COMMITTED`)이다. 같은 사용자의 동시 완료는 제출 PK, `(user_id, quiz_question_id)`, `(user_id, mission_id)` 유일 제약이 직렬화하고, 늦은 요청은 새 트랜잭션에서 한 번 다시 처리해 먼저 확정된 결과를 본다.
+제출·답변·정답 진행·보상 청구·응모권 지급은 한 트랜잭션(`READ COMMITTED`)이다. 같은 사용자의 퀴즈 제출은 처리 시작에서 `users` 행을 `SELECT ... FOR UPDATE`로 잠가(`MissionSubmissionRepository.lockUser`) 직렬화한다. 정답을 문항별로 나눠 동시에 보내도 뒤 요청이 먼저 커밋된 정답 진행을 읽고 완료를 판정하게 하기 위해서다(설문은 잠그지 않는다). 제출 PK, `(user_id, quiz_question_id)`, `(user_id, mission_id)` 유일 제약은 마지막 방어선이며, 유일 제약 위반이 나면 새 트랜잭션에서 한 번 다시 처리해 먼저 확정된 결과를 본다.
 
 ### 이벤트 모집 상태와 감사 저장 (GD-203)
 

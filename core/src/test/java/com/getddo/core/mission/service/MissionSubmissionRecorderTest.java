@@ -1,8 +1,6 @@
 package com.getddo.core.mission.service;
 
-import java.time.Clock;
 import java.time.Instant;
-import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -16,7 +14,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import com.getddo.core.common.time.TimeProvider;
 import com.getddo.core.mission.domain.Mission;
 import com.getddo.core.mission.domain.MissionAnswerInput;
 import com.getddo.core.mission.domain.MissionDetail;
@@ -90,9 +87,8 @@ class MissionSubmissionRecorderTest {
 
 	@BeforeEach
 	void setUp() {
-		TimeProvider time = new TimeProvider(Clock.fixed(NOW, ZoneOffset.UTC));
 		recorder = new MissionSubmissionRecorder(missionRepository, submissionRepository, progressRepository,
-				claimRepository, grantService, new MissionSubmissionResultReader(claimRepository, grantService), time);
+				claimRepository, grantService, new MissionSubmissionResultReader(claimRepository, grantService));
 	}
 
 	private Mission mission(MissionType type, Instant startsAt, Instant endsAt, MissionStatus status) {
@@ -165,7 +161,7 @@ class MissionSubmissionRecorderTest {
 		stubInsertEchoWithAnswerIds();
 		stubClaimAndGrant();
 		// when
-		MissionSubmissionResult result = recorder.record(command(option(q1, q1Ok), text(q2, " 겟또 ")));
+		MissionSubmissionResult result = recorder.record(command(option(q1, q1Ok), text(q2, " 겟또 ")), NOW);
 		// then
 		assertThat(result.isCompleted()).isTrue();
 		assertThat(result.isCreated()).isTrue();
@@ -201,7 +197,7 @@ class MissionSubmissionRecorderTest {
 		when(progressRepository.findCorrectQuestionIds(any(), any())).thenReturn(Set.of());
 		stubInsertEchoWithAnswerIds();
 		// when
-		MissionSubmissionResult result = recorder.record(command(option(q1, q1No), text(q2, "겟또")));
+		MissionSubmissionResult result = recorder.record(command(option(q1, q1No), text(q2, "겟또")), NOW);
 		// then
 		assertThat(result.isCompleted()).isFalse();
 		assertThat(result.getReward()).isNull();
@@ -210,6 +206,78 @@ class MissionSubmissionRecorderTest {
 		verify(progressRepository).insert(progress.capture());
 		assertThat(progress.getValue().getQuestionId()).isEqualTo(q2);
 		verifyNoInteractions(claimRepository, grantService);
+	}
+
+	@Test
+	@DisplayName("퀴즈는 사용자 행을 먼저 잠근 뒤에 완료 여부와 정답 진행을 조회한다")
+	void locksUserBeforeReadingQuizProgress() {
+		// given
+		when(submissionRepository.findById(submissionId)).thenReturn(Optional.empty());
+		when(missionRepository.findDetailById(missionId)).thenReturn(Optional.of(quiz()));
+		when(submissionRepository.findCompleted(userId, missionId)).thenReturn(Optional.empty());
+		when(progressRepository.findCorrectQuestionIds(any(), any())).thenReturn(Set.of());
+		stubInsertEchoWithAnswerIds();
+		// when
+		recorder.record(command(option(q1, q1No)), NOW);
+		// then
+		org.mockito.InOrder order = org.mockito.Mockito.inOrder(submissionRepository, progressRepository);
+		order.verify(submissionRepository).lockUser(userId);
+		order.verify(submissionRepository).findCompleted(userId, missionId);
+		order.verify(progressRepository).findCorrectQuestionIds(any(), any());
+	}
+
+	@Test
+	@DisplayName("넘겨받은 서버 도착 시각이 운영 기간 안이면 접수하고 그 시각을 제출 시각으로 저장한다")
+	void usesTheGivenArrivalTimeForThePeriodCheckAndSubmissionTime() {
+		// given: 도착 시각은 종료 직전이다. 잠금을 기다린 처리 시각은 판정에 쓰지 않는다
+		Instant arrival = ENDS.minusSeconds(1);
+		when(submissionRepository.findById(submissionId)).thenReturn(Optional.empty());
+		when(missionRepository.findDetailById(missionId)).thenReturn(Optional.of(quiz()));
+		when(submissionRepository.findCompleted(userId, missionId)).thenReturn(Optional.empty());
+		when(progressRepository.findCorrectQuestionIds(any(), any())).thenReturn(Set.of());
+		stubInsertEchoWithAnswerIds();
+		// when
+		MissionSubmissionResult result = recorder.record(command(option(q1, q1No)), arrival);
+		// then
+		assertThat(result.isCreated()).isTrue();
+		assertThat(result.getReceivedAt()).isEqualTo(arrival);
+		ArgumentCaptor<MissionSubmission> inserted = ArgumentCaptor.forClass(MissionSubmission.class);
+		verify(submissionRepository).insert(inserted.capture());
+		assertThat(inserted.getValue().getCreatedAt()).isEqualTo(arrival);
+	}
+
+	@Test
+	@DisplayName("설문은 문항을 나눠 보낼 수 없어 사용자 행을 잠그지 않는다")
+	void doesNotLockUserForSurvey() {
+		// given
+		when(submissionRepository.findById(submissionId)).thenReturn(Optional.empty());
+		when(missionRepository.findDetailById(missionId)).thenReturn(Optional.of(survey()));
+		when(submissionRepository.findCompleted(userId, missionId)).thenReturn(Optional.empty());
+		stubInsertEchoWithAnswerIds();
+		stubClaimAndGrant();
+		// when
+		recorder.record(command(option(q1, q1Ok)), NOW);
+		// then
+		verify(submissionRepository, never()).lockUser(any());
+	}
+
+	@Test
+	@DisplayName("잠금을 기다리는 동안 같은 제출 ID가 먼저 확정됐으면 새로 저장하지 않고 기존 결과를 돌려준다")
+	void replaysWhenSameSubmissionCommittedWhileWaitingForLock() {
+		// given: 처음 확인에서는 없었고, 잠금을 얻은 뒤에는 먼저 확정된 같은 제출이 보인다
+		MissionSubmission stored = new MissionSubmission(submissionId, missionId, UUID.randomUUID(), userId, false,
+				NOW.minusSeconds(1), command(option(q1, q1No)).getRequestHash(),
+				List.of(new QuizAnswer(UUID.randomUUID(), q1, q1No, null, false)), List.of());
+		when(submissionRepository.findById(submissionId)).thenReturn(Optional.empty(), Optional.of(stored));
+		when(missionRepository.findDetailById(missionId)).thenReturn(Optional.of(quiz()));
+		// when
+		MissionSubmissionResult replayed = recorder.record(command(option(q1, q1No)), NOW);
+		// then
+		assertThat(replayed.isCreated()).isFalse();
+		assertThat(replayed.getSubmissionId()).isEqualTo(submissionId);
+		verify(submissionRepository).lockUser(userId);
+		verify(submissionRepository, never()).insert(any());
+		verifyNoInteractions(progressRepository, claimRepository, grantService);
 	}
 
 	@Test
@@ -223,7 +291,7 @@ class MissionSubmissionRecorderTest {
 		stubInsertEchoWithAnswerIds();
 		stubClaimAndGrant();
 		// when
-		MissionSubmissionResult result = recorder.record(command(text(q2, "겟또")));
+		MissionSubmissionResult result = recorder.record(command(text(q2, "겟또")), NOW);
 		// then
 		assertThat(result.isCompleted()).isTrue();
 		ArgumentCaptor<QuizQuestionProgress> progress = ArgumentCaptor.forClass(QuizQuestionProgress.class);
@@ -241,7 +309,7 @@ class MissionSubmissionRecorderTest {
 		stubInsertEchoWithAnswerIds();
 		stubClaimAndGrant();
 		// when
-		MissionSubmissionResult result = recorder.record(command(option(q1, q1Ok)));
+		MissionSubmissionResult result = recorder.record(command(option(q1, q1Ok)), NOW);
 		// then
 		assertThat(result.isCompleted()).isTrue();
 		assertThat(result.getReward()).isNotNull();
@@ -264,7 +332,7 @@ class MissionSubmissionRecorderTest {
 		when(grantService.findGrant(any())).thenReturn(Optional.of(new GrantResult(1, TicketGrade.BRONZE, GRANTED_AT,
 				EXPIRES_AT, true)));
 		// when
-		MissionSubmissionResult result = recorder.record(command(option(q1, q1Ok)));
+		MissionSubmissionResult result = recorder.record(command(option(q1, q1Ok)), NOW);
 		// then
 		assertThat(result.isCreated()).isFalse();
 		assertThat(result.isCompleted()).isTrue();
@@ -283,7 +351,7 @@ class MissionSubmissionRecorderTest {
 				List.of(new QuizAnswer(UUID.randomUUID(), q1, q1No, null, false)), List.of());
 		when(submissionRepository.findById(submissionId)).thenReturn(Optional.of(stored));
 		// when
-		MissionSubmissionResult replayed = recorder.record(command(option(q1, q1No)));
+		MissionSubmissionResult replayed = recorder.record(command(option(q1, q1No)), NOW);
 		// then
 		assertThat(replayed.isCreated()).isFalse();
 		assertThat(replayed.isCompleted()).isFalse();
@@ -309,7 +377,7 @@ class MissionSubmissionRecorderTest {
 		// when
 		// then
 		when(submissionRepository.findById(submissionId)).thenReturn(Optional.of(quizStored));
-		MissionSubmissionResult replayed = recorder.record(original);
+		MissionSubmissionResult replayed = recorder.record(original, NOW);
 		assertThat(replayed.isCreated()).isFalse();
 		assertThat(replayed.isCompleted()).isFalse();
 		assertConflict(command(option(q1, q1Ok), text(q2, "틀림"), text(UUID.randomUUID(), "더함")));
@@ -328,7 +396,7 @@ class MissionSubmissionRecorderTest {
 		when(submissionRepository.findById(submissionId)).thenReturn(Optional.of(stored));
 		// when
 		// then
-		assertThatThrownBy(() -> recorder.record(command(option(q1, q1No), option(q1, q1Ok))))
+		assertThatThrownBy(() -> recorder.record(command(option(q1, q1No), option(q1, q1Ok)), NOW))
 				.isInstanceOfSatisfying(MissionException.class,
 						e -> assertThat(e.getErrorCode()).isEqualTo(MissionErrorCode.INVALID_MISSION_ANSWER));
 		verifyNoInteractions(missionRepository, progressRepository, claimRepository, grantService);
@@ -343,7 +411,7 @@ class MissionSubmissionRecorderTest {
 		when(missionRepository.findDetailById(missionId)).thenReturn(Optional.empty());
 		// when
 		// then
-		assertThatThrownBy(() -> recorder.record(command(option(q1, q1Ok)))).isInstanceOfSatisfying(MissionException.class,
+		assertThatThrownBy(() -> recorder.record(command(option(q1, q1Ok)), NOW)).isInstanceOfSatisfying(MissionException.class,
 				e -> assertThat(e.getErrorCode()).isEqualTo(MissionErrorCode.MISSION_NOT_FOUND));
 
 		MissionDetail notStarted = new MissionDetail(mission(MissionType.SURVEY, NOW.plusSeconds(1), ENDS, MissionStatus.ACTIVE),
@@ -362,12 +430,12 @@ class MissionSubmissionRecorderTest {
 	}
 
 	private void assertNotOpen() {
-		assertThatThrownBy(() -> recorder.record(command(option(q1, q1Ok)))).isInstanceOfSatisfying(MissionException.class,
+		assertThatThrownBy(() -> recorder.record(command(option(q1, q1Ok)), NOW)).isInstanceOfSatisfying(MissionException.class,
 				e -> assertThat(e.getErrorCode()).isEqualTo(MissionErrorCode.MISSION_NOT_OPEN));
 	}
 
 	private void assertConflict(MissionSubmissionCommand command) {
-		assertThatThrownBy(() -> recorder.record(command)).isInstanceOfSatisfying(MissionException.class,
+		assertThatThrownBy(() -> recorder.record(command, NOW)).isInstanceOfSatisfying(MissionException.class,
 				e -> assertThat(e.getErrorCode()).isEqualTo(MissionErrorCode.IDEMPOTENCY_CONFLICT));
 	}
 }
