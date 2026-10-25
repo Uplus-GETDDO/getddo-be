@@ -6,7 +6,7 @@ GETDDO는 응모권을 모아 경품 이벤트에 참여하고 추첨 결과를 
 
 | 구분 | 링크 |
 | --- | --- |
-| API 서버 | [링크](https://dzc8oneey9mmx.cloudfront.net) |
+| API 서버 | `https://dzc8oneey9mmx.cloudfront.net` (기준 주소입니다. 루트에는 화면이 없고 API는 `/api/v1/…` 아래에 있습니다. 호출해 볼 때는 아래 Swagger UI를 사용합니다) |
 | API 문서 | [Swagger UI](https://dzc8oneey9mmx.cloudfront.net/swagger-ui/index.html) |
 | 백엔드 문서 | [`docs/`](docs/) — [컨벤션](docs/01-conventions/) · [API](docs/02-api/) · [DB](docs/03-database/) · [결정 기록](docs/04-decisions/) · [작업 기록](docs/05-worklogs/) · [런북](docs/06-runbook/) |
 
