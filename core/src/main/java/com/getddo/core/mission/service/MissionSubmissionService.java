@@ -1,6 +1,8 @@
 package com.getddo.core.mission.service;
 
 import java.sql.SQLException;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -9,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.getddo.core.common.time.TimeProvider;
 import com.getddo.core.mission.domain.MissionSubmissionCommand;
 import com.getddo.core.mission.domain.MissionSubmissionResult;
 import com.getddo.core.mission.exception.MissionErrorCode;
@@ -28,6 +31,7 @@ public class MissionSubmissionService {
 	private static final int MYSQL_DUPLICATE_ENTRY = 1062;
 
 	private final MissionSubmissionRecorder recorder;
+	private final TimeProvider timeProvider;
 
 	/**
 	 * 제출을 접수하고 채점한다. 같은 제출 ID로 다시 요청하면 새로 접수하지 않고 이미 확정된 결과를 돌려준다.
@@ -41,18 +45,21 @@ public class MissionSubmissionService {
 				|| command.getSubmissionId() == null || command.getAnswers() == null) {
 			throw new MissionException(MissionErrorCode.INVALID_MISSION_ANSWER);
 		}
+		// 서버 도착 시각을 처리 시작 전에 한 번 정한다. 사용자 행 잠금을 기다리거나 재처리하는 동안 종료 시각이 지나도 도착
+		// 시각이 운영 기간 안이면 접수해야 한다. DATETIME(6)이 저장하는 정밀도로 잘라 응답·재조회·저장 값이 어긋나지 않게 한다.
+		Instant receivedAt = timeProvider.now().truncatedTo(ChronoUnit.MICROS);
 		try {
-			return recorder.record(command);
+			return recorder.record(command, receivedAt);
 		} catch (PessimisticLockingFailureException concurrentSubmission) {
 			// 동시 제출의 잠금 교착·대기 실패다. 롤백된 트랜잭션은 버리고 새 트랜잭션에서 한 번만 다시 처리한다.
-			return recorder.record(command);
+			return recorder.record(command, receivedAt);
 		} catch (DataIntegrityViolationException violation) {
 			// 같은 제출 ID·정답 문항·보상 청구가 동시에 겹친 UNIQUE 위반만 다시 처리한다. FK·NOT NULL·CHECK 위반은 재처리해도
 			// 같으므로 그대로 전파한다.
 			if (!isDuplicateKey(violation)) {
 				throw violation;
 			}
-			return recorder.record(command);
+			return recorder.record(command, receivedAt);
 		}
 	}
 

@@ -1,5 +1,6 @@
 package com.getddo.db.mission;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -13,7 +14,9 @@ import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.RepeatedTest;
+import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.testcontainers.mysql.MySQLContainer;
 
 import com.getddo.core.mission.domain.MissionAnswerInput;
 import com.getddo.core.mission.domain.MissionDetail;
@@ -23,8 +26,10 @@ import com.getddo.core.mission.domain.QuizQuestion;
 import com.getddo.core.mission.domain.SurveyQuestion;
 import com.getddo.core.mission.exception.MissionErrorCode;
 import com.getddo.core.mission.exception.MissionException;
+import com.getddo.core.mission.repository.MissionSubmissionRepository;
 import com.getddo.core.mission.service.MissionSubmissionService;
 import com.getddo.db.ticket.ConcurrentTasks;
+import com.getddo.db.ticket.LockWaitProbe;
 
 import static com.getddo.db.ticket.TicketGrantSeeds.bytes;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -42,6 +47,10 @@ class MissionSubmissionConcurrencyTest extends MissionIntegrationTestSupport {
 
 	@Autowired
 	private MissionSubmissionService submissionService;
+	@Autowired
+	private MissionSubmissionRepository submissionRepository;
+	@Autowired
+	private MySQLContainer mysql;
 
 	private Callable<MissionSubmissionResult> submit(UUID user, UUID missionId, UUID submissionId,
 			MissionAnswerInput... answers) {
@@ -177,23 +186,18 @@ class MissionSubmissionConcurrencyTest extends MissionIntegrationTestSupport {
 		}
 	}
 
-	/** 문항마다 정답 한 개씩만 담은 제출 답변. 전 문항 정답 배열의 각 원소가 한 문항의 답변이다. */
-	private static MissionAnswerInput[] singleCorrectAnswers(MissionDetail quiz) {
-		return allCorrect(quiz);
-	}
-
 	@RepeatedTest(REPEATS)
 	@DisplayName("같은 사용자가 퀴즈 정답을 문항별로 나눠 동시에 제출해도 오류 없이 한 번만 완료되고 보상은 1회다")
 	void sameUserQuizAnswersSplitAcrossRequestsCompletesOnce() throws Exception {
 		// given
 		MissionDetail quiz = saveQuizMission("퀴즈 미션");
 		UUID missionId = quiz.getMission().getId();
-		MissionAnswerInput[] singles = singleCorrectAnswers(quiz);
+		MissionAnswerInput[] perQuestion = allCorrect(quiz); // 원소 하나가 한 문항의 정답이다
 		// when
 		List<Object> outcomes = runSimultaneously(List.of(
-				submit(userId, missionId, UUID.randomUUID(), singles[0]),
-				submit(userId, missionId, UUID.randomUUID(), singles[1]),
-				submit(userId, missionId, UUID.randomUUID(), singles[2])));
+				submit(userId, missionId, UUID.randomUUID(), perQuestion[0]),
+				submit(userId, missionId, UUID.randomUUID(), perQuestion[1]),
+				submit(userId, missionId, UUID.randomUUID(), perQuestion[2])));
 		// then
 		assertThat(outcomes).allSatisfy(outcome -> assertThat(outcome).isInstanceOf(MissionSubmissionResult.class));
 		List<MissionSubmissionResult> results = outcomes.stream().map(MissionSubmissionResult.class::cast).toList();
@@ -210,12 +214,12 @@ class MissionSubmissionConcurrencyTest extends MissionIntegrationTestSupport {
 		// given
 		MissionDetail quiz = saveQuizMission("퀴즈 미션");
 		UUID missionId = quiz.getMission().getId();
-		MissionAnswerInput[] singles = singleCorrectAnswers(quiz);
+		MissionAnswerInput[] perQuestion = allCorrect(quiz); // 원소 하나가 한 문항의 정답이다
 		// when
 		List<Object> outcomes = runSimultaneously(List.of(
-				submit(userId, missionId, UUID.randomUUID(), singles[0]),
-				submit(userId, missionId, UUID.randomUUID(), singles[1]),
-				submit(userId, missionId, UUID.randomUUID(), singles[2]),
+				submit(userId, missionId, UUID.randomUUID(), perQuestion[0]),
+				submit(userId, missionId, UUID.randomUUID(), perQuestion[1]),
+				submit(userId, missionId, UUID.randomUUID(), perQuestion[2]),
 				submit(userId, missionId, UUID.randomUUID(), allCorrect(quiz))));
 		// then
 		assertThat(outcomes).allSatisfy(outcome -> assertThat(outcome).isInstanceOf(MissionSubmissionResult.class));
@@ -232,16 +236,16 @@ class MissionSubmissionConcurrencyTest extends MissionIntegrationTestSupport {
 		// given
 		MissionDetail quiz = saveQuizMission("퀴즈 미션");
 		UUID missionId = quiz.getMission().getId();
-		MissionAnswerInput[] singles = singleCorrectAnswers(quiz);
+		MissionAnswerInput[] perQuestion = allCorrect(quiz); // 원소 하나가 한 문항의 정답이다
 		List<UUID> submissionIds = List.of(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
 		List<Object> first = runSimultaneously(List.of(
-				submit(userId, missionId, submissionIds.get(0), singles[0]),
-				submit(userId, missionId, submissionIds.get(1), singles[1]),
-				submit(userId, missionId, submissionIds.get(2), singles[2])));
+				submit(userId, missionId, submissionIds.get(0), perQuestion[0]),
+				submit(userId, missionId, submissionIds.get(1), perQuestion[1]),
+				submit(userId, missionId, submissionIds.get(2), perQuestion[2])));
 		assertThat(first).allSatisfy(outcome -> assertThat(outcome).isInstanceOf(MissionSubmissionResult.class));
 		// when
 		for (int i = 0; i < submissionIds.size(); i++) {
-			MissionSubmissionResult retried = submit(userId, missionId, submissionIds.get(i), singles[i]).call();
+			MissionSubmissionResult retried = submit(userId, missionId, submissionIds.get(i), perQuestion[i]).call();
 			// then
 			assertThat(retried.getSubmissionId()).isEqualTo(submissionIds.get(i));
 			assertThat(retried.isCreated()).isFalse();
@@ -249,6 +253,51 @@ class MissionSubmissionConcurrencyTest extends MissionIntegrationTestSupport {
 		assertThat(count("mission_submissions", userId)).isEqualTo(3);
 		assertThat(count("mission_reward_claims", userId)).isEqualTo(1);
 		assertThat(count("tickets", userId)).isEqualTo(1);
+	}
+
+	@Test
+	@DisplayName("퀴즈 제출이 사용자 잠금을 기다리는 사이 종료 시각이 지나도 도착 시각이 운영 기간 안이면 접수한다")
+	void acceptsSubmissionArrivedBeforeEndWhenLockWaitCrossesEnd() throws Exception {
+		// given: 종료 1초 전에 도착한 제출이, 앞 트랜잭션이 쥔 사용자 행 잠금에서 대기한다
+		MissionDetail quiz = saveQuizMission("퀴즈 미션");
+		UUID missionId = quiz.getMission().getId();
+		MissionAnswerInput answer = allCorrect(quiz)[0];
+		Instant arrival = CLOSES.minusSeconds(1);
+		clock.set(arrival);
+		CountDownLatch locked = new CountDownLatch(1);
+		CountDownLatch release = new CountDownLatch(1);
+		ExecutorService executor = Executors.newFixedThreadPool(2);
+		try {
+			Future<Object> holder = executor.submit(() -> transaction.execute(status -> {
+				submissionRepository.lockUser(userId);
+				locked.countDown();
+				awaitQuietly(release);
+				return null;
+			}));
+			assertThat(locked.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+			Future<MissionSubmissionResult> waiting = executor.submit(submit(userId, missionId, UUID.randomUUID(), answer));
+			new LockWaitProbe(mysql).awaitLockWaits(1);
+			// when: 대기 중에 종료 시각이 지난 뒤 잠금이 풀린다
+			clock.set(CLOSES.plusSeconds(1));
+			release.countDown();
+			holder.get(WAIT_SECONDS, TimeUnit.SECONDS);
+			MissionSubmissionResult result = waiting.get(WAIT_SECONDS, TimeUnit.SECONDS);
+			// then: 서버가 요청을 받은 시각 기준으로 접수한다
+			assertThat(result.isCreated()).isTrue();
+			assertThat(result.getReceivedAt()).isEqualTo(arrival);
+			assertThat(count("mission_submissions", userId)).isEqualTo(1);
+		} finally {
+			release.countDown();
+			ConcurrentTasks.shutdownAndAwait(executor);
+		}
+	}
+
+	private static void awaitQuietly(CountDownLatch latch) {
+		try {
+			latch.await(WAIT_SECONDS, TimeUnit.SECONDS);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+		}
 	}
 
 	private List<Object> runSimultaneously(List<? extends Callable<?>> works) throws Exception {
