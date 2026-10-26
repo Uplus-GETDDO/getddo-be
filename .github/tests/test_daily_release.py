@@ -13,7 +13,7 @@ DEV, MAIN = 'a' * 40, 'b' * 40
 RUN = {'id': 7, 'head_sha': DEV, 'head_branch': 'dev', 'event': 'push',
        'status': 'completed', 'conclusion': 'success', 'html_url': 'https://github.com/test/run/7'}
 JOBS = [{'name': name, 'status': 'completed', 'conclusion': 'success'}
-        for name in ['빌드·테스트', '이미지 / Docker 이미지']]
+        for name in ['빌드·테스트', '이미지 / 이미지 빌드 검증', '이미지 / Docker 이미지']]
 PULL = {'number': 12, 'state': 'open', 'draft': False, 'mergeable': True,
         'head': {'ref': 'dev', 'sha': DEV, 'repo': {'full_name': 'owner/repo'}},
         'base': {'ref': 'main'}}
@@ -47,6 +47,8 @@ class FakeGitHub:
             return self.existing
         if path == 'pulls' and method == 'POST':
             return self.pull
+        if path == 'issues/12/labels' and method == 'POST':
+            return [{'name': 'skip-review'}]
         if path.endswith('/merge'):
             return {'merged': self.merged, 'sha': 'c' * 40}
         if path == 'pulls/12':
@@ -61,7 +63,8 @@ class DailyReleaseTests(unittest.TestCase):
     def test_success_merges_exact_sha_and_only_dev_to_main(self):
         github = FakeGitHub()
         self.assertIn('RELEASE_MERGED', release.release(github))
-        create, merge = github.mutations()
+        create, label, merge = github.mutations()
+        self.assertEqual(('issues/12/labels', 'POST', {'labels': ['skip-review']}), label)
         self.assertEqual(('main', 'dev'), (create[2]['base'], create[2]['head']))
         self.assertEqual({'sha': DEV, 'merge_method': 'merge'}, merge[2])
 
@@ -79,12 +82,34 @@ class DailyReleaseTests(unittest.TestCase):
                 self.assertFalse(github.mutations())
 
     def test_missing_failed_or_skipped_required_job_does_not_create_pr(self):
-        for jobs in [JOBS[:1], [{**JOBS[0], 'conclusion': 'skipped'}, JOBS[1]],
-                     [JOBS[0], {**JOBS[1], 'conclusion': 'failure'}]]:
+        cases = [JOBS[:index] + JOBS[index + 1:] for index in range(len(JOBS))]
+        for index in range(len(JOBS)):
+            for conclusion in ('failure', 'cancelled', 'skipped', 'neutral', 'timed_out'):
+                jobs = copy.deepcopy(JOBS)
+                jobs[index]['conclusion'] = conclusion
+                cases.append(jobs)
+            jobs = copy.deepcopy(JOBS)
+            jobs[index]['status'] = 'in_progress'
+            cases.append(jobs)
+        for jobs in cases:
             with self.subTest(jobs=jobs):
                 github = FakeGitHub(); github.jobs = jobs
                 self.assertIn('RELEASE_SKIPPED', release.release(github))
                 self.assertFalse(github.mutations())
+
+    def test_dev_build_with_skipped_main_publisher_is_eligible(self):
+        """dev의 필수 검증 성공과 main 전용 작업 생략을 구분한다."""
+        github = FakeGitHub()
+        github.jobs.append({'name': 'main 이미지', 'status': 'completed', 'conclusion': 'skipped'})
+        self.assertIn('RELEASE_DRY_RUN', release.release(github, True))
+        self.assertFalse(github.mutations())
+
+    def test_successful_jobs_cannot_override_unsuccessful_build(self):
+        """필수 작업이 성공해도 전체 Build 실패를 릴리스 대상으로 사용하지 않는다."""
+        github = FakeGitHub()
+        github.runs[0]['conclusion'] = 'failure'
+        self.assertIsNone(release.successful_build(github, DEV))
+        self.assertFalse(github.mutations())
 
     def test_dry_run_never_mutates(self):
         github = FakeGitHub()
@@ -94,7 +119,7 @@ class DailyReleaseTests(unittest.TestCase):
     def test_existing_pr_is_reused(self):
         github = FakeGitHub(); github.existing = [PULL]
         self.assertIn('RELEASE_MERGED', release.release(github))
-        self.assertEqual(1, len(github.mutations()))
+        self.assertEqual(2, len(github.mutations()))
 
     def test_draft_closed_wrong_branch_sha_or_repository_is_not_merged(self):
         changes = [{'draft': True}, {'state': 'closed'},
@@ -138,6 +163,19 @@ class DailyReleaseTests(unittest.TestCase):
         with patch.object(release, 'successful_build', side_effect=[RUN, None]):
             self.assertIn('RELEASE_SKIPPED', release.release(github))
         self.assertFalse(github.mutations())
+
+    def test_label_failure_never_merges(self):
+        """리뷰 예외 라벨을 적용하지 못하면 main 병합을 실행하지 않는다."""
+        github = FakeGitHub()
+        original = github.api
+        def api(path, method='GET', data=None):
+            if path == 'issues/12/labels':
+                raise release.ReleaseError('label rejected')
+            return original(path, method, data)
+        github.api = api
+        with self.assertRaises(release.ReleaseError):
+            release.release(github)
+        self.assertFalse(any(path.endswith('/merge') for path, _, _ in github.calls))
 
     def test_merge_rejection_is_failure(self):
         github = FakeGitHub(); github.merged = False

@@ -35,7 +35,7 @@ class GitHub:
 
 
 def successful_build(github, sha):
-    """같은 dev 커밋의 가장 최근 push Build와 필수 두 작업을 검사한다."""
+    """같은 dev 커밋의 가장 최근 push Build와 필수 검증 작업을 검사한다."""
     runs = github.api(f"actions/workflows/build.yml/runs?branch=dev&event=push&head_sha={sha}&per_page=1")["workflow_runs"]
     if not runs:
         return None
@@ -43,12 +43,15 @@ def successful_build(github, sha):
     if (run["head_sha"] != sha or run["head_branch"] != "dev" or run["event"] != "push"
             or run["status"] != "completed" or run["conclusion"] != "success"):
         return None
-    # 재실행에서는 최신 attempt의 작업만 받는다. 생략된 작업을 CI 성공으로 간주하지 않는다.
+    # 재실행에서는 최신 attempt의 작업만 받는다. 생략된 필수 작업을 CI 성공으로 간주하지 않는다.
     jobs = github.api(f"actions/runs/{run['id']}/jobs?filter=latest&per_page=100")["jobs"]
-    expected = {"빌드·테스트", "이미지 / Docker 이미지"}
+    expected = {"빌드·테스트", "이미지 / 이미지 빌드 검증", "이미지 / Docker 이미지"}
     if not expected.issubset({job["name"] for job in jobs}):
         return None
-    if any(job["status"] != "completed" or job["conclusion"] != "success" for job in jobs):
+    # dev에서 생략되는 main 전용 게시 작업은 필수 검증에 포함하지 않는다.
+    # 전체 Build 성공 조건은 위에서 별도로 확인하므로 다른 작업 실패도 통과하지 않는다.
+    if any(job["status"] != "completed" or job["conclusion"] != "success"
+           for job in jobs if job["name"] in expected):
         return None
     return run
 
@@ -97,6 +100,8 @@ def release(github, dry_run=False):
         return "RELEASE_SKIPPED: 검증 중 dev 또는 main이 변경됐습니다."
     if successful_build(github, dev) is None:
         return "RELEASE_SKIPPED: dev CI 상태가 변경됐습니다."
+    # main 릴리스 PR은 저장소의 리뷰 예외 라벨을 병합 전에 적용한다.
+    github.api(f"issues/{number}/labels", "POST", {"labels": ["skip-review"]})
     merged = github.api(f"pulls/{number}/merge", "PUT", {"sha": dev, "merge_method": "merge"})
     if not merged.get("merged"):
         raise ReleaseError("PR을 병합하지 못했습니다. main 보호 규칙과 App 예외를 확인하세요.")

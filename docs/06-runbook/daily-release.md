@@ -9,11 +9,11 @@
 기본 브랜치인 dev에 [예약 워크플로](../../.github/workflows/daily-release.yml)가 반영되고 활성화되면 [daily-release.py](../../infra/scripts/daily-release.py)가 다음 순서로 처리한다.
 
 1. 최신 dev·main 커밋을 조회한다. main에 이미 포함된 dev라면 건너뛴다.
-2. 그 dev 커밋의 가장 최근 push Build가 완료·성공이고, `빌드·테스트`와 `이미지 / Docker 이미지` 작업도 성공인지 확인한다. CI가 없거나 실패·진행 중이면 오늘 배포를 건너뛴다. 과거 커밋의 성공이나 PR CI 성공으로 대체하지 않는다.
+2. 그 dev 커밋의 가장 최근 push Build가 완료·성공이고, `빌드·테스트`, `이미지 / 이미지 빌드 검증`, `이미지 / Docker 이미지` 작업도 모두 완료·성공인지 확인한다. dev에서 정상적으로 생략되는 `main 이미지` 게시 작업은 이 필수 검증에서 제외한다. 필수 작업의 누락·실패·취소·생략은 허용하지 않는다. CI가 없거나 실패·진행 중이면 오늘 배포를 건너뛴다. 과거 커밋의 성공이나 PR CI 성공으로 대체하지 않는다.
 3. 같은 저장소의 dev → main PR을 재사용하거나 생성한다. 새 PR은 `[chore] GD-115 매일 dev 변경 main 반영` 제목을 사용한다.
 4. 초안·종료된 PR, 다른 head·base·저장소·커밋, 충돌 또는 병합 가능 여부 미확인은 건너뛴다. GitHub의 병합 가능 여부 계산은 최대 1분만 기다린다.
 5. dev·main이 조회한 상태 그대로인지, dev CI가 여전히 성공인지 다시 확인한다. merge API에도 검증한 dev SHA를 전달해 다른 head 커밋의 병합을 막는다.
-6. 전용 GitHub App으로 merge commit을 만든다. 해당 main push가 기존 Build를 실행하고, 성공하면 [Container CD](container-cd.md)가 서버에 배포한다.
+6. 검증한 main 릴리스 PR에 `skip-review` 라벨을 적용하고 전용 GitHub App으로 merge commit을 만든다. 해당 main push가 기존 Build를 실행하고, 성공하면 [Container CD](container-cd.md)가 서버에 배포한다.
 
 PR CI·봇 리뷰 완료를 기다리는 흐름은 아니다. 사용자가 승인한 정기 릴리스는 검증된 dev를 리뷰 승인 없이 main에 반영하며, main의 새 병합 커밋은 다시 Build를 통과해야 배포된다. 새 필수 Parameter Store 값과 호환되는 DB 마이그레이션은 dev 병합 전에 준비해야 한다. API 병합 직전 최종 조회와 병합 사이의 main 변경을 원자적으로 잠그지는 못하므로 main의 Build와 CD는 계속 최종 배포 관문으로 유지한다.
 
