@@ -16,7 +16,11 @@ class MonitoringComposeTest(unittest.TestCase):
         command = [compose] if compose else ['docker', 'compose']
         with tempfile.TemporaryDirectory() as directory:
             env_file = Path(directory) / 'app.env'
-            env_file.write_text('AWS_REGION=ap-northeast-2\nSPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE=10\n')
+            env_file.write_text(
+                'AWS_REGION=ap-northeast-2\n'
+                'SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE=10\n'
+                'SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE=5\n'
+            )
             env = dict(os.environ, APP_IMAGE='getddo:test', APP_ENV_FILE=str(env_file), API_PRIVATE_IP='10.0.1.20')
             args = command + ['--env-file', '/dev/null', '--file', str(ROOT / 'compose.deploy.yaml'),
                               'config', '--format', 'json']
