@@ -12,7 +12,6 @@
 | 구분 | 링크 |
 | --- | --- |
 | 서비스 | [GETDDO 사용자·관리자 화면](https://getddo-fe.vercel.app/) |
-| API 서버 | `https://dzc8oneey9mmx.cloudfront.net` |
 | API 문서 | [Swagger UI](https://dzc8oneey9mmx.cloudfront.net/swagger-ui/index.html) |
 | 공용 명세 | [요구사항·도메인·API 계약](https://github.com/Uplus-GETDDO/getddo-spec) |
 | 백엔드 문서 | [`docs/`](docs/) — [컨벤션](docs/01-conventions/) · [API](docs/02-api/) · [DB](docs/03-database/) · [결정 기록](docs/04-decisions/) · [작업 기록](docs/05-worklogs/) · [런북](docs/06-runbook/) · [검증 안내](docs/07-verification/) |
