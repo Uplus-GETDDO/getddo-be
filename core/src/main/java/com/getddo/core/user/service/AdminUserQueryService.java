@@ -29,7 +29,11 @@ public class AdminUserQueryService {
 	public AdminUserList findAll(User actor, AdminUserQuery query) {
 		requireAdmin(actor);
 		PageResult<User> page = queries.findAll(query);
-		return new AdminUserList(page, queries.countActiveRegularUsers());
+		// 검색 대상이 전체 활성 일반 사용자와 같으면 이미 구한 정확한 건수를 재사용한다.
+		boolean activeRegularUsersOnly = query.getRole() == UserRole.USER && query.getStatus() == UserStatus.ACTIVE
+				&& query.getUserId() == null && query.getKeyword() == null && query.getMembership() == null;
+		long totalUserCount = activeRegularUsersOnly ? page.getTotalElements() : queries.countActiveRegularUsers();
+		return new AdminUserList(page, totalUserCount);
 	}
 
 	/** 조회 대상은 역할·활성 여부로 제외하지 않으며 부재만 404로 처리한다. */

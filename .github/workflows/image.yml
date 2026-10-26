@@ -8,8 +8,9 @@ permissions:
   contents: read
 
 jobs:
-  image:
-    name: Docker 이미지
+  validate:
+    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+    name: 이미지 빌드 검증
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -18,7 +19,7 @@ jobs:
 
     steps:
       - name: 소스 코드 가져오기
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ env.SOURCE_SHA }}
           persist-credentials: false
@@ -32,7 +33,6 @@ jobs:
       # 운영 CD는 기존 main 산출물만 사용한다. 같은 저장소 PR의 별도 산출물은 Stage 수동 검증용이다.
       - name: 검증 이미지 파일 준비
         if: >-
-          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
           (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
         shell: bash
         run: |
@@ -43,24 +43,27 @@ jobs:
           # 전달 중 파일 손상 여부와 CD가 받은 이미지의 동일성을 확인할 자료.
           sha256sum image.tar.gz > image.tar.gz.sha256
 
-      - name: main 이미지를 CD용 아티팩트로 보관
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
-        with:
-          # 재사용 워크플로에서도 호출한 CI의 실행·재시도 번호로 보관한다.
-          name: container-image-${{ github.sha }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/container-image/
-          retention-days: 7
-          compression-level: 0
-          if-no-files-found: error
-
       # AWS 권한을 주지 않고 리뷰 대상 이미지 파일만 보관한다. 운영 CD 조건은 변경하지 않는다.
       - name: 동일 저장소 PR 이미지를 Stage 검증용으로 보관
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: staging-image-${{ env.SOURCE_SHA }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/container-image/
           retention-days: 7
           compression-level: 0
           if-no-files-found: error
+
+  image:
+    name: Docker 이미지
+    if: always()
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: 실행한 이미지 작업의 성공 확인
+        env:
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+        run: |
+          test "$VALIDATE_RESULT" = success

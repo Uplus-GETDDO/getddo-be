@@ -22,7 +22,9 @@ env_changed=0
 committed=0
 had_env=0
 previous=''
-old_image=''
+old_ref=''
+old_image_id=''
+image_id=''
 image=''
 marker="$root/deploy-in-progress"
 transaction_started=0
@@ -65,15 +67,16 @@ compose() {
 }
 
 healthy() {
-  local directory=$1 selected_image=$2 container state status attempt
+  local directory=$1 selected_image=$2 container state status attempt selected_id
+  selected_id=$(cat "$directory/image-id.txt")
   local deadline=$((SECONDS + 180))
   for ((attempt = 0; attempt < 30 && SECONDS < deadline; attempt++)); do
     container=$(compose 10 "$directory" "$selected_image" "$app_env" ps -q app) || container=''
     state=''
     if [[ -n $container ]]; then
-      state=$(timeout 10 docker inspect --format '{{.State.Running}} {{.Config.Image}}' "$container") || state=''
+      state=$(timeout 10 docker inspect --format '{{.State.Running}} {{.Config.Image}} {{.Image}}' "$container") || state=''
     fi
-    if [[ $state == "true $selected_image" ]]; then
+    if [[ $state == "true $selected_image $selected_id" ]]; then
       # 기존 HTTP API로 기동을 확인한다. DB·업무 기능 전체 검증은 아니다.
       status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
         --max-time 5 http://127.0.0.1:8080/v3/api-docs) || status=''
@@ -134,8 +137,8 @@ rollback() {
   env_changed=0
   if [[ -n $previous ]]; then
     # 이전 Compose·이미지와 복원한 env를 함께 사용한다. 같은 이미지여도 설정을 다시 주입한다.
-    if compose 120 "$previous" "$old_image" "$app_env" up -d --force-recreate --no-build --pull never app &&
-       healthy "$previous" "$old_image" && record_current "$previous"; then
+    if compose 120 "$previous" "$old_ref" "$app_env" up -d --force-recreate --no-build --pull never app &&
+       healthy "$previous" "$old_ref" && record_current "$previous"; then
       echo 'ROLLBACK_OK: 이전 이미지와 설정을 복구했습니다. 이번 배포는 실패입니다.'
     else
       echo 'ROLLBACK_FAILED: 이전 앱의 정상 응답을 확인하지 못했습니다.' >&2
@@ -156,7 +159,7 @@ finish() {
   if ((env_changed && !committed)); then
     if rollback; then
       if clear_marker && [[ -n $previous ]]; then
-        echo "ROLLBACK_CONFIRMED_HEALTHY: $source_sha $old_image"
+        echo "ROLLBACK_CONFIRMED_HEALTHY: $source_sha $old_image_id"
       fi
     fi
     ((status != 0)) || status=1
@@ -208,19 +211,31 @@ if [[ -e $app_env || -L $app_env ]]; then
 fi
 if [[ -L $root/current ]]; then
   previous=$(readlink -f "$root/current")
-  old_image=$(cat "$previous/image-id.txt")
-  [[ $old_image =~ ^sha256:[a-f0-9]{64}$ ]]
-  compose 20 "$previous" "$old_image" "$app_env" config --quiet
-  timeout 10 docker image inspect "$old_image" >/dev/null
+  old_image_id=$(cat "$previous/image-id.txt")
+  [[ $old_image_id =~ ^sha256:[a-f0-9]{64}$ ]]
+  if [[ $deploy_environment == staging ]]; then
+    old_ref=$old_image_id
+  else
+    old_ref=$(cat "$previous/image-ref.txt")
+    [[ $old_ref =~ ^942466928325\.dkr\.ecr\.ap-northeast-2\.amazonaws\.com/getddo-be@sha256:[a-f0-9]{64}$ ]]
+  fi
+  compose 20 "$previous" "$old_ref" "$app_env" config --quiet
+  timeout 10 docker image inspect "$old_ref" >/dev/null
 elif [[ -e $root/current ]]; then
   echo 'current 경로가 배포용 링크가 아닙니다.' >&2
   exit 1
 fi
 
 cd "$release"
-sha256sum --check image.tar.gz.sha256
-image=$(cat image-id.txt)
-[[ $image =~ ^sha256:[a-f0-9]{64}$ ]]
+if [[ $deploy_environment == staging ]]; then
+  bash "$release/prepare-staging-image.sh" "$source_sha"
+else
+  # 교체 직전에는 네트워크 없이 준비 결과를 재검증한다. ECR 준비는 ALB 제외 전에 끝나야 한다.
+  python3 "$release/prepare-image.py" "$source_sha" --local-only
+fi
+image_id=$(cat image-id.txt)
+image=$(cat image-ref.txt)
+[[ $image_id =~ ^sha256:[a-f0-9]{64}$ ]]
 
 # app.env와 같은 파일시스템의 root 전용 임시 디렉터리를 써서 rename을 원자적으로 수행한다.
 # 파라미터가 없거나 타입·형식·복호화가 틀리면 이 단계에서 실패하고 기존 앱은 유지된다.
@@ -236,11 +251,6 @@ if [[ -z $previous && -n $(compose 10 "$release" "$image" "$env_tmp/next.env" ps
   echo '복구 기록이 없는 기존 앱이 있습니다. 기존 배포를 먼저 확인하세요.' >&2
   exit 1
 fi
-# 새 이미지까지 검증한 뒤에만 실제 설정과 컨테이너를 교체한다.
-timeout 300 docker image load --input image.tar.gz
-[[ $(timeout 10 docker image inspect --format '{{.Id}}' "getddo-be:$source_sha") == "$image" ]]
-revision=$(timeout 10 docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")
-[[ $revision == "$source_sha" ]]
 if [[ -f $app_env ]]; then
   install -m 0600 "$app_env" "$env_tmp/previous.env"
   had_env=1
@@ -263,7 +273,7 @@ if compose 120 "$release" "$image" "$app_env" up -d --force-recreate --no-build 
    healthy "$release" "$image" && metrics_ready && record_current "$release"; then
   committed=1
   clear_marker
-  echo "DEPLOY_OK: $source_sha $image"
+  echo "DEPLOY_OK: $source_sha $image_id"
 else
   exit 1
 fi

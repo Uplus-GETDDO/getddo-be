@@ -12,6 +12,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,15 +32,19 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.dao.TransientDataAccessResourceException;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import com.getddo.core.common.time.TimeProvider;
 import com.getddo.core.notification.domain.MockDeliveryStatus;
 import com.getddo.core.notification.domain.NotificationDelivery;
+import com.getddo.core.notification.domain.NotificationDeliveryResult;
 import com.getddo.core.notification.domain.NotificationJob;
 import com.getddo.core.notification.domain.NotificationJobRequest;
 import com.getddo.core.notification.domain.NotificationType;
@@ -47,6 +52,7 @@ import com.getddo.core.notification.exception.NotificationProcessingErrorCode;
 import com.getddo.core.notification.exception.NotificationProcessingException;
 import com.getddo.core.notification.repository.NotificationJobRepository;
 import com.getddo.core.notification.service.MockNotificationSender;
+import com.getddo.core.notification.service.NotificationBatchTransactionService;
 import com.getddo.core.notification.service.NotificationJobService;
 import com.getddo.core.notification.service.NotificationService;
 import com.getddo.core.common.exception.BusinessException;
@@ -61,6 +67,7 @@ import com.getddo.db.ticket.MutableClock;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 
@@ -74,12 +81,14 @@ class NotificationJobIntegrationTest {
 
 	@Autowired private NotificationJobService service;
 	@Autowired private NotificationService notificationService;
+	@Autowired private NotificationBatchTransactionService batches;
 	@MockitoSpyBean private NotificationJobRepository repository;
 	@Autowired private JdbcTemplate jdbc;
 	@Autowired private MutableClock clock;
 	@Autowired private PlatformTransactionManager transactionManager;
 	@MockitoBean private MockNotificationSender sender;
 	private String prefix;
+	private final List<UUID> additionalUsers = new ArrayList<>();
 
 	/** 각 시나리오의 시계·사용자·발송 결과를 초기화해 테스트 간 영향을 차단한다. */
 	@BeforeEach
@@ -105,6 +114,38 @@ class NotificationJobIntegrationTest {
 			jdbc.update("delete from notification_jobs where id = ?", id);
 		}
 		jdbc.update("delete from users where id in (?, ?)", bytes(USER), bytes(OTHER));
+		for (UUID id : additionalUsers) {
+			jdbc.update("delete from users where id = ?", bytes(id));
+		}
+	}
+
+
+	/** 큰 수신자 작업의 예약 순서와 중지·미래 예약 제외 조건을 검증한다. 인덱스 실행계획은 별도 시험한다. */
+	@Test
+	@DisplayName("1만 명 작업을 선점할 때 중지와 미래 예약을 제외하고 예약 순서를 유지한다")
+	void claimsLargeRecipientJobsInScheduleOrder() {
+		// given: 선점까지만 검증하므로 수신자 사용자 행은 만들지 않는다.
+		List<UUID> recipients = new ArrayList<>();
+		for (int index = 0; index < 10_000; index++) {
+			recipients.add(UUID.randomUUID());
+		}
+		UUID stopped = service.register(request("large-stopped", NOW.minusSeconds(3), recipients));
+		jdbc.update("update notification_jobs set payload = json_set(payload, '$.generationStoppedBy', 'test') where id = ?",
+				bytes(stopped));
+		UUID future = service.register(request("large-future", NOW.plusSeconds(60), recipients));
+		UUID first = service.register(request("large-first", NOW.minusSeconds(2), recipients));
+		UUID second = service.register(request("large-second", NOW.minusSeconds(1), recipients));
+
+		// when
+		NotificationJob firstClaim = repository.claimNextJob(NOW).orElseThrow();
+		NotificationJob secondClaim = repository.claimNextJob(NOW).orElseThrow();
+
+		// then
+		assertThat(firstClaim.getId()).isEqualTo(first);
+		assertThat(secondClaim.getId()).isEqualTo(second);
+		assertThat(repository.claimNextJob(NOW)).isEmpty();
+		assertThat(count("select count(*) from notification_jobs where id in (?, ?) and attempt_count = 0",
+				bytes(stopped), bytes(future))).isEqualTo(2);
 	}
 
 	/** 검증 시나리오: 같은 발생 건과 수신자 순서 변경은 같은 작업이며 다른 문구는 충돌로 거절한다. */
@@ -300,14 +341,25 @@ class NotificationJobIntegrationTest {
 				bytes(original))).isEqualTo(1);
 	}
 
-	/** 검증 시나리오: 사용자 FK 위반은 즉시 최종 실패로 기록하며 이미 저장한 알림과 확정 업무 결과를 보존한다. */
+	/** 검증 시나리오: 다음 묶음의 FK 위반은 앞서 확정한 100건과 원본 업무를 롤백하지 않는다. */
 	@Test
-	@DisplayName("사용자 FK 위반은 즉시 최종 실패로 기록하며 이미 저장한 알림과 확정 업무 결과를 보존한다")
+	@DisplayName("다음 묶음의 FK 위반은 최종 실패로 기록하며 앞선 100건과 확정 업무를 보존한다")
 	void permanentGenerationFailureDoesNotUndoCommittedBusiness() {
 		// given
+		List<UUID> recipients = new ArrayList<>(List.of(USER));
+		for (int index = 0; index < 99; index++) {
+			UUID userId = new UUID(0, 10_000 + index);
+			additionalUsers.add(userId);
+			recipients.add(userId);
+			jdbc.update("""
+				insert into users (id, name, role, status, membership, created_at, updated_at)
+				values (?, '묶음 생성', 'USER', 'ACTIVE', 'VIP', ?, ?)
+				""", bytes(userId), utc(NOW), utc(NOW));
+		}
+		recipients.add(MISSING);
 		UUID id = new TransactionTemplate(transactionManager).execute(status -> {
 			jdbc.update("update users set name = '업무 확정' where id = ?", bytes(USER));
-			return service.register(request("invalid-user", NOW, List.of(USER, MISSING)));
+			return service.register(request("invalid-user", NOW, recipients));
 		});
 
 		// when
@@ -316,12 +368,214 @@ class NotificationJobIntegrationTest {
 		// then
 		assertThat(jobStatus(id)).isEqualTo("FAILED");
 		assertThat(count("select attempt_count from notification_jobs where id = ?", bytes(id))).isEqualTo(1);
-		assertThat(count("select count(*) from notifications where job_id = ?", bytes(id))).isEqualTo(1);
+		assertThat(count("select count(*) from notifications where job_id = ?", bytes(id))).isEqualTo(100);
 		assertThat(jdbc.queryForObject("select name from users where id = ?", String.class, bytes(USER))).isEqualTo("업무 확정");
 		assertThat(jdbc.queryForObject("select last_error from notification_jobs where id = ?", String.class, bytes(id)))
 				.isEqualTo("NOTIFICATION-006");
 		clock.set(NOW.plusSeconds(1000));
 		assertThat(service.processNextJob()).isFalse();
+	}
+
+	/** 같은 묶음의 일부 INSERT가 실패하면 원본 업무와 분리해 해당 묶음을 롤백한다. */
+	@Test
+	@DisplayName("같은 묶음의 FK 실패는 해당 묶음만 롤백하고 확정 업무는 보존한다")
+	void rollsBackEntireFailedGenerationChunk() {
+		// given
+		UUID id = new TransactionTemplate(transactionManager).execute(status -> {
+			jdbc.update("update users set name = '묶음 전 업무 확정' where id = ?", bytes(USER));
+			return service.register(request("failed-chunk", NOW, List.of(USER, MISSING)));
+		});
+
+		// when
+		assertThat(service.processNextJob()).isTrue();
+
+		// then
+		assertThat(jobStatus(id)).isEqualTo("FAILED");
+		assertThat(count("select count(*) from notifications where job_id = ?", bytes(id))).isZero();
+		assertThat(jdbc.queryForObject("select name from users where id = ?", String.class, bytes(USER)))
+				.isEqualTo("묶음 전 업무 확정");
+	}
+
+	/** 첫 트랜잭션의 실제 선점 잠금을 유지한 상태에서 다음 선점의 비대기·중복 방지·후속 처리를 검증한다. */
+	@Test
+	@DisplayName("동시 선점은 최대 100건씩 중복 없이 확보하고 총 200건 전체를 이어 처리한다")
+	void concurrentDeliveryBatchesDoNotOverlap() throws Exception {
+		// given
+		for (int index = 0; index < 200; index++) {
+			service.register(request("batch-delivery-" + index, NOW, List.of(USER)));
+			assertThat(service.processNextJob()).isTrue();
+		}
+		CountDownLatch firstLocked = new CountDownLatch(1);
+		CountDownLatch releaseFirst = new CountDownLatch(1);
+		AtomicBoolean holdFirst = new AtomicBoolean(true);
+		doAnswer(invocation -> {
+			@SuppressWarnings("unchecked")
+			List<NotificationDelivery> deliveries = (List<NotificationDelivery>) invocation.callRealMethod();
+			if (holdFirst.compareAndSet(true, false)) {
+				assertThat(deliveries).isNotEmpty();
+				assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+				// 호출한 Service의 REQUIRES_NEW는 아직 반환하지 않아 실제 행 잠금이 유지된다.
+				firstLocked.countDown();
+				if (!releaseFirst.await(30, TimeUnit.SECONDS)) {
+					throw new IllegalStateException("첫 발송 선점 트랜잭션 해제 대기 시간 초과");
+				}
+			}
+			return deliveries;
+		}).when(repository).claimNextDeliveries(NOW, 100);
+
+		// when
+		try (java.util.concurrent.ExecutorService executor = Executors.newFixedThreadPool(2)) {
+			Future<List<NotificationDelivery>> first = executor.submit(() -> batches.claimNextDeliveries(NOW, 100));
+			List<NotificationDelivery> right;
+			try {
+				assertThat(firstLocked.await(10, TimeUnit.SECONDS)).isTrue();
+				Future<List<NotificationDelivery>> second = executor.submit(() -> batches.claimNextDeliveries(NOW, 100));
+				right = second.get(10, TimeUnit.SECONDS);
+				assertThat(first).isNotDone();
+			} finally {
+				releaseFirst.countDown();
+			}
+			List<NotificationDelivery> left = first.get(15, TimeUnit.SECONDS);
+
+			// then
+			assertThat(left).hasSize(100);
+			assertThat(right).hasSizeLessThanOrEqualTo(100);
+			List<NotificationDelivery> claimed = new ArrayList<>(left);
+			claimed.addAll(right);
+			assertThat(claimed).isNotEmpty();
+			assertThat(claimed.stream().map(NotificationDelivery::getId).distinct().count())
+					.isEqualTo(claimed.size());
+			// InnoDB가 조회 중 잠근 행은 커밋 뒤 다음 호출에서 다시 후보가 될 수 있다.
+			while (claimed.size() < 200) {
+				List<NotificationDelivery> remaining = batches.claimNextDeliveries(NOW, 100);
+				assertThat(remaining).isNotEmpty().hasSizeLessThanOrEqualTo(100);
+				claimed.addAll(remaining);
+				assertThat(claimed.stream().map(NotificationDelivery::getId).distinct().count())
+						.isEqualTo(claimed.size());
+			}
+			assertThat(claimed).hasSize(200).allMatch(delivery -> delivery.getAttemptCount() == 1);
+			assertThat(count("select count(*) from notifications n join notification_jobs j on j.id = n.job_id"
+					+ " where j.occurrence_key like ? and n.delivery_attempt_count = 1", prefix + "batch-delivery-%"))
+					.isEqualTo(200);
+			assertThat(batches.claimNextDeliveries(NOW, 100)).isEmpty();
+		}
+	}
+
+	/** 성공·실패 혼합 저장에서도 읽음과 새 선점·수동 복구 구간의 결과를 보존한다. */
+	@Test
+	@DisplayName("묶음 결과는 읽음을 보존하고 이전 상태·선점·복구 기준 차수의 덮어쓰기를 차단한다")
+	void preservesReadStateAndFencesBatchedResults() {
+		UUID job = service.register(request("result-batch", NOW, List.of(USER, OTHER)));
+		assertThat(service.processNextJob()).isTrue();
+		List<NotificationDelivery> claimed = batches.claimNextDeliveries(NOW, 100);
+		assertThat(claimed).hasSize(2);
+		NotificationDelivery sent = claimed.getFirst();
+		NotificationDelivery failed = claimed.getLast();
+		jdbc.update("update notifications set is_read = true where id = ?", bytes(sent.getId()));
+		batches.recordDeliveryResults(List.of(NotificationDeliveryResult.sent(sent, NOW),
+				NotificationDeliveryResult.failed(failed, NOW.plusSeconds(10), "NOTIFICATION-005")), NOW.plusSeconds(60));
+		assertThat(count("select count(*) from notifications where job_id = ? and mock_delivery_status = 'SENT'",
+				bytes(job))).isEqualTo(1);
+		clock.set(NOW.plusSeconds(10));
+		NotificationDelivery current = batches.claimNextDeliveries(clock.instant(), 100).getFirst();
+		assertThat(current.getAttemptCount()).isEqualTo(2);
+		// 새 복구 구간의 같은 누적 차수도 이전 기준 차수의 결과와 구별한다.
+		jdbc.update("update notifications set delivery_attempt_base = 1 where id = ?", bytes(current.getId()));
+		batches.recordDeliveryResults(List.of(NotificationDeliveryResult.failed(sent, null, "NOTIFICATION-006"),
+				NotificationDeliveryResult.sent(failed, clock.instant()), NotificationDeliveryResult.sent(current, clock.instant())), NOW.plusSeconds(60));
+		assertThat(count("select count(*) from notifications where id = ? and mock_delivery_status = 'SENT' and is_read",
+				bytes(sent.getId()))).isEqualTo(1);
+		assertThat(count("select count(*) from notifications where id = ? and mock_delivery_status = 'PENDING'"
+				+ " and delivery_attempt_count = 2 and delivery_attempt_base = 1", bytes(current.getId()))).isEqualTo(1);
+		NotificationDelivery recovered = new NotificationDelivery(current.getId(), current.getUserId(), current.getTitle(),
+				current.getBody(), current.getLinkUrl(), 2, 1);
+		batches.recordDeliveryResults(List.of(NotificationDeliveryResult.sent(recovered, clock.instant())), NOW.plusSeconds(60));
+		assertThat(count("select count(*) from notifications where job_id = ? and mock_delivery_status = 'SENT'",
+				bytes(job))).isEqualTo(2);
+		assertThat(timestamp("select mock_sent_at from notifications where id = ?", bytes(sent.getId()))).isEqualTo(NOW);
+	}
+
+	/** JDBC 쓰기가 끝난 뒤 오류가 나도 Service 경계가 전체 결과를 롤백하는지 확인한다. */
+	@Test
+	@DisplayName("묶음 결과 기록 오류는 전체 롤백하고 같은 결과를 재저장할 수 있다")
+	void rollsBackFailedResultBatchBeforeRetry() {
+		UUID job = service.register(request("result-rollback", NOW, List.of(USER, OTHER)));
+		assertThat(service.processNextJob()).isTrue();
+		List<NotificationDeliveryResult> results = batches.claimNextDeliveries(NOW, 100).stream()
+				.map(delivery -> NotificationDeliveryResult.sent(delivery, NOW)).toList();
+		doAnswer(invocation -> {
+			invocation.callRealMethod();
+			throw new TransientDataAccessResourceException("synthetic result write failure");
+		}).when(repository).recordDeliveryResults(any(), anyInt());
+		assertThatThrownBy(() -> batches.recordDeliveryResults(results, NOW.plusSeconds(60)))
+				.isInstanceOf(TransientDataAccessResourceException.class);
+		assertThat(count("select count(*) from notifications where job_id = ? and mock_delivery_status = 'PENDING'"
+				+ " and mock_sent_at is null", bytes(job))).isEqualTo(2);
+		doAnswer(invocation -> invocation.callRealMethod()).when(repository).recordDeliveryResults(any(), anyInt());
+		batches.recordDeliveryResults(results, NOW.plusSeconds(60));
+		assertThat(count("select count(*) from notifications where job_id = ? and mock_delivery_status = 'SENT'",
+				bytes(job))).isEqualTo(2);
+	}
+
+	/** beforeCommit의 deadline 거절이 실제 MySQL 결과 쓰기도 롤백하는지 확인한다. */
+	@Test
+	@DisplayName("결과 쓰기 후 임대가 만료되면 실제 DB의 발송 상태도 롤백한다")
+	void rollsBackResultsWhenDeadlineExpiresBeforeCommit() {
+		UUID job = service.register(request("result-commit-timeout", NOW, List.of(USER, OTHER)));
+		assertThat(service.processNextJob()).isTrue();
+		List<NotificationDeliveryResult> results = batches.claimNextDeliveries(NOW, 100).stream()
+				.map(delivery -> NotificationDeliveryResult.sent(delivery, NOW)).toList();
+		doAnswer(invocation -> {
+			invocation.callRealMethod();
+			clock.set(NOW.plusSeconds(60));
+			return null;
+		}).when(repository).recordDeliveryResults(any(), anyInt());
+
+		assertThatThrownBy(() -> batches.recordDeliveryResults(results, NOW.plusSeconds(60)))
+				.isInstanceOf(QueryTimeoutException.class);
+		assertThat(count("select count(*) from notifications where job_id = ? and mock_delivery_status = 'PENDING'"
+				+ " and mock_sent_at is null", bytes(job))).isEqualTo(2);
+	}
+
+	/** 실제 잠긴 행의 UPDATE가 임대 예산의 JDBC timeout으로 취소되는지 CI의 MySQL에서 검증한다. */
+	@Test
+	@DisplayName("행 잠금이 풀리지 않아도 결과 배치는 SQL 제한 시간에 취소되고 기존 상태를 보존한다")
+	void cancelsBlockedResultBatchWithinRemainingLease() throws Exception {
+		UUID job = service.register(request("result-timeout", NOW, List.of(USER)));
+		assertThat(service.processNextJob()).isTrue();
+		NotificationDelivery delivery = batches.claimNextDeliveries(NOW, 100).getFirst();
+		List<NotificationDeliveryResult> results = List.of(NotificationDeliveryResult.sent(delivery, NOW));
+		CountDownLatch locked = new CountDownLatch(1);
+		CountDownLatch release = new CountDownLatch(1);
+		try (java.util.concurrent.ExecutorService executor = Executors.newFixedThreadPool(2)) {
+			Future<?> blocker = executor.submit(() -> new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+				jdbc.queryForObject("select delivery_attempt_count from notifications where id = ? for update",
+						Integer.class, bytes(delivery.getId()));
+				locked.countDown();
+				try {
+					if (!release.await(20, TimeUnit.SECONDS)) throw new IllegalStateException("잠금 해제 대기 시간 초과");
+				} catch (InterruptedException failure) {
+					Thread.currentThread().interrupt();
+					throw new IllegalStateException("잠금 대기 중단", failure);
+				}
+			}));
+			try {
+				assertThat(locked.await(10, TimeUnit.SECONDS)).isTrue();
+				Future<?> recording = executor.submit(() -> batches.recordDeliveryResults(results, NOW.plusSeconds(2)));
+				assertThatThrownBy(() -> recording.get(8, TimeUnit.SECONDS))
+						.isInstanceOf(java.util.concurrent.ExecutionException.class)
+						.hasRootCauseInstanceOf(java.sql.SQLTimeoutException.class);
+				assertThat(blocker).isNotDone();
+			} finally {
+				release.countDown();
+			}
+			blocker.get(10, TimeUnit.SECONDS);
+		}
+		assertThat(count("select count(*) from notifications where job_id = ? and mock_delivery_status = 'PENDING'"
+				+ " and mock_sent_at is null", bytes(job))).isEqualTo(1);
+		batches.recordDeliveryResults(results, NOW.plusSeconds(60));
+		assertThat(count("select count(*) from notifications where job_id = ? and mock_delivery_status = 'SENT'",
+				bytes(job))).isEqualTo(1);
 	}
 
 	/** 검증 시나리오: 만료된 선점은 복구하고 이전 처리자의 생성·완료·실패 저장을 차단한다. */
@@ -361,7 +615,7 @@ class NotificationJobIntegrationTest {
 				clock.set(NOW.plusSeconds(elapsedSeconds));
 			}
 			return created;
-		}).when(repository).createNotification(any(), any(), any(), any());
+		}).when(repository).createNotifications(any(), any(), any(), any());
 
 		// when
 		assertThat(service.processNextJob()).isTrue();
@@ -577,12 +831,11 @@ class NotificationJobIntegrationTest {
 		assertThat(count("select delivery_attempt_count from notifications where id = ?", bytes(notification))).isEqualTo(2);
 	}
 
-	/** 검증 시나리오: 발송 제한 시각 이후라도 재선점 전 성공은 저장하고 다시 발송하지 않는다. */
+	/** 기록 deadline 전에는 확정하고 만료 뒤에는 기존 상태를 보존해 다음 선점으로 복구한다. */
 	@ParameterizedTest
-	@ValueSource(ints = {60, 61})
-	@DisplayName("발송 제한 시각 이후라도 재선점 전 성공은 저장하고 다시 발송하지 않는다")
-	void completesExpiredDeliveryBeforeReclaim(int elapsedSeconds) {
-		// given
+	@ValueSource(ints = {59, 60, 61})
+	@DisplayName("발송 결과는 임대 전까지만 기록하고 만료된 결과는 다음 선점에서 복구한다")
+	void recoversDeliveryAfterRecordingDeadline(int elapsedSeconds) {
 		UUID id = service.register(request("slow-delivery", NOW, List.of(USER)));
 		service.processNextJob();
 		UUID notification = notificationId(id, USER);
@@ -591,16 +844,26 @@ class NotificationJobIntegrationTest {
 			return MockDeliveryStatus.SENT;
 		});
 
-		// when
 		assertThat(service.processNextDelivery()).isTrue();
+		if (elapsedSeconds >= 60) {
+			assertThat(count("select count(*) from notifications where id = ? and mock_delivery_status = 'PENDING'"
+					+ " and is_read = false and mock_sent_at is null", bytes(notification))).isEqualTo(1);
+			assertThat(timestamp("select next_delivery_attempt_at from notifications where id = ?", bytes(notification)))
+					.isEqualTo(NOW.plusSeconds(60));
+			assertThat(count("select delivery_attempt_count from notifications where id = ?", bytes(notification))).isEqualTo(1);
+			// 저장 재시도가 아니라 임대 만료 후의 새 발송 시도다. 동일 알림을 회수한다.
+			when(sender.send(any())).thenReturn(MockDeliveryStatus.SENT);
+			assertThat(service.processNextDelivery()).isTrue();
+		}
 
-		// then
+		assertThat(count("select count(*) from notifications where job_id = ?", bytes(id))).isEqualTo(1);
 		assertThat(count("select count(*) from notifications where id = ? and mock_delivery_status = 'SENT' and is_read = false",
 				bytes(notification))).isEqualTo(1);
 		assertThat(timestamp("select mock_sent_at from notifications where id = ?", bytes(notification)))
 				.isEqualTo(clock.instant());
 		assertThat(timestamp("select next_delivery_attempt_at from notifications where id = ?", bytes(notification))).isNull();
-		assertThat(count("select delivery_attempt_count from notifications where id = ?", bytes(notification))).isEqualTo(1);
+		assertThat(count("select delivery_attempt_count from notifications where id = ?", bytes(notification)))
+				.isEqualTo(elapsedSeconds >= 60 ? 2 : 1);
 		assertThat(service.processNextDelivery()).isFalse();
 	}
 

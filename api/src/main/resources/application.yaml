@@ -4,6 +4,10 @@ spring:
   datasource:
     hikari:
       pool-name: getddo
+      # Spring Boot가 아래 클래스 이름을 HikariConfig에 바인딩하면 Hikari가 리플렉션으로 객체를 생성한다.
+      # 클래스는 SQLExceptionOverride 구현과 공개 기본 생성자가 필요하며, Spring Bean 주입에 의존하지 않는다.
+      # JDBC 오류 검사 콜백에서 현재 요청에 연결 단절 근거를 남겨 JPA 롤백 오류에 원인이 가려져도 확인한다.
+      exception-override-class-name: com.getddo.api.common.exception.RequestDatabaseConnectionFailure
   servlet:
     multipart:
       # MB는 십진 단위다. 요청 전체 상한은 파일 외의 multipart 헤더 공간을 포함한다.
@@ -85,6 +89,18 @@ getddo:
     exposed-headers: [Retry-After]
     # 현재 쿠키를 사용하지 않는다. X-User-* 헤더 전달을 위해 true로 바꿀 필요는 없다.
     allow-credentials: false
+
+  abuse:
+    # Redis 모드에서 동작한다. 차단 자체를 끄는 설정이 아니므로 미저장 저널을 보존한다.
+    history-worker:
+      enabled: ${ABUSE_HISTORY_WORKER_ENABLED:true}
+      poll-delay: ${ABUSE_HISTORY_POLL_DELAY:1000}
+      recovery-delay: ${ABUSE_HISTORY_RECOVERY_DELAY:60000}
+      batch-size: ${ABUSE_HISTORY_BATCH_SIZE:20}
+      scan-size: ${ABUSE_HISTORY_SCAN_SIZE:100}
+      lease: ${ABUSE_HISTORY_LEASE:30s}
+      retry-budget: ${ABUSE_HISTORY_RETRY_BUDGET:10m}
+      retry-delays: ${ABUSE_HISTORY_RETRY_DELAYS:10s,30s,1m,2m}
 
   # 사용자별 요청 빈도 제한(429). 한도는 운영 수치이므로 여기서 조정한다. 정책이 없으면 제한하지 않는다.
   rate-limit:

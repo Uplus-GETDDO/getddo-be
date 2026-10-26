@@ -5,6 +5,7 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -19,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.getddo.core.notification.domain.MockDeliveryStatus;
 import com.getddo.core.notification.domain.NotificationDelivery;
+import com.getddo.core.notification.domain.NotificationDeliveryResult;
 import com.getddo.core.notification.domain.NotificationJob;
 import com.getddo.core.notification.domain.NotificationJobRequest;
 import com.getddo.core.notification.domain.NotificationJobStatus;
@@ -39,6 +41,16 @@ import com.getddo.db.common.util.UuidBinary;
 @Repository
 @RequiredArgsConstructor
 public class NotificationJobRepositoryImpl implements NotificationJobRepository {
+	/** 실제 선점과 인덱스 회귀 테스트가 같은 필터·정렬·잠금 SQL을 사용한다. */
+	static final String CLAIM_NEXT_JOB_SQL = """
+		select id, attempt_count, attempt_base from notification_jobs
+		where json_extract(payload, '$.generationStoppedBy') is null
+		and scheduled_at <= ? and (
+		 (status = 'PENDING' and (next_attempt_at is null or next_attempt_at <= ?))
+		 or (status = 'PROCESSING' and (lease_until is null or lease_until <= ?)))
+		order by scheduled_at, id limit 1 for update skip locked
+		""";
+
 	private final JdbcTemplate jdbc;
 
 	/** 업무 트랜잭션의 롤백과 함께 작업 등록도 취소한다. UNIQUE 충돌은 DB 내부에서 해결한다. */
@@ -73,14 +85,9 @@ public class NotificationJobRepositoryImpl implements NotificationJobRepository 
 	@Transactional(propagation = Propagation.REQUIRES_NEW)
 	public Optional<NotificationJob> claimNextJob(Instant now) {
 		while (true) {
-			List<NotificationJob> rows = jdbc.query("""
-				select id, attempt_count, attempt_base from notification_jobs
-				where json_extract(payload, '$.generationStoppedBy') is null
-				and scheduled_at <= ? and (
-				 (status = 'PENDING' and (next_attempt_at is null or next_attempt_at <= ?))
-				 or (status = 'PROCESSING' and (lease_until is null or lease_until <= ?)))
-				order by scheduled_at, id limit 1 for update skip locked
-				""", (row, index) -> new NotificationJob(uuid(row.getBytes("id")), row.getInt("attempt_count"), row.getInt("attempt_base")),
+			List<NotificationJob> rows = jdbc.query(CLAIM_NEXT_JOB_SQL,
+					(row, index) -> new NotificationJob(uuid(row.getBytes("id")),
+							row.getInt("attempt_count"), row.getInt("attempt_base")),
 					time(now), time(now), time(now));
 			if (rows.isEmpty()) {
 				return Optional.empty();
@@ -154,6 +161,16 @@ public class NotificationJobRepositoryImpl implements NotificationJobRepository 
 	@Override
 	@Transactional(propagation = Propagation.REQUIRES_NEW)
 	public boolean createNotification(NotificationJob job, NotificationJobRequest request, UUID userId, Instant now) {
+		return createNotifications(job, request, List.of(userId), now);
+	}
+
+	/** Service가 연 독립 트랜잭션에서 잠금·차수 확인 후 묶음 INSERT와 진행 위치를 함께 저장한다. */
+	@Override
+	public boolean createNotifications(NotificationJob job, NotificationJobRequest request, List<UUID> userIds,
+			Instant now) {
+		if (userIds.isEmpty()) {
+			return true;
+		}
 		if (request.getEventId() != null) {
 			jdbc.query("select id from events where id = ? for share",
 					(row, index) -> row.getBytes("id"), bytes(request.getEventId()));
@@ -170,16 +187,24 @@ public class NotificationJobRepositoryImpl implements NotificationJobRepository 
 		if (owned.isEmpty() || !owned.getFirst()) {
 			return false;
 		}
-		jdbc.update("""
+		jdbc.batchUpdate("""
 			insert into notifications
 			(id, job_id, user_id, event_id, title, body, link_url, created_at, is_read,
 			 mock_delivery_status, delivery_attempt_count)
 			values (?, ?, ?, ?, ?, ?, ?, ?, false, 'PENDING', 0)
 			on duplicate key update id = id
-			""", bytes(newId()), bytes(job.getId()), bytes(userId), bytes(request.getEventId()),
-				request.getTitle(), request.getBody(), request.getLinkUrl(), time(now));
+			""", userIds, userIds.size(), (statement, userId) -> {
+				statement.setBytes(1, bytes(newId()));
+				statement.setBytes(2, bytes(job.getId()));
+				statement.setBytes(3, bytes(userId));
+				statement.setBytes(4, bytes(request.getEventId()));
+				statement.setString(5, request.getTitle());
+				statement.setString(6, request.getBody());
+				statement.setString(7, request.getLinkUrl());
+				statement.setObject(8, time(now));
+			});
 		jdbc.update("update notification_jobs set last_processed_user_id = ?, lease_until = ? where id = ?",
-				bytes(userId), time(now.plus(NotificationRetryPolicy.LEASE)), bytes(job.getId()));
+				bytes(userIds.getLast()), time(now.plus(NotificationRetryPolicy.LEASE)), bytes(job.getId()));
 		return true;
 	}
 
@@ -211,36 +236,94 @@ public class NotificationJobRepositoryImpl implements NotificationJobRepository 
 	@Override
 	@Transactional(propagation = Propagation.REQUIRES_NEW)
 	public Optional<NotificationDelivery> claimNextDelivery(Instant now) {
+		return claimNextDeliveries(now, 1).stream().findFirst();
+	}
+
+	/** 묶음의 행 잠금과 선점 차수 갱신을 호출 Service의 트랜잭션에서 함께 확정한다. */
+	@Override
+	public List<NotificationDelivery> claimNextDeliveries(Instant now, int limit) {
+		if (limit < 1 || limit > NotificationJobRepository.MAX_DELIVERY_CLAIM) {
+			throw new IllegalArgumentException("알림 발송 선점 건수는 1~"
+					+ NotificationJobRepository.MAX_DELIVERY_CLAIM + "이어야 합니다.");
+		}
 		while (true) {
 			List<NotificationDelivery> rows = jdbc.query("""
 				select id, user_id, title, body, link_url, delivery_attempt_count, delivery_attempt_base from notifications
 				where (mock_delivery_status = 'PENDING'
 				 and (next_delivery_attempt_at is null or next_delivery_attempt_at <= ?))
 				or (mock_delivery_status = 'FAILED' and next_delivery_attempt_at <= ?)
-				order by created_at, id limit 1 for update skip locked
+				order by created_at, id limit ? for update skip locked
 				""", (row, index) -> new NotificationDelivery(uuid(row.getBytes("id")), uuid(row.getBytes("user_id")),
 					row.getString("title"), row.getString("body"), row.getString("link_url"),
-					row.getInt("delivery_attempt_count"), row.getInt("delivery_attempt_base")), time(now), time(now));
+					row.getInt("delivery_attempt_count"), row.getInt("delivery_attempt_base")), time(now), time(now), limit);
 			if (rows.isEmpty()) {
-				return Optional.empty();
+				return List.of();
 			}
-			NotificationDelivery previous = rows.getFirst();
-			if (previous.getAttemptCount() == Integer.MAX_VALUE || previous.getCycleAttemptCount() >= NotificationRetryPolicy.MAX_ATTEMPTS) {
-				jdbc.update("""
+			List<NotificationDelivery> deliveries = new ArrayList<>();
+			List<NotificationDelivery> exhausted = new ArrayList<>();
+			for (NotificationDelivery previous : rows) {
+				if (previous.getAttemptCount() == Integer.MAX_VALUE || previous.getCycleAttemptCount() >= NotificationRetryPolicy.MAX_ATTEMPTS) {
+					exhausted.add(previous);
+					continue;
+				}
+				deliveries.add(new NotificationDelivery(previous.getId(), previous.getUserId(),
+						previous.getTitle(), previous.getBody(), previous.getLinkUrl(), previous.getAttemptCount() + 1, previous.getAttemptBase()));
+			}
+			if (!exhausted.isEmpty()) {
+				jdbc.batchUpdate("""
 					update notifications set mock_delivery_status = 'FAILED', next_delivery_attempt_at = null,
 					last_delivery_error = coalesce(last_delivery_error, ?) where id = ?
-					""", NotificationProcessingErrorCode.TEMPORARY_FAILURE.getCode(), bytes(previous.getId()));
+					""", exhausted, exhausted.size(), (statement, delivery) -> {
+						statement.setString(1, NotificationProcessingErrorCode.TEMPORARY_FAILURE.getCode());
+						statement.setBytes(2, bytes(delivery.getId()));
+					});
+			}
+			if (deliveries.isEmpty()) {
 				continue;
 			}
-			NotificationDelivery delivery = new NotificationDelivery(previous.getId(), previous.getUserId(),
-					previous.getTitle(), previous.getBody(), previous.getLinkUrl(), previous.getAttemptCount() + 1, previous.getAttemptBase());
-			jdbc.update("""
+			jdbc.batchUpdate("""
 				update notifications set mock_delivery_status = ?, delivery_attempt_count = ?,
 				next_delivery_attempt_at = ? where id = ?
-				""", MockDeliveryStatus.PENDING.name(), delivery.getAttemptCount(),
-					time(now.plus(NotificationRetryPolicy.LEASE)), bytes(delivery.getId()));
-			return Optional.of(delivery);
+				""", deliveries, deliveries.size(), (statement, delivery) -> {
+					statement.setString(1, MockDeliveryStatus.PENDING.name());
+					statement.setInt(2, delivery.getAttemptCount());
+					statement.setObject(3, time(now.plus(NotificationRetryPolicy.LEASE)));
+					statement.setBytes(4, bytes(delivery.getId()));
+				});
+			return List.copyOf(deliveries);
 		}
+	}
+
+	/** 각 행의 선점·복구 기준 차수를 검사하며 성공·실패 결과를 같은 JDBC 묶음으로 저장한다. */
+	@Override
+	public void recordDeliveryResults(List<NotificationDeliveryResult> results, int timeoutSeconds) {
+		if (results.isEmpty()) {
+			return;
+		}
+		if (results.size() > NotificationJobRepository.MAX_DELIVERY_CLAIM) {
+			throw new IllegalArgumentException("발송 결과 묶음은 최대 "
+					+ NotificationJobRepository.MAX_DELIVERY_CLAIM + "건이어야 합니다.");
+		}
+		if (timeoutSeconds < 1 || timeoutSeconds > NotificationJobRepository.MAX_DELIVERY_RECORD_SECONDS) {
+			throw new IllegalArgumentException("발송 결과 기록 timeout은 1~"
+					+ NotificationJobRepository.MAX_DELIVERY_RECORD_SECONDS + "초여야 합니다.");
+		}
+		jdbc.batchUpdate("""
+			update notifications set mock_delivery_status = ?, mock_sent_at = coalesce(?, mock_sent_at),
+			next_delivery_attempt_at = ?, last_delivery_error = ?
+			where id = ? and mock_delivery_status = 'PENDING' and delivery_attempt_count = ?
+			and delivery_attempt_base = ?
+			""", results, results.size(), (statement, result) -> {
+				int transactionTimeout = statement.getQueryTimeout();
+				statement.setQueryTimeout(transactionTimeout > 0 ? Math.min(timeoutSeconds, transactionTimeout) : timeoutSeconds);
+				statement.setString(1, result.getStatus().name());
+				statement.setObject(2, time(result.getSentAt()));
+				statement.setObject(3, time(result.getNextAttemptAt()));
+				statement.setString(4, result.getErrorCode());
+				statement.setBytes(5, bytes(result.getDelivery().getId()));
+				statement.setInt(6, result.getDelivery().getAttemptCount());
+				statement.setInt(7, result.getDelivery().getAttemptBase());
+			});
 	}
 
 	/** 현재 발송 차수의 성공 시각을 별도 트랜잭션으로 저장하며 사용자의 읽음 상태는 변경하지 않는다. */

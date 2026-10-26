@@ -24,7 +24,7 @@ public class NotificationWorker {
 		this.starts = starts;
 	}
 
-	/** 시작 작업 등록·생성·발송을 각각 최대 20건 처리한다. 등록 실패가 기존 작업 처리를 막지 않는다. */
+	/** 시작 작업 등록·생성은 최대 20개, 모의 발송은 최대 100건 처리한다. 등록 실패는 기존 작업을 막지 않는다. */
 	@Scheduled(fixedDelayString = "${getddo.notification.worker.poll-delay:1000}")
 	public void poll() {
 		try {
@@ -41,10 +41,6 @@ public class NotificationWorker {
 				break;
 			}
 		}
-		for (int count = 0; count < 20; count++) {
-			if (!service.processNextDelivery()) {
-				break;
-			}
-		}
+		service.processNextDeliveries();
 	}
 }

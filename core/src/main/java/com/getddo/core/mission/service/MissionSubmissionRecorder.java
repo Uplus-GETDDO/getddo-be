@@ -1,7 +1,6 @@
 package com.getddo.core.mission.service;
 
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -13,7 +12,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.getddo.core.common.time.TimeProvider;
 import com.getddo.core.mission.domain.Mission;
 import com.getddo.core.mission.domain.MissionAnswerInput;
 import com.getddo.core.mission.domain.MissionDetail;
@@ -47,15 +45,17 @@ import com.getddo.core.ticket.service.TicketGrantService;
  * <h2>처리 순서</h2>
  * <ol>
  *   <li>같은 제출 ID가 이미 저장됐으면 기존 결과를 돌려준다. 마감 뒤에도 같다(다른 사용자·미션·답변이면 충돌).</li>
- *   <li>미션을 읽고, 사용자가 이미 완료했으면 기존 완료 결과를 돌려준다(보상은 사용자·미션당 한 번).</li>
- *   <li>서버가 제출을 받은 시각이 운영 기간 안인지 확인하고 답변을 채점한다.</li>
+ *   <li>미션을 읽는다. 퀴즈면 사용자 행을 잠가 같은 사용자의 제출을 직렬화하고, 잠금 뒤에 같은 제출 ID를 다시 확인한다.</li>
+ *   <li>사용자가 이미 완료했으면 기존 완료 결과를 돌려준다(보상은 사용자·미션당 한 번).</li>
+ *   <li>호출자가 넘긴 서버 도착 시각(잠금 대기 전에 정한 값)이 운영 기간 안인지 확인하고 답변을 채점한다.</li>
  *   <li>제출·답변을 저장하고, 새로 맞힌 문항을 문항 ID 순서로 기록한다.</li>
  *   <li>완료했으면 보상 청구를 저장하고 그 청구로 응모권을 지급한다.</li>
  * </ol>
  *
- * <p>같은 사용자의 동시 완료는 DB의 유일 제약({@code (user_id, quiz_question_id)}, {@code (user_id, mission_id)}, 제출 PK)이
- * 직렬화한다. 늦은 쪽은 유일 제약 위반으로 실패하고, 재처리는 호출자가 새 트랜잭션에서 한다. 그러면 먼저 확정된 결과를 본다.
- * 정답 문항은 항상 같은 순서로 기록해 두 요청이 서로의 행을 기다리는 교착을 피한다.</p>
+ * <p>같은 사용자의 퀴즈 제출은 사용자 행 잠금으로 직렬화한다. 설문은 문항을 나눠 보낼 수 없어 유일 제약만으로 충분하다. 유일
+ * 제약({@code (user_id, quiz_question_id)}, {@code (user_id, mission_id)}, 제출 PK)은 잠금이 놓친 경우의 마지막 방어선이다.
+ * 늦은 쪽이 유일 제약 위반으로 실패하면 재처리는 호출자가 새 트랜잭션에서 한다. 그러면 먼저 확정된 결과를 본다. 정답 문항은 항상
+ * 같은 순서로 기록해 두 요청이 서로의 행을 기다리는 교착을 피한다.</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -67,16 +67,18 @@ public class MissionSubmissionRecorder {
 	private final MissionRewardClaimRepository claimRepository;
 	private final TicketGrantService grantService;
 	private final MissionSubmissionResultReader resultReader;
-	private final TimeProvider timeProvider;
 
 	/**
 	 * 제출을 접수한다.
 	 *
+	 * @param receivedAt 서버가 요청을 받은 시각. 마이크로초로 자른 값이어야 한다. 운영 기간 판정과 제출 시각에 이 값을 쓴다.
+	 *                   사용자 행 잠금을 기다리거나 재처리하는 동안 시간이 지나도 도착 시각이 기간 안이면 접수하도록, 처리 시작
+	 *                   전에 호출자가 한 번 정해 넘긴다
 	 * @return 새로 접수한 결과({@code created=true}), 또는 같은 제출 ID나 이미 완료한 미션의 기존 결과({@code created=false})
 	 * @throws MissionException 미션 없음, 운영 기간 밖, 답변 형식 오류, 같은 제출 ID의 다른 요청
 	 */
 	@Transactional(isolation = Isolation.READ_COMMITTED)
-	public MissionSubmissionResult record(MissionSubmissionCommand command) {
+	public MissionSubmissionResult record(MissionSubmissionCommand command, Instant receivedAt) {
 		Optional<MissionSubmission> existing = submissionRepository.findById(command.getSubmissionId());
 		if (existing.isPresent()) {
 			return replay(command, existing.get());
@@ -84,6 +86,16 @@ public class MissionSubmissionRecorder {
 
 		MissionDetail detail = missionRepository.findDetailById(command.getMissionId())
 				.orElseThrow(() -> new MissionException(MissionErrorCode.MISSION_NOT_FOUND));
+		if (detail.getMission().getMissionType() == MissionType.QUIZ) {
+			// 정답을 문항별로 나눠 동시에 보내면 서로의 정답 기록을 보지 못해 아무도 완료를 판정하지 못한다. 같은 사용자의
+			// 퀴즈 제출을 직렬화해, 아래 완료·정답 진행 조회가 먼저 커밋된 요청의 기록을 보게 한다.
+			submissionRepository.lockUser(command.getUserId());
+			// 잠금을 기다리는 동안 같은 제출 ID의 요청이 먼저 확정됐을 수 있다.
+			existing = submissionRepository.findById(command.getSubmissionId());
+			if (existing.isPresent()) {
+				return replay(command, existing.get());
+			}
+		}
 		Optional<MissionSubmission> completed = submissionRepository.findCompleted(command.getUserId(),
 				command.getMissionId());
 		if (completed.isPresent()) {
@@ -91,8 +103,6 @@ public class MissionSubmissionRecorder {
 		}
 
 		Mission mission = detail.getMission();
-		// DATETIME(6)은 마이크로초 아래를 반올림해 저장하므로 미리 잘라 응답·재조회·저장 값이 어긋나지 않게 한다.
-		Instant receivedAt = timeProvider.now().truncatedTo(ChronoUnit.MICROS);
 		if (!mission.acceptsSubmissionAt(receivedAt)) {
 			throw new MissionException(MissionErrorCode.MISSION_NOT_OPEN);
 		}

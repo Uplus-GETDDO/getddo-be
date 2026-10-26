@@ -9,8 +9,6 @@ import java.util.UUID;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
-import com.getddo.core.abuse.domain.AbuseEvidence;
-import com.getddo.core.abuse.domain.AbuseTriggerScope;
 import com.getddo.core.common.ratelimit.EntryBlock;
 import com.getddo.core.common.ratelimit.EntryBlockPolicy;
 import com.getddo.core.common.ratelimit.EntryLimitDecision;
@@ -24,6 +22,7 @@ final class RedisEntryRateLimiter {
 	static final String PREFIX = "getddo:entry-block:";
 	private final EntryRedisScriptExecutor executor;
 	private final JsonMapper json = JsonMapper.builder().build();
+	private final EntryBlockPayloadMapper payloads = new EntryBlockPayloadMapper();
 	private final byte[] activeScript = EntryRedisScriptExecutor.script("entry-active");
 	private final byte[] evaluateScript = EntryRedisScriptExecutor.script("entry-evaluate");
 
@@ -84,17 +83,7 @@ final class RedisEntryRateLimiter {
 		if (node == null || node.isNull()) {
 			return null;
 		}
-		JsonNode evidence = node.get("evidence");
-		AbuseEvidence proof = new AbuseEvidence(evidence.get("ruleVersion").asText(),
-				AbuseTriggerScope.valueOf(evidence.get("triggerScope").asText()),
-				Instant.ofEpochMilli(evidence.get("windowStartedAt").asLong()),
-				Instant.ofEpochMilli(evidence.get("windowEndsAt").asLong()),
-				evidence.get("requestLimit").asInt(), evidence.get("rejectedCount").asInt(),
-				evidence.get("rejectionThreshold").asInt());
-		return new EntryBlock(UUID.fromString(node.get("id").asText()), UUID.fromString(node.get("userId").asText()),
-				node.get("eventId").isNull() ? null : UUID.fromString(node.get("eventId").asText()),
-				Instant.parse(node.get("occurredAt").asText()), Instant.ofEpochMilli(node.get("blockedAt").asLong()),
-				Instant.ofEpochMilli(node.get("blockedUntil").asLong()), proof);
+		return payloads.read(node);
 	}
 
 	void destroy() {

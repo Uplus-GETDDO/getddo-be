@@ -11,11 +11,16 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class MonitoringComposeTest(unittest.TestCase):
     def test_private_management_binding_and_missing_ip(self):
+        """두 배포 환경의 포트·로그·DB 연결 상한과 필수 주소 누락을 검증한다."""
         compose = os.environ.get('GETDDO_TEST_COMPOSE')
         command = [compose] if compose else ['docker', 'compose']
         with tempfile.TemporaryDirectory() as directory:
             env_file = Path(directory) / 'app.env'
-            env_file.write_text('AWS_REGION=ap-northeast-2\n')
+            env_file.write_text(
+                'AWS_REGION=ap-northeast-2\n'
+                'SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE=10\n'
+                'SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE=5\n'
+            )
             env = dict(os.environ, APP_IMAGE='getddo:test', APP_ENV_FILE=str(env_file), API_PRIVATE_IP='10.0.1.20')
             args = command + ['--env-file', '/dev/null', '--file', str(ROOT / 'compose.deploy.yaml'),
                               'config', '--format', 'json']
@@ -29,6 +34,8 @@ class MonitoringComposeTest(unittest.TestCase):
             self.assertEqual('10.0.1.20', management[0]['host_ip'])
             self.assertEqual('9091', str(management[0]['published']))
             self.assertEqual('monitoring', app['environment']['SPRING_PROFILES_INCLUDE'])
+            self.assertEqual('40', app['environment']['SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE'])
+            self.assertEqual('10', app['environment']['SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE'])
             self.assertNotIn('API_PRIVATE_IP', app['environment'])
             self.assertEqual('/getddo/dev/api', app['logging']['options']['awslogs-group'])
             stage_env = dict(env, GETDDO_API_LOG_GROUP='/getddo/staging/api')
@@ -36,6 +43,8 @@ class MonitoringComposeTest(unittest.TestCase):
             self.assertEqual(0, stage.returncode, stage.stderr)
             stage_app = json.loads(stage.stdout)['services']['app']
             self.assertEqual('/getddo/staging/api', stage_app['logging']['options']['awslogs-group'])
+            self.assertEqual('40', stage_app['environment']['SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE'])
+            self.assertEqual('10', stage_app['environment']['SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE'])
             self.assertEqual(app['ports'], stage_app['ports'])
             self.assertEqual(app['volumes'], stage_app['volumes'])
             env.pop('API_PRIVATE_IP')

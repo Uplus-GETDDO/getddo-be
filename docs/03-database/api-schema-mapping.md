@@ -38,6 +38,7 @@
 | [V027](../../storage/db/src/main/resources/db/migration/event/V027__add_event_lifecycle_due_indexes.sql) | `events`의 상태·삭제 여부·시작/마감 기한 인덱스 두 개 | GD-203 모집 상태 전환의 상태별 due 후보 조회. 새 테이블·컬럼·공개 API는 추가하지 않음 |
 | [V028](../../storage/db/src/main/resources/db/migration/event/V028__link_banner_events_and_catalog_lock.sql) | `banners.event_id`, `banner_catalog_lock` | GD-209 이벤트 연결·빈 목록 쓰기 잠금. 기존 URL·행·CHECK·UNIQUE 보존. 실제 DB 적용은 미실행 |
 | [V029](../../storage/db/src/main/resources/db/migration/ticket/V029__add_platinum_ticket_grade.sql) | `tickets.grade`·`reward_policies.reward_ticket_type` ENUM에 `PLATINUM`, `event_entries.requested_platinum_count`와 등급별 요청 장수 CHECK | GD-228 플래티넘 응모권 등급(ADR-025). 기존 행·기존 등급의 비음수 검증 의미·UNIQUE 보존. `chk_entry_requested_grades`는 플래티넘을 포함해 재정의하고 기존 응모의 플래티넘 요청 장수는 0. GD-228의 실제 DB 검증 결과는 해당 PR #126의 기록을 별도로 확인하며, GD-230의 통합 테스트는 미완료 |
+| [V035](../../storage/db/src/main/resources/db/migration/user/V035__add_admin_user_query_indexes.sql) | `users`의 `(created_at DESC, id DESC)`·`(role, status)` 인덱스 | GD-367 관리자 사용자 최신순 OFFSET 목록과 활성 일반 사용자 집계. 공개 API·정확한 건수 계약 유지 |
 | [V030](../../storage/db/src/main/resources/db/migration/abuse/V030__convert_abuse_cases_to_entry_blocks.sql) | `abuse_cases`의 자동 차단 필드·복합 UNIQUE·CHECK·조회 인덱스 | GD-142 AR01 목록과 GD-143 AR02 상세의 공통 기반. 기존 검토 필드는 빈 테이블에서만 제거하며 행이 있으면 중단. [전환 절차](../06-runbook/entry-abuse-migration.md). 실제 DB 적용·통합 검증은 미실행 |
 | [V031](../../storage/db/src/main/resources/db/migration/event/V031__add_event_detail_image_key.sql) | `events.detail_image_key` | GD-321 상세 설명 이미지 1장의 선택 S3 키. `VARCHAR(500) NULL DEFAULT NULL`이며 기존 썸네일·텍스트·경품은 유지. [BE 응답·수정 계약](../02-api/event-images.md#이벤트-상세-설명-이미지--gd-321). 배포 DB 적용은 별도 |
 
@@ -98,7 +99,7 @@
 | M03 제출 | 같음 | `mission_reward_claims` | 완료하면 사용자·미션당 한 번 청구한다. 이미 완료한 미션의 재제출은 기존 완료 결과를 돌려준다. 응답의 `reward.claimId`는 이 청구의 ID이고, 새 제출·같은 키의 재전송·M04 조회가 같은 값을 돌려준다. |
 | M03 제출 | 같음 | `tickets`, `ticket_histories` | 보상 청구 저장 뒤 지급 서비스가 같은 트랜잭션에서 응모권을 지급한다(`GRANT` 이력, 사유는 미션 제목). |
 
-제출·답변·정답 진행·보상 청구·응모권 지급은 한 트랜잭션(`READ COMMITTED`)이다. 같은 사용자의 동시 완료는 제출 PK, `(user_id, quiz_question_id)`, `(user_id, mission_id)` 유일 제약이 직렬화하고, 늦은 요청은 새 트랜잭션에서 한 번 다시 처리해 먼저 확정된 결과를 본다.
+제출·답변·정답 진행·보상 청구·응모권 지급은 한 트랜잭션(`READ COMMITTED`)이다. 같은 사용자의 퀴즈 제출은 처리 시작에서 `users` 행을 `SELECT ... FOR UPDATE`로 잠가(`MissionSubmissionRepository.lockUser`) 직렬화한다. 정답을 문항별로 나눠 동시에 보내도 뒤 요청이 먼저 커밋된 정답 진행을 읽고 완료를 판정하게 하기 위해서다(설문은 잠그지 않는다). 제출 PK, `(user_id, quiz_question_id)`, `(user_id, mission_id)` 유일 제약은 마지막 방어선이며, 유일 제약 위반이 나면 새 트랜잭션에서 한 번 다시 처리해 먼저 확정된 결과를 본다.
 
 ### 이벤트 모집 상태와 감사 저장 (GD-203)
 

@@ -8,3 +8,5 @@
 - [ADR-0006: 응모권 지급·차감·반환·응모·만료의 동시성 제어](0006-ticket-concurrency-control.md) — 제안, 담당자 확인 전
 
 - [ADR-0008: 배너 카탈로그 잠금과 순서 저장](0008-banner-catalog-order-storage.md) — 제안 / GD-209
+
+- [ADR-0009: 응모 차단 이력의 저장 전 식별자 유지](0009-entry-abuse-history-identifiers.md) — 채택 / 2026-10-23 사용자 승인 / GD-291
