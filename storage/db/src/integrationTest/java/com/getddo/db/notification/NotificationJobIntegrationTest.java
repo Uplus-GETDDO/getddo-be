@@ -120,7 +120,7 @@ class NotificationJobIntegrationTest {
 	}
 
 
-	/** 큰 수신자 JSON의 선점 오류와 중지·미래 예약 제외 조건을 함께 검증한다. */
+	/** 큰 수신자 작업의 예약 순서와 중지·미래 예약 제외 조건을 검증한다. 인덱스 실행계획은 별도 시험한다. */
 	@Test
 	@DisplayName("1만 명 작업을 선점할 때 중지와 미래 예약을 제외하고 예약 순서를 유지한다")
 	void claimsLargeRecipientJobsInScheduleOrder() {
