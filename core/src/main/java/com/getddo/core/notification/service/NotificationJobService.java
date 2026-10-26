@@ -1,5 +1,8 @@
 package com.getddo.core.notification.service;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -12,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 import com.getddo.core.common.time.TimeProvider;
 import com.getddo.core.notification.domain.MockDeliveryStatus;
 import com.getddo.core.notification.domain.NotificationDelivery;
+import com.getddo.core.notification.domain.NotificationDeliveryResult;
 import com.getddo.core.notification.domain.NotificationJob;
 import com.getddo.core.notification.domain.NotificationJobRequest;
 import com.getddo.core.notification.domain.NotificationRetryPolicy;
@@ -72,41 +76,73 @@ public class NotificationJobService {
 
 	/** 기존 알림 하나만 모의 발송한다. 재시도로 새 알림을 생성하거나 읽음 처리하지 않는다. */
 	public boolean processNextDelivery() {
-		NotificationDelivery delivery = repository.claimNextDelivery(timeProvider.now()).orElse(null);
+		Instant claimedAt = timeProvider.now();
+		NotificationDelivery delivery = repository.claimNextDelivery(claimedAt).orElse(null);
 		if (delivery == null) {
 			return false;
 		}
-		deliver(delivery);
+		deliver(List.of(delivery), claimedAt.plus(NotificationRetryPolicy.LEASE));
 		return true;
 	}
 
-	/** 폴링 상한 20건을 함께 선점하고 각 알림의 성공·실패는 독립적으로 기록한다. */
+	/** 최대 100건을 함께 선점하고 각 발송 결과를 하나의 묶음으로 저장한다. */
 	public int processNextDeliveries() {
-		List<NotificationDelivery> deliveries = batches.claimNextDeliveries(timeProvider.now(),
+		Instant claimedAt = timeProvider.now();
+		List<NotificationDelivery> deliveries = batches.claimNextDeliveries(claimedAt,
 				NotificationJobRepository.MAX_DELIVERY_CLAIM);
-		for (NotificationDelivery delivery : deliveries) {
-			try {
-				deliver(delivery);
-			} catch (RuntimeException failure) {
-				// 결과 기록까지 실패한 항목은 저장된 임대 만료 후 복구하고 나머지 선점 항목은 계속 처리한다.
-				LOG.warn("Notification delivery bookkeeping failed: notificationId=" + delivery.getId()
-						+ ", attempt=" + delivery.getAttemptCount() + ", exceptionType=" + failure.getClass().getName());
-			}
-		}
+		deliver(deliveries, claimedAt.plus(NotificationRetryPolicy.LEASE));
 		return deliveries.size();
 	}
 
-	/** 기존 재시도 횟수·기준 차수를 유지하며 생성과 분리해 발송 결과만 확정한다. */
-	private void deliver(NotificationDelivery delivery) {
+	/** 묶음 저장 실패 후에는 같은 결과만 개별 새 트랜잭션으로 저장하며 발송기를 다시 호출하지 않는다. */
+	private void deliver(List<NotificationDelivery> deliveries, Instant deadline) {
+		if (deliveries.isEmpty()) {
+			return;
+		}
+		List<NotificationDeliveryResult> results = new ArrayList<>(deliveries.size());
+		for (NotificationDelivery delivery : deliveries) {
+			results.add(send(delivery));
+		}
+		if (!hasRecordingTime(deadline)) {
+			return;
+		}
+		try {
+			batches.recordDeliveryResults(results, deadline);
+		} catch (RuntimeException failure) {
+			LOG.warn("Notification delivery batch recording failed: count=" + results.size()
+					+ ", exceptionType=" + failure.getClass().getName());
+			for (NotificationDeliveryResult result : results) {
+				if (!hasRecordingTime(deadline)) {
+					break;
+				}
+				try {
+					batches.recordDeliveryResults(List.of(result), deadline);
+				} catch (RuntimeException recordFailure) {
+					// 개별 기록도 실패한 항목만 기존 임대 만료 후 복구한다.
+					LOG.warn("Notification delivery bookkeeping failed: notificationId=" + result.getDelivery().getId()
+							+ ", attempt=" + result.getDelivery().getAttemptCount()
+							+ ", exceptionType=" + recordFailure.getClass().getName());
+				}
+			}
+		}
+	}
+
+	/** JDBC 제한은 초 단위이므로 남은 임대가 1초 미만이면 새 기록을 시작하지 않는다. */
+	private boolean hasRecordingTime(Instant deadline) {
+		return Duration.between(timeProvider.now(), deadline).getSeconds() >= 1;
+	}
+
+	/** 성공 시각 또는 기존 재시도 정책에 따른 실패 결과를 고정한다. DB 기록은 별도 단계다. */
+	private NotificationDeliveryResult send(NotificationDelivery delivery) {
 		try {
 			if (sender.send(delivery) != MockDeliveryStatus.SENT) {
 				throw new NotificationProcessingException(NotificationProcessingErrorCode.TEMPORARY_FAILURE);
 			}
-			repository.completeDelivery(delivery, timeProvider.now());
+			return NotificationDeliveryResult.sent(delivery, timeProvider.now());
 		} catch (RuntimeException failure) {
 			LOG.warn("Notification delivery failed: notificationId=" + delivery.getId()
 					+ ", attempt=" + delivery.getAttemptCount() + ", exceptionType=" + failure.getClass().getName());
-			repository.failDelivery(delivery, NotificationRetryPolicy.nextAttemptAt(
+			return NotificationDeliveryResult.failed(delivery, NotificationRetryPolicy.nextAttemptAt(
 					delivery.getCycleAttemptCount(), timeProvider.now(), failure), NotificationRetryPolicy.errorCode(failure));
 		}
 	}
