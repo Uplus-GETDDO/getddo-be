@@ -12,6 +12,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import com.getddo.core.common.pagination.PageResult;
 import com.getddo.core.user.domain.AdminUserList;
 import com.getddo.core.user.domain.AdminUserQuery;
+import com.getddo.core.user.domain.Membership;
 import com.getddo.core.user.domain.User;
 import com.getddo.core.user.domain.UserRole;
 import com.getddo.core.user.domain.UserStatus;
@@ -23,6 +24,8 @@ import com.getddo.core.user.repository.UserRepository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -79,6 +82,49 @@ class AdminUserQueryServiceTest {
 		assertThat(actual.getTotalUserCount()).isEqualTo(120L);
 		assertThatExceptionOfType(UserException.class).isThrownBy(() -> service.findById(actor, missing))
 				.satisfies(error -> assertThat(error.getErrorCode()).isEqualTo(UserErrorCode.ADMIN_TARGET_NOT_FOUND));
+	}
+
+	@ParameterizedTest
+	@CsvSource({"1,2,120", "61,0,120", "1,0,0"})
+	@DisplayName("활성 일반 사용자 전체를 검색하면 페이지 위치와 무관하게 검색 총건수를 재사용한다")
+	void reusesActiveRegularUserCount(int page, int itemCount, long total) {
+		// given
+		User actor = user(UserRole.ADMIN, UserStatus.ACTIVE);
+		User target = user(UserRole.USER, UserStatus.ACTIVE);
+		AdminUserQuery query = new AdminUserQuery(page, 2, null, "  ", UserRole.USER, UserStatus.ACTIVE, null);
+		List<User> items = java.util.Collections.nCopies(itemCount, target);
+		when(queries.findAll(query)).thenReturn(new PageResult<>(items, page, 2, total));
+
+		// when
+		AdminUserList result = service.findAll(actor, query);
+
+		// then
+		assertThat(result.getTotalUserCount()).isEqualTo(total);
+		verify(queries, never()).countActiveRegularUsers();
+	}
+
+	@ParameterizedTest
+	@CsvSource({"id", "keyword", "membership", "role", "status"})
+	@DisplayName("활성 일반 사용자 전체와 다른 조건은 검색 건수를 전체 활성 사용자 수로 재사용하지 않는다")
+	void countsActiveUsersIndependently(String filter) {
+		// given
+		User actor = user(UserRole.ADMIN, UserStatus.ACTIVE);
+		AdminUserQuery query = new AdminUserQuery(1, 20,
+				filter.equals("id") ? UUID.randomUUID() : null,
+				filter.equals("keyword") ? "검색" : null,
+				filter.equals("role") ? UserRole.ADMIN : UserRole.USER,
+				filter.equals("status") ? UserStatus.INACTIVE : UserStatus.ACTIVE,
+				filter.equals("membership") ? Membership.VIP : null);
+		when(queries.findAll(query)).thenReturn(new PageResult<>(List.of(), 1, 20, 0));
+		when(queries.countActiveRegularUsers()).thenReturn(120L);
+
+		// when
+		AdminUserList result = service.findAll(actor, query);
+
+		// then
+		assertThat(result.getPage().getTotalElements()).isZero();
+		assertThat(result.getTotalUserCount()).isEqualTo(120);
+		verify(queries).countActiveRegularUsers();
 	}
 
 	@ParameterizedTest
