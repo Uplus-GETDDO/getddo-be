@@ -10,7 +10,7 @@
 - 목록은 JPA Criteria API로 선택 조건을 조합한다. count와 목록에 같은 조건을 적용하고 기존 Entity·UserMapper를 재사용한다. 목록을 먼저 읽고 첫 페이지 또는 비어 있지 않은 마지막 페이지가 크기를 채우지 못하면 전체 건수를 계산해 검색 count를 생략한다. 가득 찬 페이지와 첫 페이지 이후의 빈 페이지는 정확한 건수를 별도로 센다. JPA 오프셋 범위를 넘는 페이지는 PageOffsets로 처리한다.
 - 상세는 기존 사용자 저장소를 재사용한다. 호출자 확인 실패와 상세 대상 부재의 오류를 구분한다.
 - 서비스의 읽기 전용 트랜잭션 안에서 목록과 DB 전체 활성 일반 사용자 수를 조회하고, API에서는 AdminUserListResponse와 AdminUserResponse로 공개 필드만 변환한다.
-- V034에서 `users(created_at DESC, id DESC)`와 `users(role, status)` 인덱스를 추가한다. 깊은 OFFSET의 선행 항목 스캔 비용은 남는다. 사용자 모델·인증 동작·기존 가상 사용자 선택 API는 변경하지 않는다. UserErrorCode에는 채택한 관리자 조회 오류만 추가했다.
+- V035에서 `users(created_at DESC, id DESC)`와 `users(role, status)` 인덱스를 추가한다. 깊은 OFFSET의 선행 항목 스캔 비용은 남는다. 사용자 모델·인증 동작·기존 가상 사용자 선택 API는 변경하지 않는다. UserErrorCode에는 채택한 관리자 조회 오류만 추가했다.
 
 ## FE 연결
 
