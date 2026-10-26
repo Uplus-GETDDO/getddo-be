@@ -103,7 +103,11 @@ class NotificationJobScheduleIndexIntegrationTest {
 			// 전용 컨테이너에서만 인덱스를 숨겨 V032가 없을 때의 별도 정렬 계획을 대조한다.
 			try {
 				jdbc.execute("alter table notification_jobs alter index " + INDEX + " invisible");
-				Map<String, Object> withoutIndex = explain(jdbc);
+				// 힌트 없는 이전 쿼리로만 음성 대조한다. 운영 쿼리는 V032 인덱스를 필수로 사용한다.
+				Map<String, Object> withoutIndex = jdbc.queryForMap("explain "
+						+ NotificationJobRepositoryImpl.CLAIM_NEXT_JOB_SQL
+								.replace(" force index (ix_notification_job_schedule)", ""),
+						utc(NOW), utc(NOW), utc(NOW));
 				assertThat(withoutIndex.get("key")).isNotEqualTo(INDEX);
 				assertThat(String.valueOf(withoutIndex.get("Extra"))).contains("Using filesort");
 			} finally {
@@ -123,6 +127,42 @@ class NotificationJobScheduleIndexIntegrationTest {
 			assertThat(second.getId()).isEqualTo(id(2001));
 			assertThat(first.getAttemptCount()).isEqualTo(1);
 			assertThat(second.getAttemptCount()).isEqualTo(1);
+		}
+	}
+
+	/** 스테이징처럼 전체 작업은 적고 대기 작업 하나의 수신자 JSON만 큰 분포를 검증한다. */
+	@Test
+	@DisplayName("완료33·중지2·대기1 작업에서도 filesort 없이 1만명 작업을 선점한다")
+	void claimsLargeJobAmongFewMostlyCompletedJobs() throws SQLException {
+		try (Connection connection = connect()) {
+			SingleConnectionDataSource dataSource = new SingleConnectionDataSource(connection, true);
+			JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+			jdbc.execute("set session sort_buffer_size = 262144");
+			TransactionTemplate transaction = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+			transaction.executeWithoutResult(status -> {
+				// given: 테스트 간 순서와 관계없이 36개 분포를 만들고 종료 시 원래 fixture로 되돌린다.
+				status.setRollbackOnly();
+				jdbc.update("""
+						delete from notification_jobs
+						where id > ? and id not in (?, ?, ?)
+						""", UuidBinary.toBytes(id(32)), UuidBinary.toBytes(id(2000)),
+						UuidBinary.toBytes(id(2328)), UuidBinary.toBytes(id(2329)));
+				jdbc.update("""
+						update notification_jobs set status = 'PENDING', attempt_count = 0, lease_until = null
+						where id = ?
+						""", UuidBinary.toBytes(id(2000)));
+				assertThat(jdbc.queryForObject("select count(*) from notification_jobs", Integer.class)).isEqualTo(36);
+
+				// when / then: 운영 SQL의 실제 선택 계획과 잠금을 포함한 선점을 모두 확인한다.
+				Map<String, Object> plan = explain(jdbc);
+				assertThat(plan.get("key")).isEqualTo(INDEX);
+				assertThat(String.valueOf(plan.get("Extra"))).doesNotContain("Using filesort");
+				NotificationJobRepositoryImpl repository = new NotificationJobRepositoryImpl(jdbc);
+				NotificationJob claimed = repository.claimNextJob(NOW).orElseThrow();
+				assertThat(claimed.getId()).isEqualTo(id(2000));
+				assertThat(claimed.getAttemptCount()).isEqualTo(1);
+				assertThat(repository.claimNextJob(NOW)).isEmpty();
+			});
 		}
 	}
 
