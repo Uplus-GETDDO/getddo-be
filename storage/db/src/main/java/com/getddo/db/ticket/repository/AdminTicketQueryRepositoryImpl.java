@@ -107,7 +107,8 @@ public class AdminTicketQueryRepositoryImpl implements AdminTicketQueryRepositor
 	 * 현재 버전·상태가 마지막 이력의 버전·상태와 다르거나 이력이 하나도 없는 응모권.
 	 *
 	 * <p>모든 응모권을 훑는 판정은 (응모권, 버전) 유일 키로 현재 버전의 이력을 찾아 상태를 비교하고, 더 큰 버전의 이력이 있는지만
-	 * 확인한다. 현재 버전의 이력이 없으면 이력이 없거나 마지막 이력이 현재 버전보다 낮은 것이다. 사용자 이름과 마지막 이력은 어긋난
+	 * 확인한다. 현재 버전의 이력이 없으면 이력이 하나도 없거나, 이력이 모두 현재 버전보다 낮거나, 더 높은 버전의 이력만 있는
+	 * 것이다(마지막 경우는 {@code exists} 조건으로도 걸린다). 사용자 이름과 마지막 이력은 어긋난
 	 * 행에만 붙도록 SELECT 목록의 하위 조회로 읽는다.</p>
 	 */
 	private static final String INCONSISTENCY_SELECT = """
@@ -276,19 +277,24 @@ public class AdminTicketQueryRepositoryImpl implements AdminTicketQueryRepositor
 	}
 
 	/**
-	 * 건수를 먼저 세고, 범위 안이면 한 페이지를 읽는다. 건수는 {@code countFromAndWhere}로 센다. 결과 컬럼은 Entity와 같은
-	 * Hibernate 타입으로 읽는다.
+	 * 한 페이지를 읽는다. 건수는 {@code countFromAndWhere}로 센다. 결과 컬럼은 Entity와 같은 Hibernate 타입으로 읽는다.
+	 *
+	 * <p>첫 쪽은 항목을 먼저 읽고, 한 쪽을 다 채우지 못했으면 항목 수가 곧 전체 건수라 따로 세지 않는다. 전체를 훑는 조회의 비용을
+	 * 한 번으로 줄이기 위해서다. 두 번째 쪽부터는 건수를 먼저 세어 범위를 벗어난 쪽은 항목 조회 없이 빈 쪽으로 돌려준다.</p>
 	 */
 	private <T> PageResult<T> page(String select, String fromAndWhere, String countFromAndWhere,
 			Map<String, Object> parameters, String order, PageQuery page, Consumer<NativeQuery<Tuple>> scalars,
 			Function<Tuple, T> mapper) {
-		long offset = page.offset();
-		// JPA가 int로 바꿀 수 없는 시작 위치는 항목이 없는 것으로 보고 건수만 센다.
-		List<T> items = offset > Integer.MAX_VALUE ? List.of()
-				: readPage(select + fromAndWhere + order, parameters, page, scalars, mapper);
-		// 한 쪽을 다 채우지 못했거나 첫 쪽이 비었으면 전체 건수를 이미 알아서 따로 세지 않는다. 전체를 훑는 조회의 비용을 한 번으로 줄인다.
-		boolean totalKnown = items.isEmpty() ? offset == 0 : items.size() < page.getSize();
-		long total = totalKnown ? offset + items.size() : count(countFromAndWhere, parameters);
+		if (page.offset() == 0) {
+			List<T> items = readPage(select + fromAndWhere + order, parameters, page, scalars, mapper);
+			long total = items.size() < page.getSize() ? items.size() : count(countFromAndWhere, parameters);
+			return new PageResult<>(items, page.getPage(), page.getSize(), total);
+		}
+		long total = count(countFromAndWhere, parameters);
+		if (page.offset() >= total) {
+			return new PageResult<>(List.of(), page.getPage(), page.getSize(), total);
+		}
+		List<T> items = readPage(select + fromAndWhere + order, parameters, page, scalars, mapper);
 		return new PageResult<>(items, page.getPage(), page.getSize(), total);
 	}
 

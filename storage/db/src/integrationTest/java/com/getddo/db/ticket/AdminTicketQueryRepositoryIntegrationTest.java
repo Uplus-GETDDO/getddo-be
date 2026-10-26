@@ -210,21 +210,28 @@ class AdminTicketQueryRepositoryIntegrationTest extends TicketIntegrationTestSup
 		// given
 		grantAllSources(userId);
 		// when
-		PageResult<TicketGrantView> page = grants(filter(null, null, null, null, null, null, null), FIRST_PAGE);
+		PageResult<TicketGrantView> page = grants(filter(null, null, null, null, null, null, null), new PageQuery(1, 3));
 		// then
-		assertThat(page.getTotalElements()).isEqualTo(page.getItems().size()).isEqualTo(4);
+		assertThat(page.getItems()).hasSize(3);
+		assertThat(page.getTotalElements()).isEqualTo(4);
 	}
 
 	@Test
 	@DisplayName("관리자 이력 조회용 정렬 인덱스가 만들어져 있다")
 	void createsAdminListIndexes() {
 		// when
-		java.util.List<String> indexes = jdbc.queryForList("""
-				select distinct index_name from information_schema.statistics
+		java.util.Map<String, String> columnsByIndex = new java.util.HashMap<>();
+		jdbc.query("""
+				select index_name, group_concat(column_name order by seq_in_index separator ',') as columns
+				from information_schema.statistics
 				where table_schema = database() and table_name = 'ticket_histories'
-				""", String.class);
+				group by index_name
+				""", rs -> {
+			columnsByIndex.put(rs.getString("index_name"), rs.getString("columns"));
+		});
 		// then
-		assertThat(indexes).contains("ix_ticket_histories_created", "ix_ticket_histories_op_created");
+		assertThat(columnsByIndex).containsEntry("ix_ticket_histories_created", "created_at,id")
+				.containsEntry("ix_ticket_histories_op_created", "operation_type,created_at,id");
 	}
 
 	@Test
