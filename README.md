@@ -1653,8 +1653,6 @@ DB 이름이나 계정을 바꿨다면 환경변수도 `.env`와 맞춥니다.
 | 로컬 S3 호환 저장소 | `GETDDO_IMAGES_ENDPOINT` | 명시한 endpoint와 path-style을 사용. 실제 AWS에서는 비워 둠 |
 | CloudWatch 앱 지표 | `GETDDO_METRICS_ENABLED`, `GETDDO_METRICS_SERVER`, `AWS_REGION` | 기본 비활성화. 서버별 식별·IAM·관리 포트 조건은 [계측 런북](docs/06-runbook/application-metrics.md) 참조 |
 
-위 설정은 `application.yaml`이 읽는 환경변수입니다. 터미널·IDE에는 직접 주입하고, 기본 `compose.yaml`이 전달하지 않는 Redis·S3 설정은 별도 Compose 설정으로 앱 컨테이너에 전달해야 합니다. `.env`에 적는 것만으로 모든 값이 컨테이너에 자동 주입되지는 않습니다. 이미지 설정이 없으면 업로드는 `503 EVENT-019`이며, 키가 있어도 공개 기준 주소가 없으면 조회 URL은 null입니다.
-
 시연 사용자 호출 예시는 다음과 같습니다. UUID는 실제 로컬 DB에 등록한 값으로 바꿉니다. 관리자 요청은 관리자 UUID·`ADMIN` 역할을 사용하며 멤버십을 임의로 채우지 않습니다.
 
 ```http
@@ -1687,11 +1685,3 @@ API의 앱 기동·Swagger 테스트는 `api/src/integrationTest/java/com/getddo
 | Redis·Lua 통합 검증 | `./gradlew :storage:redis:integrationTest` | `.\gradlew.bat :storage:redis:integrationTest` | 필요 |
 | 전체 빌드·테스트 | `./gradlew build` | `.\gradlew.bat build` | 필요 |
 | 실행 JAR 패키징 | `./gradlew :api:bootJar` | `.\gradlew.bat :api:bootJar` | 불필요 |
-
-초기 SQL 검증은 빈 MySQL에 Flyway 마이그레이션을 적용하고, 재실행 시 추가 적용이 없는지 확인합니다. Docker에 연결할 수 없으면 통합 테스트는 실패합니다.
-
-GitHub Actions의 `빌드·테스트`는 배포 스크립트의 Python 회귀 검증과 러너 Docker의 `./gradlew build`를 실행합니다. 별도 개발용 DB 비밀값은 필요하지 않습니다. 실패한 테스트 보고서는 `test-reports` 아티팩트에서 확인할 수 있습니다. CI 성공은 실제 운영 DB·S3·FE 연동 또는 부하 시험 성공과 구분합니다.
-
-통합 테스트를 실행하지 않고 단위 테스트만 확인했다면 그 범위로 보고합니다. 과거 XML·컴파일 성공·일부 테스트 성공을 최신 전체 테스트나 통합 테스트 통과로 표시하지 않습니다.
-
-`PR 제목 검사`는 [공용 PR 제목 규칙](https://github.com/Uplus-GETDDO/getddo-spec/blob/main/01-conventions/pull-request.md)에 맞는지 별도로 확인합니다. PR 생성·수정·커밋 추가 시 실행하며, 제목·본문만 수정하면 Gradle 빌드는 실행하지 않습니다. 제목 오류로 병합을 막으려면 main/dev Ruleset의 필수 상태 검사에 `PR 제목 검사`를 등록합니다.
