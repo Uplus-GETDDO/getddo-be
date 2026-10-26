@@ -107,6 +107,11 @@ def release(github, dry_run=False):
     github.api(f"issues/{number}/labels", "POST", {"labels": ["skip-review"]})
     # 라벨 요청도 외부 호출이므로 그동안 변경된 대상과 검증 근거를 다시 확인한다.
     pull = github.api(f"pulls/{number}")
+    if (pull["base"]["ref"] != "main" or pull["head"]["ref"] != "dev"
+            or pull["head"]["repo"]["full_name"] != github.repository):
+        # 리뷰 예외가 일반 기능 PR로 이어지지 않도록 범위를 벗어난 라벨만 회수한다.
+        github.api(f"issues/{number}/labels/skip-review", "DELETE")
+        return "RELEASE_SKIPPED: PR이 main 릴리스 범위를 벗어나 리뷰 예외 라벨을 제거했습니다."
     if (pull["state"] != "open" or pull["draft"] or pull["head"]["ref"] != "dev"
             or pull["base"]["ref"] != "main" or pull["head"]["sha"] != dev
             or pull["head"]["repo"]["full_name"] != github.repository

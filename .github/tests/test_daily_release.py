@@ -52,6 +52,8 @@ class FakeGitHub:
             return self.pull
         if path == 'issues/12/labels' and method == 'POST':
             return [{'name': 'skip-review'}]
+        if path == 'issues/12/labels/skip-review' and method == 'DELETE':
+            return []
         if path.endswith('/merge'):
             return {'merged': self.merged, 'sha': 'c' * 40}
         if path == 'pulls/12':
@@ -220,7 +222,7 @@ class DailyReleaseTests(unittest.TestCase):
                 github = FakeGitHub()
                 original = github.api
 
-                def api(path, method='GET', data=None):
+                def api(path, method='GET', data=None, original=original, github=github, change=change):
                     """라벨 요청 직후 PR 정보만 바꾸어 재조회 누락을 재현한다."""
                     result = original(path, method, data)
                     if path == 'issues/12/labels':
@@ -230,6 +232,14 @@ class DailyReleaseTests(unittest.TestCase):
                 github.api = api
                 self.assertIn('RELEASE_SKIPPED', release.release(github))
                 self.assertFalse(any(path.endswith('/merge') for path, _, _ in github.calls))
+                outside_scope = ('base' in change or
+                                 ('head' in change and
+                                  (change['head']['ref'] != 'dev' or
+                                   change['head']['repo']['full_name'] != github.repository)))
+                removed = any(path == 'issues/12/labels/skip-review' and method == 'DELETE'
+                              for path, method, _ in github.calls)
+                self.assertEqual(outside_scope, removed)
+
 
     def test_branch_or_ci_changes_during_label_request_never_merge(self):
         """라벨 요청 중 dev·main 변경이나 CI 재실행이 생기면 병합을 중단한다."""
@@ -238,7 +248,7 @@ class DailyReleaseTests(unittest.TestCase):
                 github = FakeGitHub()
                 original = github.api
 
-                def api(path, method='GET', data=None):
+                def api(path, method='GET', data=None, original=original, github=github, change=change):
                     """라벨 적용 전에 통과했던 브랜치나 CI 근거를 무효화한다."""
                     result = original(path, method, data)
                     if path == 'issues/12/labels':
@@ -251,6 +261,7 @@ class DailyReleaseTests(unittest.TestCase):
                 github.api = api
                 self.assertIn('RELEASE_SKIPPED', release.release(github))
                 self.assertFalse(any(path.endswith('/merge') for path, _, _ in github.calls))
+                self.assertFalse(any(method == 'DELETE' for _, method, _ in github.calls))
 
     def test_merge_rejection_is_failure(self):
         """라벨 적용 후 병합 거부를 성공으로 보고하지 않고 라벨은 유지하는지 확인한다."""
