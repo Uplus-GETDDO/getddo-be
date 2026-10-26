@@ -17,8 +17,10 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.dao.DataIntegrityViolationException;
 
 import com.getddo.core.drawing.domain.DrawSnapshot;
+import com.getddo.core.drawing.domain.DrawRunStatus;
 import com.getddo.core.drawing.domain.DrawType;
 import com.getddo.db.drawing.entity.DrawCandidateEntity;
+import com.getddo.db.drawing.entity.DrawRunCandidateEntity;
 import com.getddo.db.drawing.entity.DrawRunEntity;
 import com.getddo.db.drawing.mapper.DrawSnapshotMapper;
 
@@ -28,8 +30,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** 세션 배치 설정의 범위·복원과 예외 전파를 검증한다. 실제 DB 롤백 검증은 아니다. */
@@ -147,5 +152,125 @@ class DrawSnapshotRepositoryImplTest {
 		// when / then
 		assertThatThrownBy(() -> repository.saveInitial(input)).isSameAs(failure);
 		assertThat(activeBatchSize.get()).isEqualTo(previousBatchSize);
+	}
+
+	/** 최초 후보 자체를 저장하지 않고 같은 후보의 실행별 연결만 배치로 저장한다. */
+	@ParameterizedTest
+	@NullSource
+	@ValueSource(ints = {17, 200})
+	@DisplayName("재추첨 연결은 배치 100으로 저장하고 입력 고정·flush·재조회 전에 이전 설정을 복원한다")
+	void batchesReplacementLinksAndRestoresCallerSetting(Integer previousBatchSize) {
+		// given
+		prepareReplacement(previousBatchSize);
+		doAnswer(invocation -> {
+			assertThat(activeBatchSize.get()).isEqualTo(100);
+			List<DrawRunCandidateEntity> savedLinks = invocation.getArgument(0);
+			assertThat(savedLinks).hasSize(1);
+			assertThat(savedLinks.getFirst().getDrawRun()).isSameAs(run);
+			assertThat(savedLinks.getFirst().getCandidate()).isSameAs(entity);
+			assertThat(savedLinks.getFirst().getId().getDrawRunId()).isEqualTo(runId);
+			assertThat(savedLinks.getFirst().getId().getCandidateId()).isEqualTo(entity.getId());
+			return savedLinks;
+		}).when(links).saveAllAndFlush(anyList());
+
+		// when
+		DrawSnapshot result = repository.saveRegisteredReplacement(input);
+
+		// then
+		assertThat(result).isSameAs(stored);
+		assertThat(activeBatchSize.get()).isEqualTo(previousBatchSize);
+		verify(candidates, never()).saveAllAndFlush(anyList());
+		verify(mapper, never()).toEntity(any(), any());
+	}
+
+	/** 연결 저장 실패 시 복원하고, 복원 이후 단계의 예외도 숨기지 않는다. */
+	@ParameterizedTest
+	@CsvSource(value = {
+			"link, NULL", "link, 17",
+			"fix, NULL", "fix, 17",
+			"flush, NULL", "flush, 17",
+			"refresh, NULL", "refresh, 17",
+			"lookup, NULL", "lookup, 17"
+	}, nullValues = "NULL")
+	@DisplayName("재추첨 연결 저장·입력 고정·재조회 실패를 전파하며 호출자의 배치 설정을 보존한다")
+	void restoresReplacementSettingAndPropagatesFailure(String step, Integer previousBatchSize) {
+		// given
+		prepareReplacement(previousBatchSize);
+		DataIntegrityViolationException failure = new DataIntegrityViolationException("test failure");
+		switch (step) {
+			case "link" -> doAnswer(invocation -> {
+				assertThat(activeBatchSize.get()).isEqualTo(100);
+				throw failure;
+			}).when(links).saveAllAndFlush(anyList());
+			case "fix" -> doThrow(failure).when(mapper).fixInput(run, input);
+			case "flush" -> doThrow(failure).when(runs).flush();
+			case "refresh" -> doThrow(failure).when(entityManager).refresh(run);
+			case "lookup" -> doThrow(failure).when(links).findCandidates(runId);
+			default -> throw new IllegalArgumentException(step);
+		}
+
+		// when / then
+		assertThatThrownBy(() -> repository.saveRegisteredReplacement(input)).isSameAs(failure);
+		assertThat(activeBatchSize.get()).isEqualTo(previousBatchSize);
+	}
+
+	/** 후보가 소진된 재추첨도 빈 연결을 저장한 뒤 기존 입력 고정 흐름을 따른다. */
+	@ParameterizedTest
+	@NullSource
+	@ValueSource(ints = {17})
+	@DisplayName("빈 후보 재추첨도 후보를 새로 만들지 않고 배치 설정을 복원한 뒤 입력을 고정한다")
+	void preservesEmptyReplacementInput(Integer previousBatchSize) {
+		// given
+		prepareReplacement(previousBatchSize);
+		when(input.candidates()).thenReturn(List.of());
+		doReturn(List.of()).when(candidates).findAllById(anyList());
+		when(links.findCandidates(runId)).thenReturn(List.of());
+		when(mapper.toDomain(run, List.of())).thenReturn(stored);
+		doAnswer(invocation -> {
+			assertThat(activeBatchSize.get()).isEqualTo(100);
+			assertThat(invocation.<List<DrawRunCandidateEntity>>getArgument(0)).isEmpty();
+			return List.of();
+		}).when(links).saveAllAndFlush(anyList());
+
+		// when
+		DrawSnapshot result = repository.saveRegisteredReplacement(input);
+
+		// then
+		assertThat(result).isSameAs(stored);
+		assertThat(activeBatchSize.get()).isEqualTo(previousBatchSize);
+		verify(mapper).fixInput(run, input);
+		verify(candidates, never()).saveAllAndFlush(anyList());
+	}
+
+	/** 최초 실행에 속한 후보와 입력 미고정 재추첨 실행을 구성한다. */
+	private void prepareReplacement(Integer previousBatchSize) {
+		expectedRestoredBatchSize = previousBatchSize;
+		activeBatchSize.set(previousBatchSize);
+		UUID originalRunId = UUID.randomUUID();
+		DrawRunEntity originalRun = mock(DrawRunEntity.class);
+		DrawSnapshot.Rules rules = mock(DrawSnapshot.Rules.class);
+		when(input.runId()).thenReturn(runId);
+		when(input.drawType()).thenReturn(DrawType.REPLACEMENT);
+		when(input.status()).thenReturn(DrawRunStatus.READY);
+		when(input.rules()).thenReturn(rules);
+		when(rules.replacementFormat()).thenReturn(true);
+		when(rules.originalRunId()).thenReturn(originalRunId);
+		when(run.getEventId()).thenReturn(eventId);
+		when(run.getDrawType()).thenReturn(DrawType.REPLACEMENT);
+		when(run.getStatus()).thenReturn(DrawRunStatus.PREPARING);
+		when(runs.findForUpdate(runId)).thenReturn(Optional.of(run));
+		UUID candidateId = entity.getId();
+		when(inputCandidate.id()).thenReturn(candidateId);
+		when(originalRun.getId()).thenReturn(originalRunId);
+		when(entity.getDrawRun()).thenReturn(originalRun);
+		when(candidates.findAllById(anyList())).thenAnswer(invocation -> {
+			assertThat(invocation.<List<UUID>>getArgument(0)).containsExactly(entity.getId());
+			assertThat(activeBatchSize.get()).isEqualTo(previousBatchSize);
+			return List.of(entity);
+		});
+		when(links.findCandidates(runId)).thenAnswer(invocation -> {
+			assertThat(activeBatchSize.get()).isEqualTo(previousBatchSize);
+			return List.of(entity);
+		});
 	}
 }

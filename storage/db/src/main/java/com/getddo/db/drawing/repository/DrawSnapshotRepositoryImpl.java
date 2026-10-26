@@ -103,7 +103,15 @@ public class DrawSnapshotRepositoryImpl implements DrawSnapshotRepository {
 				throw new BusinessException(INVALID_RUN);
 			}
 		}
-		links.saveAllAndFlush(existing.stream().map(candidate -> new DrawRunCandidateEntity(run, candidate)).toList());
+		Session session = entityManager.unwrap(Session.class);
+		Integer previousBatchSize = session.getJdbcBatchSize();
+		try {
+			session.setJdbcBatchSize(SNAPSHOT_BATCH_SIZE);
+			links.saveAllAndFlush(existing.stream().map(candidate -> new DrawRunCandidateEntity(run, candidate)).toList());
+		} finally {
+			// 입력 고정·후속 flush에는 호출자의 설정을 사용하며 저장 실패 시에도 복원한다.
+			session.setJdbcBatchSize(previousBatchSize);
+		}
 		mapper.fixInput(run, snapshot);
 		runs.flush();
 		entityManager.refresh(run);

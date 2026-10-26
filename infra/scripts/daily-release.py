@@ -16,11 +16,13 @@ class ReleaseError(RuntimeError):
 
 class GitHub:
     def __init__(self, repository):
+        """명령 인자에 사용할 저장소 이름을 검증하고 호출 대상을 고정한다."""
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
             raise ReleaseError("GITHUB_REPOSITORY를 확인하세요.")
         self.repository = repository
 
     def api(self, path, method="GET", data=None):
+        """요청 본문은 표준 입력으로 전달하고 실패 시 API 원문을 노출하지 않는다."""
         args = ["gh", "api", f"repos/{self.repository}/{path}", "--method", method]
         if data is not None:
             args.extend(["--input", "-"])
@@ -31,26 +33,50 @@ class GitHub:
         return json.loads(result.stdout)
 
     def ref(self, branch):
+        """지정한 브랜치의 현재 SHA를 조회해 검증 전후 상태를 비교한다."""
         return self.api(f"git/ref/heads/{branch}")["object"]["sha"]
 
 
 def successful_build(github, sha):
-    """같은 dev 커밋의 가장 최근 push Build와 필수 두 작업을 검사한다."""
-    runs = github.api(f"actions/workflows/build.yml/runs?branch=dev&event=push&head_sha={sha}&per_page=1")["workflow_runs"]
-    if not runs:
+    """같은 dev 커밋의 가장 최근 push Build와 필수 검증 작업을 검사한다."""
+    runs = []
+    total = None
+    # 응답 순서에 의존하지 않고 전부 조회하며 검색 한도·조회 중 건수 변화는 중단한다.
+    for page in range(1, 11):
+        result = github.api(f"actions/workflows/build.yml/runs?branch=dev&event=push&head_sha={sha}&per_page=100&page={page}")
+        if total is None:
+            total = result["total_count"]
+        if result["total_count"] != total or total > 1000:
+            return None
+        batch = result["workflow_runs"]
+        runs.extend(batch)
+        if len(runs) >= total:
+            break
+        if not batch:
+            return None
+    if not runs or len(runs) != total:
         return None
-    run = runs[0]
+    run = max(runs, key=lambda candidate: (candidate["created_at"], candidate["id"]))
     if (run["head_sha"] != sha or run["head_branch"] != "dev" or run["event"] != "push"
             or run["status"] != "completed" or run["conclusion"] != "success"):
         return None
-    # 재실행에서는 최신 attempt의 작업만 받는다. 생략된 작업을 CI 성공으로 간주하지 않는다.
+    # 재실행에서는 최신 attempt의 작업만 받는다. 생략된 필수 작업을 CI 성공으로 간주하지 않는다.
     jobs = github.api(f"actions/runs/{run['id']}/jobs?filter=latest&per_page=100")["jobs"]
-    expected = {"빌드·테스트", "이미지 / Docker 이미지"}
+    expected = {"빌드·테스트", "이미지 / 이미지 빌드 검증", "이미지 / Docker 이미지"}
     if not expected.issubset({job["name"] for job in jobs}):
         return None
-    if any(job["status"] != "completed" or job["conclusion"] != "success" for job in jobs):
+    # dev에서 생략되는 main 전용 게시 작업은 필수 검증에 포함하지 않는다.
+    # 전체 Build 성공 조건은 위에서 별도로 확인하므로 다른 작업 실패도 통과하지 않는다.
+    if any(job["status"] != "completed" or job["conclusion"] != "success"
+           for job in jobs if job["name"] in expected):
         return None
     return run
+
+
+def in_release_scope(pull, repository):
+    """PR이 같은 저장소의 dev → main 릴리스 범위인지 확인한다."""
+    return (pull["base"]["ref"] == "main" and pull["head"]["ref"] == "dev"
+            and pull["head"]["repo"]["full_name"] == repository)
 
 
 def release(github, dry_run=False):
@@ -82,9 +108,8 @@ def release(github, dry_run=False):
     # GitHub가 생성 직후에는 mergeable을 null로 반환할 수 있다. 최대 1분만 기다린다.
     for attempt in range(7):
         pull = github.api(f"pulls/{number}")
-        if (pull["state"] != "open" or pull["draft"] or pull["head"]["ref"] != "dev"
-                or pull["base"]["ref"] != "main" or pull["head"]["sha"] != dev
-                or pull["head"]["repo"]["full_name"] != github.repository):
+        if (pull["state"] != "open" or pull["draft"] or pull["head"]["sha"] != dev
+                or not in_release_scope(pull, github.repository)):
             return "RELEASE_SKIPPED: PR 대상·커밋·상태가 달라졌습니다."
         if pull["mergeable"] is not None:
             break
@@ -97,6 +122,21 @@ def release(github, dry_run=False):
         return "RELEASE_SKIPPED: 검증 중 dev 또는 main이 변경됐습니다."
     if successful_build(github, dev) is None:
         return "RELEASE_SKIPPED: dev CI 상태가 변경됐습니다."
+    # main 릴리스 PR은 저장소의 리뷰 예외 라벨을 병합 전에 적용한다.
+    github.api(f"issues/{number}/labels", "POST", {"labels": ["skip-review"]})
+    # 라벨 요청도 외부 호출이므로 그동안 변경된 대상과 검증 근거를 다시 확인한다.
+    pull = github.api(f"pulls/{number}")
+    if not in_release_scope(pull, github.repository):
+        # 리뷰 예외가 일반 기능 PR로 이어지지 않도록 범위를 벗어난 라벨만 회수한다.
+        github.api(f"issues/{number}/labels/skip-review", "DELETE")
+        return "RELEASE_SKIPPED: PR이 main 릴리스 범위를 벗어나 리뷰 예외 라벨을 제거했습니다."
+    if (pull["state"] != "open" or pull["draft"] or pull["head"]["sha"] != dev
+            or pull["mergeable"] is not True):
+        return "RELEASE_SKIPPED: 라벨 적용 중 PR 대상·커밋·상태가 달라졌습니다."
+    if github.ref("dev") != dev or github.ref("main") != main:
+        return "RELEASE_SKIPPED: 라벨 적용 중 dev 또는 main이 변경됐습니다."
+    if successful_build(github, dev) is None:
+        return "RELEASE_SKIPPED: 라벨 적용 중 dev CI 상태가 변경됐습니다."
     merged = github.api(f"pulls/{number}/merge", "PUT", {"sha": dev, "merge_method": "merge"})
     if not merged.get("merged"):
         raise ReleaseError("PR을 병합하지 못했습니다. main 보호 규칙과 App 예외를 확인하세요.")
@@ -104,6 +144,7 @@ def release(github, dry_run=False):
 
 
 def main():
+    """조회 전용 옵션을 처리하고 실행 결과만 출력하며 실패 원문은 숨긴다."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="CI 상태만 확인하며 PR을 만들거나 병합하지 않음")
     args = parser.parse_args()

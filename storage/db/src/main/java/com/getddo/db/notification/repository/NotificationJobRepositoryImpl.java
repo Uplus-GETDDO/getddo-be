@@ -41,9 +41,12 @@ import com.getddo.db.common.util.UuidBinary;
 @Repository
 @RequiredArgsConstructor
 public class NotificationJobRepositoryImpl implements NotificationJobRepository {
-	/** 실제 선점과 인덱스 회귀 테스트가 같은 필터·정렬·잠금 SQL을 사용한다. */
+	/**
+	 * 예약 순서 인덱스로 읽어 큰 수신자 JSON이 있는 작업의 filesort 메모리 부족을 피한다.
+	 * 상태 인덱스를 선택할 수 있는 소량 작업에서도 같은 순서로 탐색하며, 잠긴 작업은 건너뛴다.
+	 */
 	static final String CLAIM_NEXT_JOB_SQL = """
-		select id, attempt_count, attempt_base from notification_jobs
+		select id, attempt_count, attempt_base from notification_jobs force index (ix_notification_job_schedule)
 		where json_extract(payload, '$.generationStoppedBy') is null
 		and scheduled_at <= ? and (
 		 (status = 'PENDING' and (next_attempt_at is null or next_attempt_at <= ?))

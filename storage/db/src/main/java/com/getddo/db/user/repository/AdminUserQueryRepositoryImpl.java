@@ -31,23 +31,33 @@ public class AdminUserQueryRepositoryImpl implements AdminUserQueryRepository {
 
 	@Override
 	public PageResult<User> findAll(AdminUserQuery query) {
-		CriteriaBuilder builder = entityManager.getCriteriaBuilder();
-		CriteriaQuery<Long> count = builder.createQuery(Long.class);
-		Root<UserEntity> countRoot = count.from(UserEntity.class);
-		count.select(builder.count(countRoot)).where(predicates(query, builder, countRoot));
-		long total = entityManager.createQuery(count).getSingleResult();
 		PageQuery page = query.getPage();
-		// JPA의 int 오프셋 범위를 넘는 요청도 전체 건수를 보존한 빈 페이지로 반환한다.
-		if (PageOffsets.exceedsIntRange(page) || page.offset() >= total) {
-			return new PageResult<>(List.of(), page.getPage(), page.getSize(), total);
+		if (PageOffsets.exceedsIntRange(page)) {
+			return new PageResult<>(List.of(), page.getPage(), page.getSize(), count(query));
 		}
+
+		CriteriaBuilder builder = entityManager.getCriteriaBuilder();
 		CriteriaQuery<UserEntity> select = builder.createQuery(UserEntity.class);
 		Root<UserEntity> user = select.from(UserEntity.class);
 		select.select(user).where(predicates(query, builder, user))
 				.orderBy(builder.desc(user.get("createdAt")), builder.desc(user.get("id")));
 		List<User> items = entityManager.createQuery(select).setFirstResult((int) page.offset())
 				.setMaxResults(page.getSize()).getResultList().stream().map(mapper::toDomain).toList();
+
+		// 첫 페이지 또는 비어 있지 않은 마지막 페이지는 결과만으로 정확한 전체 건수를 알 수 있다.
+		// 범위 밖의 빈 페이지는 offset으로 전체 건수를 추론할 수 없으므로 별도로 센다.
+		long total = items.size() < page.getSize() && (page.offset() == 0 || !items.isEmpty())
+				? page.offset() + items.size() : count(query);
 		return new PageResult<>(items, page.getPage(), page.getSize(), total);
+	}
+
+	/** 페이지가 가득 찼거나 범위 밖이면 같은 검색 조건의 정확한 전체 건수를 센다. */
+	private long count(AdminUserQuery query) {
+		CriteriaBuilder builder = entityManager.getCriteriaBuilder();
+		CriteriaQuery<Long> count = builder.createQuery(Long.class);
+		Root<UserEntity> user = count.from(UserEntity.class);
+		count.select(builder.count(user)).where(predicates(query, builder, user));
+		return entityManager.createQuery(count).getSingleResult();
 	}
 
 	@Override
