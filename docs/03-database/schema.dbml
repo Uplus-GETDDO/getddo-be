@@ -640,6 +640,7 @@ Table notification_jobs {
   indexes {
     occurrence_key [unique, name: 'uq_notification_job_occurrence']
     (scheduled_at, id) [name: 'ix_notification_job_schedule']
+    (created_at, id) [name: 'ix_notification_job_created']
   }
 
   checks {

@@ -7,6 +7,10 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -62,8 +66,23 @@ public class NotificationAdminRepositoryImpl implements NotificationAdminReposit
 		PageQuery page = query.getPage();
 		args.add(page.getSize());
 		args.add(page.offset());
-		List<AdminNotificationJob> items = jdbc.query(JOB_COLUMNS + where + " order by j.created_at desc, j.id desc limit ? offset ?",
-				(row, index) -> job(row), args.toArray());
+		// 큰 payload를 정렬 대상으로 읽지 않도록 ID 페이지를 먼저 확정한다.
+		List<UUID> ids = jdbc.query("select j.id from notification_jobs j" + where
+				+ " order by j.created_at desc, j.id desc limit ? offset ?",
+				(row, index) -> UuidBinary.fromBytes(row.getBytes("id")), args.toArray());
+		if (ids.isEmpty()) {
+			return new PageResult<>(List.of(), page.getPage(), page.getSize(), count);
+		}
+		String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
+		Object[] detailArgs = ids.stream().map(UuidBinary::toBytes).toArray();
+		List<AdminNotificationJob> items = jdbc.query(JOB_COLUMNS + " where j.id in (" + placeholders + ")",
+				(row, index) -> job(row), detailArgs);
+		// 상세 조회에서는 DB 정렬을 하지 않고 첫 조회의 순서를 복원한다.
+		Map<UUID, Integer> positions = new HashMap<>();
+		for (int index = 0; index < ids.size(); index++) {
+			positions.put(ids.get(index), index);
+		}
+		items.sort(Comparator.comparingInt(item -> positions.get(item.getId())));
 		return new PageResult<>(items, page.getPage(), page.getSize(), count);
 	}
 
