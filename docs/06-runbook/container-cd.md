@@ -193,6 +193,6 @@ GD-297의 private 수집 SG·target 라벨 준비가 선행 조건이다. 실제
 
 ## 앱별 DB 연결 수
 
-운영과 스테이징의 배포 Compose는 `SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE=30`을 지정한다. API 앱 한 개당 최대 30개이며, 같은 환경의 API 두 대는 합계 최대 60개다. DB의 전체 연결 허용 수와 다른 접속도 함께 고려한다.
+운영과 스테이징의 배포 Compose는 `SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE=30`을 지정한다. API 앱 한 개당 최대 30개이며, 같은 환경의 API 두 대는 합계 최대 60개다. 최소 유휴 연결은 앱당 10개로 유지해 최대치 증가가 기동 시 연결 선점으로 이어지지 않도록 한다. 풀의 최대치는 각 앱의 상한이며 DB 연결 확보를 보장하지 않는다. DB 전체 한도와 관리·시험용 접속도 함께 고려한다.
 
 이 값은 Compose의 `environment`에 있어 배포 시 새로 생성하는 `app.env`에 항목이 없거나 이전 값이 남아 있어도 30으로 적용된다. 적용 후 각 앱의 `hikaricp_connections_max{pool="getddo"}`가 30인지 확인한다. 실행 중인 컨테이너에는 환경변수만 바꿔도 반영되지 않으므로 기존 이미지를 유지해 서버별로 컨테이너를 다시 생성하고 정상 응답·ALB 상태를 확인한다. DB 정비 잠금이 남아 있으면 이를 우회해 재생성하거나 시작하지 않는다.
