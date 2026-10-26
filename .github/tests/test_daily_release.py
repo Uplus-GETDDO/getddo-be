@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
+from urllib.parse import parse_qs, urlsplit
 
 SOURCE = Path(__file__).resolve().parents[2] / 'infra/scripts/daily-release.py'
 spec = importlib.util.spec_from_file_location('daily_release', SOURCE)
@@ -11,6 +12,7 @@ release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
 DEV, MAIN = 'a' * 40, 'b' * 40
 RUN = {'id': 7, 'head_sha': DEV, 'head_branch': 'dev', 'event': 'push',
+       'created_at': '2026-10-24T00:00:00Z',
        'status': 'completed', 'conclusion': 'success', 'html_url': 'https://github.com/test/run/7'}
 JOBS = [{'name': name, 'status': 'completed', 'conclusion': 'success'}
         for name in ['빌드·테스트', '이미지 / 이미지 빌드 검증', '이미지 / Docker 이미지']]
@@ -43,7 +45,11 @@ class FakeGitHub:
         if path.startswith('compare/'):
             return {'ahead_by': self.ahead}
         if path.startswith('actions/workflows/'):
-            return {'workflow_runs': self.runs}
+            query = parse_qs(urlsplit(path).query)
+            page = int(query.get('page', ['1'])[0])
+            size = int(query.get('per_page', ['30'])[0])
+            start = (page - 1) * size
+            return {'workflow_runs': self.runs[start:start + size], 'total_count': len(self.runs)}
         if path.startswith('actions/runs/'):
             return {'jobs': self.jobs}
         if path.startswith('pulls?'):
@@ -123,6 +129,36 @@ class DailyReleaseTests(unittest.TestCase):
         github.runs[0]['conclusion'] = 'failure'
         self.assertIsNone(release.successful_build(github, DEV))
         self.assertFalse(github.mutations())
+
+    def test_latest_build_is_selected_by_creation_time(self):
+        """API 응답 순서와 관계없이 최신 실행의 성공·실패·진행 상태를 사용한다."""
+        for conclusion, status in [('success', 'completed'), ('failure', 'completed'),
+                                   ('success', 'in_progress')]:
+            for newest_first in (True, False):
+                with self.subTest(conclusion=conclusion, status=status, newest_first=newest_first):
+                    github = FakeGitHub()
+                    latest = {**RUN, 'id': 9, 'created_at': '2026-10-26T00:00:00Z',
+                              'status': status, 'conclusion': conclusion}
+                    github.runs = [latest, copy.deepcopy(RUN)] if newest_first else [copy.deepcopy(RUN), latest]
+                    expected = latest if status == 'completed' and conclusion == 'success' else None
+                    self.assertEqual(expected, release.successful_build(github, DEV))
+
+    def test_build_runs_are_paginated_before_selecting_latest(self):
+        """첫 페이지 뒤에 있는 최신 실패·진행 실행을 과거 성공으로 덮지 않는다."""
+        for status in ('completed', 'in_progress'):
+            with self.subTest(status=status):
+                github = FakeGitHub()
+                github.runs = [{**RUN, 'id': index + 10} for index in range(100)]
+                github.runs.append({**RUN, 'id': 999, 'created_at': '2026-10-26T00:00:00Z',
+                                    'status': status, 'conclusion': 'failure'})
+                self.assertIsNone(release.successful_build(github, DEV))
+                self.assertTrue(any('page=2' in path for path, _, _ in github.calls))
+
+    def test_incomplete_run_search_blocks_release(self):
+        """검색 한도로 전체 실행을 확인할 수 없으면 최신 성공으로 추정하지 않는다."""
+        github = FakeGitHub()
+        github.runs = [{**RUN, 'id': index + 10} for index in range(1001)]
+        self.assertIsNone(release.successful_build(github, DEV))
 
     def test_dry_run_never_mutates(self):
         """조회 전용 실행에서는 검증에 성공해도 GitHub 상태를 변경하지 않는지 확인한다."""

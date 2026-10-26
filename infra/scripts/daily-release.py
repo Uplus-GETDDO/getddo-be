@@ -39,10 +39,24 @@ class GitHub:
 
 def successful_build(github, sha):
     """같은 dev 커밋의 가장 최근 push Build와 필수 검증 작업을 검사한다."""
-    runs = github.api(f"actions/workflows/build.yml/runs?branch=dev&event=push&head_sha={sha}&per_page=1")["workflow_runs"]
-    if not runs:
+    runs = []
+    total = None
+    # 응답 순서에 의존하지 않고 전부 조회하며 검색 한도·조회 중 건수 변화는 중단한다.
+    for page in range(1, 11):
+        result = github.api(f"actions/workflows/build.yml/runs?branch=dev&event=push&head_sha={sha}&per_page=100&page={page}")
+        if total is None:
+            total = result["total_count"]
+        if result["total_count"] != total or total > 1000:
+            return None
+        batch = result["workflow_runs"]
+        runs.extend(batch)
+        if len(runs) >= total:
+            break
+        if not batch:
+            return None
+    if not runs or len(runs) != total:
         return None
-    run = runs[0]
+    run = max(runs, key=lambda candidate: (candidate["created_at"], candidate["id"]))
     if (run["head_sha"] != sha or run["head_branch"] != "dev" or run["event"] != "push"
             or run["status"] != "completed" or run["conclusion"] != "success"):
         return None
