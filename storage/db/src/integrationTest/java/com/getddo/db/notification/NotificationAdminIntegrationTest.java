@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -319,6 +320,59 @@ class NotificationAdminIntegrationTest {
 		assertThat(admin.findDeliveries(actor, new NotificationDeliveryQuery(1, 20, recipient, null, first, null, null, null))
 				.getItems()).hasSize(1);
 		assertThat(jdbc.queryForObject("select is_read from notifications where id=?", Boolean.class, bytes(notification))).isFalse();
+	}
+
+
+	/** 대용량 JSON 상세를 정렬에서 분리해도 페이지·필터·동률 순서를 유지한다. */
+	@Test
+	@DisplayName("큰 수신자 JSON 작업도 필터와 최신순 페이지 및 상세 정보를 유지한다")
+	void pagesLargePayloadsWithoutSortingDetails() {
+		// given
+		UUID eventId = event("SCHEDULED");
+		UUID publicationId = UUID.randomUUID();
+		List<UUID> recipients = new ArrayList<>();
+		for (int index = 0; index < 10_000; index++) {
+			recipients.add(UUID.randomUUID());
+		}
+		List<UUID> expected = new ArrayList<>();
+		for (int index = 0; index < 3; index++) {
+			UUID id = jobs.register(new NotificationJobRequest("admin-large:" + UUID.randomUUID(),
+					NotificationType.RESULT_PUBLISHED, eventId, publicationId, "제목", "내용", null, NOW, recipients));
+			jobIds.add(id);
+			expected.add(id);
+		}
+		// 모든 생성 시각이 같으므로 BINARY UUID 내림차순과 같은 문자열 순서로 기대값을 만든다.
+		expected.sort(Comparator.comparing(UUID::toString).reversed());
+		job(NotificationType.RESULT_CHANGED, eventId);
+		job(NotificationType.RESULT_PUBLISHED, null);
+		UUID completed = job(NotificationType.RESULT_PUBLISHED, eventId);
+		jdbc.update("update notification_jobs set status='COMPLETED' where id=?", bytes(completed));
+		UUID outside = job(NotificationType.RESULT_PUBLISHED, eventId);
+		jdbc.update("update notification_jobs set created_at=? where id=?", utc(NOW.plusSeconds(1)), bytes(outside));
+
+		// when
+		PageResult<AdminNotificationJobResult> first = admin.findJobs(actor,
+				new NotificationJobQuery(1, 2, NotificationJobStatus.PENDING, NotificationType.RESULT_PUBLISHED,
+						eventId, NOW, NOW.plusSeconds(1)));
+		PageResult<AdminNotificationJobResult> second = admin.findJobs(actor,
+				new NotificationJobQuery(2, 2, NotificationJobStatus.PENDING, NotificationType.RESULT_PUBLISHED,
+						eventId, NOW, NOW.plusSeconds(1)));
+
+		// then
+		PageResult<AdminNotificationJobResult> unfiltered = admin.findJobs(actor,
+				new NotificationJobQuery(1, 20, null, null, null, null, null));
+		assertThat(unfiltered.getTotalElements()).isEqualTo(7);
+		assertThat(unfiltered.getItems()).hasSize(7);
+		assertThat(first.getTotalElements()).isEqualTo(3);
+		assertThat(second.getTotalElements()).isEqualTo(3);
+		assertThat(first.getItems()).extracting(value -> value.getJob().getId()).containsExactlyElementsOf(expected.subList(0, 2));
+		assertThat(second.getItems()).extracting(value -> value.getJob().getId()).containsExactly(expected.get(2));
+		assertThat(first.getItems()).allSatisfy(value -> {
+			assertThat(value.getJob().getPublicationId()).isEqualTo(publicationId);
+			assertThat(value.getJob().getEventId()).isEqualTo(eventId);
+		});
+		assertThat(admin.findJobs(actor, new NotificationJobQuery(3, 2, NotificationJobStatus.PENDING,
+				NotificationType.RESULT_PUBLISHED, eventId, NOW, NOW.plusSeconds(1))).getItems()).isEmpty();
 	}
 
 	/** 감사 저장소 실패가 실제 Service 트랜잭션의 작업 갱신을 롤백한다. */
