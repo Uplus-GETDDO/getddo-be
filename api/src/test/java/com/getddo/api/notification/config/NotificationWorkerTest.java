@@ -45,7 +45,7 @@ class NotificationWorkerTest {
 
 	/** 생성 작업의 반복 상한과 발송 묶음의 단일 호출을 구분해 검사한다. */
 	@Test
-	@DisplayName("등록·생성은 최대 20번, 발송은 최대 20건 묶음을 한 번 호출한다")
+	@DisplayName("등록·생성은 최대 20번, 발송은 최대 100건 묶음을 한 번 호출한다")
 	void boundsEachStage() {
 		when(starts.registerNextDueEvent()).thenReturn(true);
 		when(jobs.processNextJob()).thenReturn(true);
