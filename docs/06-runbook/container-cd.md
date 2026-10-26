@@ -189,3 +189,10 @@ OIDC 역할에 정확한 `releases/*` 쓰기 외 **해당 버킷의 `locks/conta
 IP는 Compose 실행 환경에만 전달하고 app.env나 Parameter Store에는 저장하지 않는다. 필수 Parameter Store 목록·IAM 조회 범위는 변경하지 않는다. 새 앱은 기존 8080 정상 응답에 이어 private 9091의 HTTP bucket/JVM/Tomcat/Hikari 지표 제공을 확인한 뒤 current로 기록한다. 확인 실패 시 이전 Compose·이미지·전체 app.env를 복원하며, 롤백 성공 판정은 기존 8080 정상 응답과 이미지 확인만 사용한다. 이전 버전에 Prometheus가 없어도 복구 성공으로 처리하고 이번 배포 자체는 실패로 남긴다. 따라서 앱 복구 후 계측이 중단될 수 있으며 수집 대상의 up 상태도 별도로 확인한다.
 
 GD-297의 private 수집 SG·target 라벨 준비가 선행 조건이다. 실제 적용·복원 수신 검증은 GD-299의 별도 사용자 승인 후 수행한다. 운영 적용 승인 대기 — 병합/배포 금지.
+
+
+## 앱별 DB 연결 수
+
+운영과 스테이징의 배포 Compose는 `SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE=30`을 지정한다. API 앱 한 개당 최대 30개이며, 같은 환경의 API 두 대는 합계 최대 60개다. DB의 전체 연결 허용 수와 다른 접속도 함께 고려한다.
+
+이 값은 Compose의 `environment`에 있어 배포 시 새로 생성하는 `app.env`에 항목이 없거나 이전 값이 남아 있어도 30으로 적용된다. 적용 후 각 앱의 `hikaricp_connections_max{pool="getddo"}`가 30인지 확인한다. 실행 중인 컨테이너에는 환경변수만 바꿔도 반영되지 않으므로 기존 이미지를 유지해 서버별로 컨테이너를 다시 생성하고 정상 응답·ALB 상태를 확인한다. DB 정비 잠금이 남아 있으면 이를 우회해 재생성하거나 시작하지 않는다.
