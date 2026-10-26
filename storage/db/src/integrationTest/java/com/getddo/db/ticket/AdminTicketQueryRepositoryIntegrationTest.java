@@ -205,6 +205,29 @@ class AdminTicketQueryRepositoryIntegrationTest extends TicketIntegrationTestSup
 	}
 
 	@Test
+	@DisplayName("조건이 없을 때 조인 없이 센 총건수가 조인해서 읽은 행 수와 같다")
+	void countWithoutJoinsMatchesRows() {
+		// given
+		grantAllSources(userId);
+		// when
+		PageResult<TicketGrantView> page = grants(filter(null, null, null, null, null, null, null), FIRST_PAGE);
+		// then
+		assertThat(page.getTotalElements()).isEqualTo(page.getItems().size()).isEqualTo(4);
+	}
+
+	@Test
+	@DisplayName("관리자 이력 조회용 정렬 인덱스가 만들어져 있다")
+	void createsAdminListIndexes() {
+		// when
+		java.util.List<String> indexes = jdbc.queryForList("""
+				select distinct index_name from information_schema.statistics
+				where table_schema = database() and table_name = 'ticket_histories'
+				""", String.class);
+		// then
+		assertThat(indexes).contains("ix_ticket_histories_created", "ix_ticket_histories_op_created");
+	}
+
+	@Test
 	@DisplayName("서버 기본 로케일이 터키어여도 대문자 I가 포함된 영문 keyword로 이름을 찾는다")
 	void keywordIgnoresDefaultLocale() {
 		// given

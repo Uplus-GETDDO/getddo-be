@@ -140,7 +140,7 @@ public class AdminTicketQueryRepositoryImpl implements AdminTicketQueryRepositor
 			parameters.put("grade", filter.getGrade().name());
 		}
 		period(where, parameters, "h.created_at", filter.getFrom(), filter.getTo());
-		return page(GRANT_SELECT, GRANT_FROM + where, parameters, GRANT_ORDER, page,
+		return page(GRANT_SELECT, GRANT_FROM + where, grantCountFrom(filter) + where, parameters, GRANT_ORDER, page,
 				query -> query.addScalar("history_id", UUID.class).addScalar("ticket_id", UUID.class)
 						.addScalar("user_id", UUID.class).addScalar("user_name", String.class)
 						.addScalar("grade", String.class).addScalar("source_type", String.class)
@@ -161,7 +161,8 @@ public class AdminTicketQueryRepositoryImpl implements AdminTicketQueryRepositor
 			parameters.put("operationType", filter.getOperationType().name());
 		}
 		period(where, parameters, "h.created_at", filter.getFrom(), filter.getTo());
-		return page(HISTORY_SELECT, HISTORY_FROM + where, parameters, HISTORY_ORDER, page,
+		return page(HISTORY_SELECT, HISTORY_FROM + where, historyCountFrom(filter) + where, parameters, HISTORY_ORDER,
+				page,
 				query -> query.addScalar("id", UUID.class).addScalar("ticket_id", UUID.class)
 						.addScalar("operation_type", String.class).addScalar("grade", String.class)
 						.addScalar("status", String.class).addScalar("expires_at", Instant.class)
@@ -217,10 +218,61 @@ public class AdminTicketQueryRepositoryImpl implements AdminTicketQueryRepositor
 				AdminTicketQueryRepositoryImpl::toInconsistency);
 	}
 
-	/** 건수를 먼저 세고, 범위 안이면 한 페이지를 읽는다. 결과 컬럼은 Entity와 같은 Hibernate 타입으로 읽는다. */
+	/**
+	 * 지급 건수를 세는 FROM 절. 조건에 쓰이는 테이블만 잇는다. 응모권은 이력의 필수 외래 키, 사용자는 응모권의 필수 외래 키라
+	 * 조건이 없으면 조인해도 건수가 같으므로 생략한다.
+	 */
+	private static String grantCountFrom(TicketGrantFilter filter) {
+		boolean mission = filter.getMissionId() != null;
+		boolean user = filter.getKeyword() != null;
+		boolean ticket = user || mission || filter.getUserId() != null || filter.getSourceType() != null
+				|| filter.getGrade() != null;
+		StringBuilder from = new StringBuilder(" from ticket_histories h");
+		if (ticket) {
+			from.append(" join tickets t on t.id = h.ticket_id");
+		}
+		if (user) {
+			from.append(" join users u on u.id = t.user_id");
+		}
+		if (mission) {
+			from.append(" left join mission_reward_claims mc on mc.id = t.mission_reward_claim_id");
+		}
+		return from.append(" where h.operation_type = 'GRANT'").toString();
+	}
+
+	/** 처리 이력 건수를 세는 FROM 절. 이벤트·미션·사용자 조건에 필요한 조인만 잇는다. */
+	private static String historyCountFrom(AdminTicketHistoryFilter filter) {
+		boolean mission = filter.getMissionId() != null;
+		boolean event = filter.getEventId() != null;
+		boolean ticket = mission || filter.getUserId() != null;
+		StringBuilder from = new StringBuilder(" from ticket_histories h");
+		if (ticket) {
+			from.append(" join tickets t on t.id = h.ticket_id");
+		}
+		if (mission) {
+			from.append(" left join mission_reward_claims mc on mc.id = t.mission_reward_claim_id");
+		}
+		if (event) {
+			from.append(" left join event_entries ee on ee.id = h.event_entry_id")
+					.append(" left join ticket_histories oh on oh.id = h.original_use_history_id")
+					.append(" left join event_entries oee on oee.id = oh.event_entry_id");
+		}
+		return from.append(" where 1 = 1").toString();
+	}
+
 	private <T> PageResult<T> page(String select, String fromAndWhere, Map<String, Object> parameters, String order,
 			PageQuery page, Consumer<NativeQuery<Tuple>> scalars, Function<Tuple, T> mapper) {
-		Query count = entityManager.createNativeQuery("select count(*)" + fromAndWhere);
+		return page(select, fromAndWhere, fromAndWhere, parameters, order, page, scalars, mapper);
+	}
+
+	/**
+	 * 건수를 먼저 세고, 범위 안이면 한 페이지를 읽는다. 건수는 {@code countFromAndWhere}로 센다. 결과 컬럼은 Entity와 같은
+	 * Hibernate 타입으로 읽는다.
+	 */
+	private <T> PageResult<T> page(String select, String fromAndWhere, String countFromAndWhere,
+			Map<String, Object> parameters, String order, PageQuery page, Consumer<NativeQuery<Tuple>> scalars,
+			Function<Tuple, T> mapper) {
+		Query count = entityManager.createNativeQuery("select count(*)" + countFromAndWhere);
 		parameters.forEach(count::setParameter);
 		long total = ((Number) count.getSingleResult()).longValue();
 		if (total == 0 || page.offset() >= total) {
