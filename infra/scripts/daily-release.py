@@ -105,6 +105,17 @@ def release(github, dry_run=False):
         return "RELEASE_SKIPPED: dev CI 상태가 변경됐습니다."
     # main 릴리스 PR은 저장소의 리뷰 예외 라벨을 병합 전에 적용한다.
     github.api(f"issues/{number}/labels", "POST", {"labels": ["skip-review"]})
+    # 라벨 요청도 외부 호출이므로 그동안 변경된 대상과 검증 근거를 다시 확인한다.
+    pull = github.api(f"pulls/{number}")
+    if (pull["state"] != "open" or pull["draft"] or pull["head"]["ref"] != "dev"
+            or pull["base"]["ref"] != "main" or pull["head"]["sha"] != dev
+            or pull["head"]["repo"]["full_name"] != github.repository
+            or pull["mergeable"] is not True):
+        return "RELEASE_SKIPPED: 라벨 적용 중 PR 대상·커밋·상태가 달라졌습니다."
+    if github.ref("dev") != dev or github.ref("main") != main:
+        return "RELEASE_SKIPPED: 라벨 적용 중 dev 또는 main이 변경됐습니다."
+    if successful_build(github, dev) is None:
+        return "RELEASE_SKIPPED: 라벨 적용 중 dev CI 상태가 변경됐습니다."
     merged = github.api(f"pulls/{number}/merge", "PUT", {"sha": dev, "merge_method": "merge"})
     if not merged.get("merged"):
         raise ReleaseError("PR을 병합하지 못했습니다. main 보호 규칙과 App 예외를 확인하세요.")

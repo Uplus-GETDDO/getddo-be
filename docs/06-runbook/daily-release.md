@@ -13,7 +13,7 @@
 3. 같은 저장소의 dev → main PR을 재사용하거나 생성한다. 새 PR은 `[chore] GD-115 매일 dev 변경 main 반영` 제목을 사용한다.
 4. 초안·종료된 PR, 다른 head·base·저장소·커밋, 충돌 또는 병합 가능 여부 미확인은 건너뛴다. GitHub의 병합 가능 여부 계산은 최대 1분만 기다린다.
 5. dev·main이 조회한 상태 그대로인지, dev CI가 여전히 성공인지 다시 확인한다. merge API에도 검증한 dev SHA를 전달해 다른 head 커밋의 병합을 막는다.
-6. 검증한 main 릴리스 PR에 `skip-review` 라벨을 적용하고 전용 GitHub App으로 merge commit을 만든다. 해당 main push가 기존 Build를 실행하고, 성공하면 [Container CD](container-cd.md)가 서버에 배포한다.
+6. 검증한 main 릴리스 PR에 `skip-review` 라벨을 적용한다. 라벨 요청 후 PR 대상·소스·상태·병합 가능 여부, dev·main SHA와 dev CI를 다시 확인하고 달라졌으면 병합하지 않는다. 조건이 유지되면 전용 GitHub App으로 merge commit을 만든다. 해당 main push가 기존 Build를 실행하고, 성공하면 [Container CD](container-cd.md)가 서버에 배포한다.
 
 PR CI·봇 리뷰 완료를 기다리는 흐름은 아니다. 사용자가 승인한 정기 릴리스는 검증된 dev를 리뷰 승인 없이 main에 반영하며, main의 새 병합 커밋은 다시 Build를 통과해야 배포된다. 새 필수 Parameter Store 값과 호환되는 DB 마이그레이션은 dev 병합 전에 준비해야 한다. API 병합 직전 최종 조회와 병합 사이의 main 변경을 원자적으로 잠그지는 못하므로 main의 Build와 CD는 계속 최종 배포 관문으로 유지한다.
 

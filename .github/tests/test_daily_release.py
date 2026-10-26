@@ -206,6 +206,52 @@ class DailyReleaseTests(unittest.TestCase):
             release.release(github)
         self.assertFalse(any(path.endswith('/merge') for path, _, _ in github.calls))
 
+    def test_pr_changes_during_label_request_never_merge(self):
+        """라벨 적용 중 대상·소스·상태가 바뀌면 검증했던 PR로 간주하지 않는다."""
+        changes = [
+            {'base': {'ref': 'dev'}}, {'state': 'closed'}, {'draft': True},
+            {'head': {**PULL['head'], 'sha': MAIN}},
+            {'head': {**PULL['head'], 'ref': 'feature'}},
+            {'head': {**PULL['head'], 'repo': {'full_name': 'fork/repo'}}},
+            {'mergeable': False}, {'mergeable': None},
+        ]
+        for change in changes:
+            with self.subTest(change=change):
+                github = FakeGitHub()
+                original = github.api
+
+                def api(path, method='GET', data=None):
+                    """라벨 요청 직후 PR 정보만 바꾸어 재조회 누락을 재현한다."""
+                    result = original(path, method, data)
+                    if path == 'issues/12/labels':
+                        github.pull.update(change)
+                    return result
+
+                github.api = api
+                self.assertIn('RELEASE_SKIPPED', release.release(github))
+                self.assertFalse(any(path.endswith('/merge') for path, _, _ in github.calls))
+
+    def test_branch_or_ci_changes_during_label_request_never_merge(self):
+        """라벨 요청 중 dev·main 변경이나 CI 재실행이 생기면 병합을 중단한다."""
+        for change in ('dev', 'main', 'ci'):
+            with self.subTest(change=change):
+                github = FakeGitHub()
+                original = github.api
+
+                def api(path, method='GET', data=None):
+                    """라벨 적용 전에 통과했던 브랜치나 CI 근거를 무효화한다."""
+                    result = original(path, method, data)
+                    if path == 'issues/12/labels':
+                        if change == 'ci':
+                            github.runs[0]['status'] = 'in_progress'
+                        else:
+                            github.refs[change] = 'd' * 40
+                    return result
+
+                github.api = api
+                self.assertIn('RELEASE_SKIPPED', release.release(github))
+                self.assertFalse(any(path.endswith('/merge') for path, _, _ in github.calls))
+
     def test_merge_rejection_is_failure(self):
         """라벨 적용 후 병합 거부를 성공으로 보고하지 않고 라벨은 유지하는지 확인한다."""
         github = FakeGitHub()
