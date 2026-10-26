@@ -41,6 +41,16 @@ import com.getddo.db.common.util.UuidBinary;
 @Repository
 @RequiredArgsConstructor
 public class NotificationJobRepositoryImpl implements NotificationJobRepository {
+	/** 실제 선점과 인덱스 회귀 테스트가 같은 필터·정렬·잠금 SQL을 사용한다. */
+	static final String CLAIM_NEXT_JOB_SQL = """
+		select id, attempt_count, attempt_base from notification_jobs
+		where json_extract(payload, '$.generationStoppedBy') is null
+		and scheduled_at <= ? and (
+		 (status = 'PENDING' and (next_attempt_at is null or next_attempt_at <= ?))
+		 or (status = 'PROCESSING' and (lease_until is null or lease_until <= ?)))
+		order by scheduled_at, id limit 1 for update skip locked
+		""";
+
 	private final JdbcTemplate jdbc;
 
 	/** 업무 트랜잭션의 롤백과 함께 작업 등록도 취소한다. UNIQUE 충돌은 DB 내부에서 해결한다. */
@@ -75,14 +85,9 @@ public class NotificationJobRepositoryImpl implements NotificationJobRepository 
 	@Transactional(propagation = Propagation.REQUIRES_NEW)
 	public Optional<NotificationJob> claimNextJob(Instant now) {
 		while (true) {
-			List<NotificationJob> rows = jdbc.query("""
-				select id, attempt_count, attempt_base from notification_jobs
-				where json_extract(payload, '$.generationStoppedBy') is null
-				and scheduled_at <= ? and (
-				 (status = 'PENDING' and (next_attempt_at is null or next_attempt_at <= ?))
-				 or (status = 'PROCESSING' and (lease_until is null or lease_until <= ?)))
-				order by scheduled_at, id limit 1 for update skip locked
-				""", (row, index) -> new NotificationJob(uuid(row.getBytes("id")), row.getInt("attempt_count"), row.getInt("attempt_base")),
+			List<NotificationJob> rows = jdbc.query(CLAIM_NEXT_JOB_SQL,
+					(row, index) -> new NotificationJob(uuid(row.getBytes("id")),
+							row.getInt("attempt_count"), row.getInt("attempt_base")),
 					time(now), time(now), time(now));
 			if (rows.isEmpty()) {
 				return Optional.empty();

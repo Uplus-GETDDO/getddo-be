@@ -119,6 +119,35 @@ class NotificationJobIntegrationTest {
 		}
 	}
 
+
+	/** 큰 수신자 작업의 예약 순서와 중지·미래 예약 제외 조건을 검증한다. 인덱스 실행계획은 별도 시험한다. */
+	@Test
+	@DisplayName("1만 명 작업을 선점할 때 중지와 미래 예약을 제외하고 예약 순서를 유지한다")
+	void claimsLargeRecipientJobsInScheduleOrder() {
+		// given: 선점까지만 검증하므로 수신자 사용자 행은 만들지 않는다.
+		List<UUID> recipients = new ArrayList<>();
+		for (int index = 0; index < 10_000; index++) {
+			recipients.add(UUID.randomUUID());
+		}
+		UUID stopped = service.register(request("large-stopped", NOW.minusSeconds(3), recipients));
+		jdbc.update("update notification_jobs set payload = json_set(payload, '$.generationStoppedBy', 'test') where id = ?",
+				bytes(stopped));
+		UUID future = service.register(request("large-future", NOW.plusSeconds(60), recipients));
+		UUID first = service.register(request("large-first", NOW.minusSeconds(2), recipients));
+		UUID second = service.register(request("large-second", NOW.minusSeconds(1), recipients));
+
+		// when
+		NotificationJob firstClaim = repository.claimNextJob(NOW).orElseThrow();
+		NotificationJob secondClaim = repository.claimNextJob(NOW).orElseThrow();
+
+		// then
+		assertThat(firstClaim.getId()).isEqualTo(first);
+		assertThat(secondClaim.getId()).isEqualTo(second);
+		assertThat(repository.claimNextJob(NOW)).isEmpty();
+		assertThat(count("select count(*) from notification_jobs where id in (?, ?) and attempt_count = 0",
+				bytes(stopped), bytes(future))).isEqualTo(2);
+	}
+
 	/** 검증 시나리오: 같은 발생 건과 수신자 순서 변경은 같은 작업이며 다른 문구는 충돌로 거절한다. */
 	@Test
 	@DisplayName("같은 발생 건과 수신자 순서 변경은 같은 작업이며 다른 문구는 충돌로 거절한다")
