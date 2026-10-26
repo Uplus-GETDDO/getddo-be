@@ -535,7 +535,7 @@ class NotificationJobIntegrationTest {
 				Future<?> recording = executor.submit(() -> batches.recordDeliveryResults(results, NOW.plusSeconds(2)));
 				assertThatThrownBy(() -> recording.get(8, TimeUnit.SECONDS))
 						.isInstanceOf(java.util.concurrent.ExecutionException.class)
-						.hasCauseInstanceOf(QueryTimeoutException.class);
+						.hasRootCauseInstanceOf(java.sql.SQLTimeoutException.class);
 				assertThat(blocker).isNotDone();
 			} finally {
 				release.countDown();
@@ -802,12 +802,11 @@ class NotificationJobIntegrationTest {
 		assertThat(count("select delivery_attempt_count from notifications where id = ?", bytes(notification))).isEqualTo(2);
 	}
 
-	/** 검증 시나리오: 발송 제한 시각 이후라도 재선점 전 성공은 저장하고 다시 발송하지 않는다. */
+	/** 기록 deadline 전에는 확정하고 만료 뒤에는 기존 상태를 보존해 다음 선점으로 복구한다. */
 	@ParameterizedTest
-	@ValueSource(ints = {60, 61})
-	@DisplayName("발송 제한 시각 이후라도 재선점 전 성공은 저장하고 다시 발송하지 않는다")
-	void completesExpiredDeliveryBeforeReclaim(int elapsedSeconds) {
-		// given
+	@ValueSource(ints = {59, 60, 61})
+	@DisplayName("발송 결과는 임대 전까지만 기록하고 만료된 결과는 다음 선점에서 복구한다")
+	void recoversDeliveryAfterRecordingDeadline(int elapsedSeconds) {
 		UUID id = service.register(request("slow-delivery", NOW, List.of(USER)));
 		service.processNextJob();
 		UUID notification = notificationId(id, USER);
@@ -816,16 +815,26 @@ class NotificationJobIntegrationTest {
 			return MockDeliveryStatus.SENT;
 		});
 
-		// when
 		assertThat(service.processNextDelivery()).isTrue();
+		if (elapsedSeconds >= 60) {
+			assertThat(count("select count(*) from notifications where id = ? and mock_delivery_status = 'PENDING'"
+					+ " and is_read = false and mock_sent_at is null", bytes(notification))).isEqualTo(1);
+			assertThat(timestamp("select next_delivery_attempt_at from notifications where id = ?", bytes(notification)))
+					.isEqualTo(NOW.plusSeconds(60));
+			assertThat(count("select delivery_attempt_count from notifications where id = ?", bytes(notification))).isEqualTo(1);
+			// 저장 재시도가 아니라 임대 만료 후의 새 발송 시도다. 동일 알림을 회수한다.
+			when(sender.send(any())).thenReturn(MockDeliveryStatus.SENT);
+			assertThat(service.processNextDelivery()).isTrue();
+		}
 
-		// then
+		assertThat(count("select count(*) from notifications where job_id = ?", bytes(id))).isEqualTo(1);
 		assertThat(count("select count(*) from notifications where id = ? and mock_delivery_status = 'SENT' and is_read = false",
 				bytes(notification))).isEqualTo(1);
 		assertThat(timestamp("select mock_sent_at from notifications where id = ?", bytes(notification)))
 				.isEqualTo(clock.instant());
 		assertThat(timestamp("select next_delivery_attempt_at from notifications where id = ?", bytes(notification))).isNull();
-		assertThat(count("select delivery_attempt_count from notifications where id = ?", bytes(notification))).isEqualTo(1);
+		assertThat(count("select delivery_attempt_count from notifications where id = ?", bytes(notification)))
+				.isEqualTo(elapsedSeconds >= 60 ? 2 : 1);
 		assertThat(service.processNextDelivery()).isFalse();
 	}
 
