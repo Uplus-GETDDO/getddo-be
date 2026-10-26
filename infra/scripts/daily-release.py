@@ -16,11 +16,13 @@ class ReleaseError(RuntimeError):
 
 class GitHub:
     def __init__(self, repository):
+        """명령 인자에 사용할 저장소 이름을 검증하고 호출 대상을 고정한다."""
         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
             raise ReleaseError("GITHUB_REPOSITORY를 확인하세요.")
         self.repository = repository
 
     def api(self, path, method="GET", data=None):
+        """요청 본문은 표준 입력으로 전달하고 실패 시 API 원문을 노출하지 않는다."""
         args = ["gh", "api", f"repos/{self.repository}/{path}", "--method", method]
         if data is not None:
             args.extend(["--input", "-"])
@@ -31,6 +33,7 @@ class GitHub:
         return json.loads(result.stdout)
 
     def ref(self, branch):
+        """지정한 브랜치의 현재 SHA를 조회해 검증 전후 상태를 비교한다."""
         return self.api(f"git/ref/heads/{branch}")["object"]["sha"]
 
 
@@ -109,6 +112,7 @@ def release(github, dry_run=False):
 
 
 def main():
+    """조회 전용 옵션을 처리하고 실행 결과만 출력하며 실패 원문은 숨긴다."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="CI 상태만 확인하며 PR을 만들거나 병합하지 않음")
     args = parser.parse_args()
