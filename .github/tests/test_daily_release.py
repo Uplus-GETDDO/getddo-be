@@ -160,6 +160,36 @@ class DailyReleaseTests(unittest.TestCase):
         github.runs = [{**RUN, 'id': index + 10} for index in range(1001)]
         self.assertIsNone(release.successful_build(github, DEV))
 
+    def test_exactly_1000_runs_are_searched_completely(self):
+        """정확히 1,000건이면 열 페이지를 모두 읽고 마지막 페이지의 최신 성공을 선택한다."""
+        github = FakeGitHub()
+        github.runs = [{**RUN, 'id': index + 10} for index in range(999)]
+        github.runs.append({**RUN, 'id': 9999, 'created_at': '2026-10-26T00:00:00Z'})
+        self.assertEqual(9999, release.successful_build(github, DEV)['id'])
+        self.assertTrue(any('page=10' in path for path, _, _ in github.calls))
+
+    def test_changing_or_incomplete_page_counts_block_release(self):
+        """페이지 사이의 건수 변경과 총건수보다 이른 빈 페이지에서는 병합 근거를 거부한다."""
+        for mode in ('changed', 'empty'):
+            with self.subTest(mode=mode):
+                github = FakeGitHub()
+                github.runs = [{**RUN, 'id': index + 10} for index in range(150)]
+                original = github.api
+
+                def api(path, method='GET', data=None, original=original, mode=mode):
+                    """두 번째 페이지의 건수 또는 실행 목록만 바꿔 불완전한 조회를 재현한다."""
+                    result = original(path, method, data)
+                    if path.startswith('actions/workflows/') and 'page=2' in path:
+                        if mode == 'changed':
+                            result = {**result, 'total_count': 151}
+                        else:
+                            result = {**result, 'workflow_runs': []}
+                    return result
+
+                github.api = api
+                self.assertIsNone(release.successful_build(github, DEV))
+                self.assertFalse(github.mutations())
+
     def test_dry_run_never_mutates(self):
         """조회 전용 실행에서는 검증에 성공해도 GitHub 상태를 변경하지 않는지 확인한다."""
         github = FakeGitHub()

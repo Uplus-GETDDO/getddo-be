@@ -73,6 +73,12 @@ def successful_build(github, sha):
     return run
 
 
+def in_release_scope(pull, repository):
+    """PR이 같은 저장소의 dev → main 릴리스 범위인지 확인한다."""
+    return (pull["base"]["ref"] == "main" and pull["head"]["ref"] == "dev"
+            and pull["head"]["repo"]["full_name"] == repository)
+
+
 def release(github, dry_run=False):
     """실패·변경 없음·충돌·검증 중 브랜치 변경 시 병합하지 않는다."""
     dev, main = github.ref("dev"), github.ref("main")
@@ -102,9 +108,8 @@ def release(github, dry_run=False):
     # GitHub가 생성 직후에는 mergeable을 null로 반환할 수 있다. 최대 1분만 기다린다.
     for attempt in range(7):
         pull = github.api(f"pulls/{number}")
-        if (pull["state"] != "open" or pull["draft"] or pull["head"]["ref"] != "dev"
-                or pull["base"]["ref"] != "main" or pull["head"]["sha"] != dev
-                or pull["head"]["repo"]["full_name"] != github.repository):
+        if (pull["state"] != "open" or pull["draft"] or pull["head"]["sha"] != dev
+                or not in_release_scope(pull, github.repository)):
             return "RELEASE_SKIPPED: PR 대상·커밋·상태가 달라졌습니다."
         if pull["mergeable"] is not None:
             break
@@ -121,14 +126,11 @@ def release(github, dry_run=False):
     github.api(f"issues/{number}/labels", "POST", {"labels": ["skip-review"]})
     # 라벨 요청도 외부 호출이므로 그동안 변경된 대상과 검증 근거를 다시 확인한다.
     pull = github.api(f"pulls/{number}")
-    if (pull["base"]["ref"] != "main" or pull["head"]["ref"] != "dev"
-            or pull["head"]["repo"]["full_name"] != github.repository):
+    if not in_release_scope(pull, github.repository):
         # 리뷰 예외가 일반 기능 PR로 이어지지 않도록 범위를 벗어난 라벨만 회수한다.
         github.api(f"issues/{number}/labels/skip-review", "DELETE")
         return "RELEASE_SKIPPED: PR이 main 릴리스 범위를 벗어나 리뷰 예외 라벨을 제거했습니다."
-    if (pull["state"] != "open" or pull["draft"] or pull["head"]["ref"] != "dev"
-            or pull["base"]["ref"] != "main" or pull["head"]["sha"] != dev
-            or pull["head"]["repo"]["full_name"] != github.repository
+    if (pull["state"] != "open" or pull["draft"] or pull["head"]["sha"] != dev
             or pull["mergeable"] is not True):
         return "RELEASE_SKIPPED: 라벨 적용 중 PR 대상·커밋·상태가 달라졌습니다."
     if github.ref("dev") != dev or github.ref("main") != main:
