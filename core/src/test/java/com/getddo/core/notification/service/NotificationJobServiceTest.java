@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -38,6 +39,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.inOrder;
@@ -168,7 +171,7 @@ class NotificationJobServiceTest {
 	/** 결과 기록이 실패해도 뒤의 선점 항목을 발송하고 민감한 오류 원문을 남기지 않는다. */
 	@ParameterizedTest
 	@ValueSource(booleans = {false, true})
-	@DisplayName("두 번째 알림의 결과 기록이 실패해도 세 번째 알림은 발송한다")
+	@DisplayName("묶음 저장 실패 후 같은 결과만 개별 저장하고 발송은 반복하지 않는다")
 	void continuesAfterDeliveryBookkeepingFailure(boolean secondSent, CapturedOutput output) {
 		// given
 		NotificationDelivery second = new NotificationDelivery(UUID.randomUUID(), SECOND, "제목", "내용", null, 1);
@@ -185,7 +188,7 @@ class NotificationJobServiceTest {
 				throw new TransientDataAccessResourceException("private bookkeeping details");
 			}
 			return null;
-		}).when(batches).recordDeliveryResults(anyList());
+		}).when(batches).recordDeliveryResults(anyList(), eq(NOW.plusSeconds(60)));
 
 		// when
 		assertThat(service.processNextDeliveries()).isEqualTo(3);
@@ -206,6 +209,93 @@ class NotificationJobServiceTest {
 		assertThat(output.getOut()).contains("Notification delivery bookkeeping failed", second.getId().toString(),
 				"attempt=1", TransientDataAccessResourceException.class.getName())
 				.doesNotContain("private bookkeeping details", "제목", "내용");
+	}
+
+	/** 선점과 발송에 시간이 걸려도 결과 기록은 최초 선점 만료 시각을 그대로 전달한다. */
+	@Test
+	@DisplayName("선점·발송에 쓴 시간을 결과 기록의 임대 예산에서 제외한다")
+	void preservesOriginalDeadlineAcrossClaimAndSend() {
+		AtomicReference<Instant> now = useAdvancingClock();
+		when(batches.claimNextDeliveries(NOW, 100)).thenAnswer(invocation -> {
+			now.set(NOW.plusSeconds(45));
+			return List.of(DELIVERY);
+		});
+		when(sender.send(DELIVERY)).thenAnswer(invocation -> {
+			now.set(NOW.plusSeconds(58));
+			return MockDeliveryStatus.SENT;
+		});
+
+		assertThat(service.processNextDeliveries()).isEqualTo(1);
+		assertThat(recordedResults().getFirst().getSentAt()).isEqualTo(NOW.plusSeconds(58));
+	}
+
+	/** 발송 후 1초 미만이 남으면 JDBC timeout을 올림하여 임대를 넘기지 않고 복구에 맡긴다. */
+	@Test
+	@DisplayName("선점 만료까지 1초 미만이면 결과 저장을 시작하지 않는다")
+	void skipsRecordingWithLessThanOneSecondLeft() {
+		AtomicReference<Instant> now = useAdvancingClock();
+		when(batches.claimNextDeliveries(NOW, 100)).thenReturn(List.of(DELIVERY));
+		when(sender.send(DELIVERY)).thenAnswer(invocation -> {
+			now.set(NOW.plusMillis(59_500));
+			return MockDeliveryStatus.SENT;
+		});
+
+		assertThat(service.processNextDeliveries()).isEqualTo(1);
+		verify(batches, never()).recordDeliveryResults(anyList(), any());
+		verify(sender).send(DELIVERY);
+	}
+
+	/** 묶음 오류가 선점 예산을 소진하면 추가 개별 트랜잭션을 열거나 다시 발송하지 않는다. */
+	@Test
+	@DisplayName("묶음 저장 실패 시 임대가 끝났으면 개별 저장을 시도하지 않는다")
+	void stopsFallbackAfterBatchExhaustsDeadline() {
+		AtomicReference<Instant> now = useAdvancingClock();
+		when(batches.claimNextDeliveries(NOW, 100)).thenReturn(List.of(DELIVERY, DELIVERY));
+		when(sender.send(DELIVERY)).thenReturn(MockDeliveryStatus.SENT);
+		doAnswer(invocation -> {
+			now.set(NOW.plusSeconds(60));
+			throw new TransientDataAccessResourceException("synthetic timeout");
+		}).when(batches).recordDeliveryResults(anyList(), eq(NOW.plusSeconds(60)));
+
+		assertThat(service.processNextDeliveries()).isEqualTo(2);
+		verify(batches).recordDeliveryResults(anyList(), eq(NOW.plusSeconds(60)));
+		verify(sender, times(2)).send(DELIVERY);
+	}
+
+	/** 개별 저장이 시간을 소진해도 deadline을 연장하지 않고 나머지 결과는 임대 복구에 남긴다. */
+	@Test
+	@DisplayName("개별 저장 중 시간이 소진되면 남은 저장과 재발송을 중단한다")
+	void stopsFallbackWhenIndividualWriteExhaustsDeadline() {
+		AtomicReference<Instant> now = useAdvancingClock();
+		NotificationDelivery second = new NotificationDelivery(UUID.randomUUID(), SECOND, "제목", "내용", null, 1);
+		when(batches.claimNextDeliveries(NOW, 100)).thenReturn(List.of(DELIVERY, second));
+		when(sender.send(any())).thenReturn(MockDeliveryStatus.SENT);
+		List<List<NotificationDeliveryResult>> writes = new ArrayList<>();
+		doAnswer(invocation -> {
+			List<NotificationDeliveryResult> results = invocation.getArgument(0);
+			writes.add(List.copyOf(results));
+			if (results.size() == 2) {
+				now.set(NOW.plusSeconds(58));
+				throw new TransientDataAccessResourceException("synthetic batch failure");
+			}
+			now.set(NOW.plusSeconds(60));
+			throw new TransientDataAccessResourceException("synthetic individual timeout");
+		}).when(batches).recordDeliveryResults(anyList(), eq(NOW.plusSeconds(60)));
+
+		assertThat(service.processNextDeliveries()).isEqualTo(2);
+		assertThat(writes).hasSize(2);
+		assertThat(writes.getLast()).containsExactly(writes.getFirst().getFirst());
+		verify(sender).send(DELIVERY);
+		verify(sender).send(second);
+	}
+
+	/** 고정 시계를 교체해 sleep 없이 선점·발송·저장 중의 시간 경과를 재현한다. */
+	private AtomicReference<Instant> useAdvancingClock() {
+		AtomicReference<Instant> now = new AtomicReference<>(NOW);
+		Clock clock = mock(Clock.class);
+		when(clock.instant()).thenAnswer(invocation -> now.get());
+		service = new NotificationJobService(repository, new TimeProvider(clock), sender, batches);
+		return now;
 	}
 
 	/** 상한까지 선점한 100건을 각각 한 번 발송하고 결과는 하나의 묶음으로 저장한다. */
@@ -235,7 +325,7 @@ class NotificationJobServiceTest {
 		// when / then
 		assertThat(service.processNextDeliveries()).isZero();
 		verifyNoInteractions(sender, repository);
-		verify(batches, never()).recordDeliveryResults(anyList());
+		verify(batches, never()).recordDeliveryResults(anyList(), eq(NOW.plusSeconds(60)));
 	}
 
 	/** 검증 시나리오: 모의 발송 성공은 기존 알림의 발송 결과만 저장한다. */
@@ -307,7 +397,7 @@ class NotificationJobServiceTest {
 	@SuppressWarnings({"unchecked", "rawtypes"})
 	private List<NotificationDeliveryResult> recordedResults() {
 		ArgumentCaptor<List<NotificationDeliveryResult>> captor = ArgumentCaptor.forClass(List.class);
-		verify(batches).recordDeliveryResults(captor.capture());
+		verify(batches).recordDeliveryResults(captor.capture(), eq(NOW.plusSeconds(60)));
 		return captor.getValue();
 	}
 

@@ -41,6 +41,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 /** 실제 DB 실행과 구분해 잠금 결과·묶음 실패·발송 차수 경계를 단위 검증한다. */
@@ -212,8 +213,10 @@ class NotificationJobRepositoryBatchTest {
 		}).when(jdbc).batchUpdate(contains("mock_sent_at = coalesce"), eq(results), eq(2),
 				any(ParameterizedPreparedStatementSetter.class));
 		// when
-		repository.recordDeliveryResults(results);
+		repository.recordDeliveryResults(results, 3);
 		// then
+		verify(sent).setQueryTimeout(3);
+		verify(failed).setQueryTimeout(3);
 		verify(sent).setString(1, "SENT");
 		verify(sent).setObject(2, utc(NOW));
 		verify(sent).setObject(3, null);
@@ -230,6 +233,35 @@ class NotificationJobRepositoryBatchTest {
 		verify(failed).setInt(7, 0);
 	}
 
+	/** 트랜잭션의 더 짧은 SQL 제한을 배치용 제한으로 늘리지 않는다. */
+	@Test
+	@DisplayName("기존 트랜잭션 SQL 제한이 더 작으면 그대로 유지한다")
+	void preservesShorterTransactionQueryTimeout() throws Exception {
+		PreparedStatement statement = mock(PreparedStatement.class);
+		when(statement.getQueryTimeout()).thenReturn(1);
+		NotificationDeliveryResult result = NotificationDeliveryResult.sent(delivery(1, 0), NOW);
+		doAnswer(invocation -> {
+			ParameterizedPreparedStatementSetter<NotificationDeliveryResult> setter = invocation.getArgument(3);
+			setter.setValues(statement, result);
+			return new int[][]{{1}};
+		}).when(jdbc).batchUpdate(contains("mock_sent_at = coalesce"), any(List.class), eq(1),
+				any(ParameterizedPreparedStatementSetter.class));
+
+		repository.recordDeliveryResults(List.of(result), 5);
+		verify(statement).setQueryTimeout(1);
+	}
+
+	/** 만료되거나 내부 상한을 넘은 SQL 예산은 DB 접근 전에 거절한다. */
+	@ParameterizedTest
+	@ValueSource(ints = {-1, 0, 6})
+	@DisplayName("결과 저장 timeout은 1~5초만 허용한다")
+	void rejectsInvalidRecordingTimeout(int timeout) {
+		NotificationDeliveryResult result = NotificationDeliveryResult.sent(delivery(1, 0), NOW);
+		assertThatThrownBy(() -> repository.recordDeliveryResults(List.of(result), timeout))
+				.isInstanceOf(IllegalArgumentException.class);
+		verifyNoInteractions(jdbc);
+	}
+
 	/** 과도한 발송 묶음은 DB 접근 전에 거절하며 최대 100건까지 허용한다. */
 	@ParameterizedTest
 	@ValueSource(ints = {-1, 0, 101})
@@ -243,9 +275,9 @@ class NotificationJobRepositoryBatchTest {
 	@Test
 	@DisplayName("빈 결과 묶음은 생략하고 101건 결과는 거절한다")
 	void boundsResultBatchSize() {
-		repository.recordDeliveryResults(List.of());
+		repository.recordDeliveryResults(List.of(), 5);
 		NotificationDeliveryResult result = NotificationDeliveryResult.sent(delivery(1, 0), NOW);
-		assertThatThrownBy(() -> repository.recordDeliveryResults(java.util.Collections.nCopies(101, result)))
+		assertThatThrownBy(() -> repository.recordDeliveryResults(java.util.Collections.nCopies(101, result), 5))
 				.isInstanceOf(IllegalArgumentException.class);
 		verifyNoInteractions(jdbc);
 	}

@@ -14,6 +14,8 @@ import com.getddo.core.notification.domain.NotificationJobRequest;
 public interface NotificationJobRepository {
 	/** 한 번에 함께 선점할 수 있는 발송 대상의 최대 건수다. */
 	int MAX_DELIVERY_CLAIM = 100;
+	/** 결과 한 묶음의 DB 작업에 허용할 최대 초다. 남은 선점 시간이 더 짧으면 그 시간을 따른다. */
+	int MAX_DELIVERY_RECORD_SECONDS = 5;
 
 	/** 호출자의 업무 트랜잭션에 참여하며 동일 발생 키·동일 입력에는 기존 작업 ID를 반환한다. */
 	UUID register(NotificationJobRequest request, Instant now);
@@ -36,7 +38,7 @@ public interface NotificationJobRepository {
 	/** Service의 독립 트랜잭션에서 최대 limit건을 함께 선점하며 다른 처리자의 잠긴 행은 건너뛴다. */
 	List<NotificationDelivery> claimNextDeliveries(Instant now, int limit);
 	/** Service의 독립 트랜잭션에서 최대 100건의 결과를 저장하며 이전 선점·복구 구간의 결과는 무시한다. */
-	void recordDeliveryResults(List<NotificationDeliveryResult> results);
+	void recordDeliveryResults(List<NotificationDeliveryResult> results, int timeoutSeconds);
 	/** 재선점되지 않은 자신의 발송 차수라면 제한 시간 이후에도 성공을 기록하며 읽음 상태는 그대로 둔다. */
 	void completeDelivery(NotificationDelivery delivery, Instant now);
 	/** 생성 실패와 별개인 발송 실패·다음 시각을 기록한다. 읽음 상태는 그대로 둔다. */

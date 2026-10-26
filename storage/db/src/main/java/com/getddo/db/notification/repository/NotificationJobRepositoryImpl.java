@@ -291,7 +291,7 @@ public class NotificationJobRepositoryImpl implements NotificationJobRepository 
 
 	/** 각 행의 선점·복구 기준 차수를 검사하며 성공·실패 결과를 같은 JDBC 묶음으로 저장한다. */
 	@Override
-	public void recordDeliveryResults(List<NotificationDeliveryResult> results) {
+	public void recordDeliveryResults(List<NotificationDeliveryResult> results, int timeoutSeconds) {
 		if (results.isEmpty()) {
 			return;
 		}
@@ -299,12 +299,18 @@ public class NotificationJobRepositoryImpl implements NotificationJobRepository 
 			throw new IllegalArgumentException("발송 결과 묶음은 최대 "
 					+ NotificationJobRepository.MAX_DELIVERY_CLAIM + "건이어야 합니다.");
 		}
+		if (timeoutSeconds < 1 || timeoutSeconds > NotificationJobRepository.MAX_DELIVERY_RECORD_SECONDS) {
+			throw new IllegalArgumentException("발송 결과 기록 timeout은 1~"
+					+ NotificationJobRepository.MAX_DELIVERY_RECORD_SECONDS + "초여야 합니다.");
+		}
 		jdbc.batchUpdate("""
 			update notifications set mock_delivery_status = ?, mock_sent_at = coalesce(?, mock_sent_at),
 			next_delivery_attempt_at = ?, last_delivery_error = ?
 			where id = ? and mock_delivery_status = 'PENDING' and delivery_attempt_count = ?
 			and delivery_attempt_base = ?
 			""", results, results.size(), (statement, result) -> {
+				int transactionTimeout = statement.getQueryTimeout();
+				statement.setQueryTimeout(transactionTimeout > 0 ? Math.min(timeoutSeconds, transactionTimeout) : timeoutSeconds);
 				statement.setString(1, result.getStatus().name());
 				statement.setObject(2, time(result.getSentAt()));
 				statement.setObject(3, time(result.getNextAttemptAt()));

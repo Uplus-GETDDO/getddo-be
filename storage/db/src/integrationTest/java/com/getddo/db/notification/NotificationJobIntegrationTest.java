@@ -33,6 +33,7 @@ import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.dao.TransientDataAccessResourceException;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -66,6 +67,7 @@ import com.getddo.db.ticket.MutableClock;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
 
@@ -442,7 +444,7 @@ class NotificationJobIntegrationTest {
 		NotificationDelivery failed = claimed.getLast();
 		jdbc.update("update notifications set is_read = true where id = ?", bytes(sent.getId()));
 		batches.recordDeliveryResults(List.of(NotificationDeliveryResult.sent(sent, NOW),
-				NotificationDeliveryResult.failed(failed, NOW.plusSeconds(10), "NOTIFICATION-005")));
+				NotificationDeliveryResult.failed(failed, NOW.plusSeconds(10), "NOTIFICATION-005")), NOW.plusSeconds(60));
 		assertThat(count("select count(*) from notifications where job_id = ? and mock_delivery_status = 'SENT'",
 				bytes(job))).isEqualTo(1);
 		clock.set(NOW.plusSeconds(10));
@@ -451,14 +453,14 @@ class NotificationJobIntegrationTest {
 		// 새 복구 구간의 같은 누적 차수도 이전 기준 차수의 결과와 구별한다.
 		jdbc.update("update notifications set delivery_attempt_base = 1 where id = ?", bytes(current.getId()));
 		batches.recordDeliveryResults(List.of(NotificationDeliveryResult.failed(sent, null, "NOTIFICATION-006"),
-				NotificationDeliveryResult.sent(failed, clock.instant()), NotificationDeliveryResult.sent(current, clock.instant())));
+				NotificationDeliveryResult.sent(failed, clock.instant()), NotificationDeliveryResult.sent(current, clock.instant())), NOW.plusSeconds(60));
 		assertThat(count("select count(*) from notifications where id = ? and mock_delivery_status = 'SENT' and is_read",
 				bytes(sent.getId()))).isEqualTo(1);
 		assertThat(count("select count(*) from notifications where id = ? and mock_delivery_status = 'PENDING'"
 				+ " and delivery_attempt_count = 2 and delivery_attempt_base = 1", bytes(current.getId()))).isEqualTo(1);
 		NotificationDelivery recovered = new NotificationDelivery(current.getId(), current.getUserId(), current.getTitle(),
 				current.getBody(), current.getLinkUrl(), 2, 1);
-		batches.recordDeliveryResults(List.of(NotificationDeliveryResult.sent(recovered, clock.instant())));
+		batches.recordDeliveryResults(List.of(NotificationDeliveryResult.sent(recovered, clock.instant())), NOW.plusSeconds(60));
 		assertThat(count("select count(*) from notifications where job_id = ? and mock_delivery_status = 'SENT'",
 				bytes(job))).isEqualTo(2);
 		assertThat(timestamp("select mock_sent_at from notifications where id = ?", bytes(sent.getId()))).isEqualTo(NOW);
@@ -475,15 +477,76 @@ class NotificationJobIntegrationTest {
 		doAnswer(invocation -> {
 			invocation.callRealMethod();
 			throw new TransientDataAccessResourceException("synthetic result write failure");
-		}).when(repository).recordDeliveryResults(any());
-		assertThatThrownBy(() -> batches.recordDeliveryResults(results))
+		}).when(repository).recordDeliveryResults(any(), anyInt());
+		assertThatThrownBy(() -> batches.recordDeliveryResults(results, NOW.plusSeconds(60)))
 				.isInstanceOf(TransientDataAccessResourceException.class);
 		assertThat(count("select count(*) from notifications where job_id = ? and mock_delivery_status = 'PENDING'"
 				+ " and mock_sent_at is null", bytes(job))).isEqualTo(2);
-		doAnswer(invocation -> invocation.callRealMethod()).when(repository).recordDeliveryResults(any());
-		batches.recordDeliveryResults(results);
+		doAnswer(invocation -> invocation.callRealMethod()).when(repository).recordDeliveryResults(any(), anyInt());
+		batches.recordDeliveryResults(results, NOW.plusSeconds(60));
 		assertThat(count("select count(*) from notifications where job_id = ? and mock_delivery_status = 'SENT'",
 				bytes(job))).isEqualTo(2);
+	}
+
+	/** beforeCommit의 deadline 거절이 실제 MySQL 결과 쓰기도 롤백하는지 확인한다. */
+	@Test
+	@DisplayName("결과 쓰기 후 임대가 만료되면 실제 DB의 발송 상태도 롤백한다")
+	void rollsBackResultsWhenDeadlineExpiresBeforeCommit() {
+		UUID job = service.register(request("result-commit-timeout", NOW, List.of(USER, OTHER)));
+		assertThat(service.processNextJob()).isTrue();
+		List<NotificationDeliveryResult> results = batches.claimNextDeliveries(NOW, 100).stream()
+				.map(delivery -> NotificationDeliveryResult.sent(delivery, NOW)).toList();
+		doAnswer(invocation -> {
+			invocation.callRealMethod();
+			clock.set(NOW.plusSeconds(60));
+			return null;
+		}).when(repository).recordDeliveryResults(any(), anyInt());
+
+		assertThatThrownBy(() -> batches.recordDeliveryResults(results, NOW.plusSeconds(60)))
+				.isInstanceOf(QueryTimeoutException.class);
+		assertThat(count("select count(*) from notifications where job_id = ? and mock_delivery_status = 'PENDING'"
+				+ " and mock_sent_at is null", bytes(job))).isEqualTo(2);
+	}
+
+	/** 실제 잠긴 행의 UPDATE가 임대 예산의 JDBC timeout으로 취소되는지 CI의 MySQL에서 검증한다. */
+	@Test
+	@DisplayName("행 잠금이 풀리지 않아도 결과 배치는 SQL 제한 시간에 취소되고 기존 상태를 보존한다")
+	void cancelsBlockedResultBatchWithinRemainingLease() throws Exception {
+		UUID job = service.register(request("result-timeout", NOW, List.of(USER)));
+		assertThat(service.processNextJob()).isTrue();
+		NotificationDelivery delivery = batches.claimNextDeliveries(NOW, 100).getFirst();
+		List<NotificationDeliveryResult> results = List.of(NotificationDeliveryResult.sent(delivery, NOW));
+		CountDownLatch locked = new CountDownLatch(1);
+		CountDownLatch release = new CountDownLatch(1);
+		try (java.util.concurrent.ExecutorService executor = Executors.newFixedThreadPool(2)) {
+			Future<?> blocker = executor.submit(() -> new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+				jdbc.queryForObject("select delivery_attempt_count from notifications where id = ? for update",
+						Integer.class, bytes(delivery.getId()));
+				locked.countDown();
+				try {
+					if (!release.await(20, TimeUnit.SECONDS)) throw new IllegalStateException("잠금 해제 대기 시간 초과");
+				} catch (InterruptedException failure) {
+					Thread.currentThread().interrupt();
+					throw new IllegalStateException("잠금 대기 중단", failure);
+				}
+			}));
+			try {
+				assertThat(locked.await(10, TimeUnit.SECONDS)).isTrue();
+				Future<?> recording = executor.submit(() -> batches.recordDeliveryResults(results, NOW.plusSeconds(2)));
+				assertThatThrownBy(() -> recording.get(8, TimeUnit.SECONDS))
+						.isInstanceOf(java.util.concurrent.ExecutionException.class)
+						.hasCauseInstanceOf(QueryTimeoutException.class);
+				assertThat(blocker).isNotDone();
+			} finally {
+				release.countDown();
+			}
+			blocker.get(10, TimeUnit.SECONDS);
+		}
+		assertThat(count("select count(*) from notifications where job_id = ? and mock_delivery_status = 'PENDING'"
+				+ " and mock_sent_at is null", bytes(job))).isEqualTo(1);
+		batches.recordDeliveryResults(results, NOW.plusSeconds(60));
+		assertThat(count("select count(*) from notifications where job_id = ? and mock_delivery_status = 'SENT'",
+				bytes(job))).isEqualTo(1);
 	}
 
 	/** 검증 시나리오: 만료된 선점은 복구하고 이전 처리자의 생성·완료·실패 저장을 차단한다. */

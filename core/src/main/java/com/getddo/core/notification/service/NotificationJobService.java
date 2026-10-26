@@ -1,5 +1,7 @@
 package com.getddo.core.notification.service;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -74,24 +76,26 @@ public class NotificationJobService {
 
 	/** 기존 알림 하나만 모의 발송한다. 재시도로 새 알림을 생성하거나 읽음 처리하지 않는다. */
 	public boolean processNextDelivery() {
-		NotificationDelivery delivery = repository.claimNextDelivery(timeProvider.now()).orElse(null);
+		Instant claimedAt = timeProvider.now();
+		NotificationDelivery delivery = repository.claimNextDelivery(claimedAt).orElse(null);
 		if (delivery == null) {
 			return false;
 		}
-		deliver(List.of(delivery));
+		deliver(List.of(delivery), claimedAt.plus(NotificationRetryPolicy.LEASE));
 		return true;
 	}
 
 	/** 최대 100건을 함께 선점하고 각 발송 결과를 하나의 묶음으로 저장한다. */
 	public int processNextDeliveries() {
-		List<NotificationDelivery> deliveries = batches.claimNextDeliveries(timeProvider.now(),
+		Instant claimedAt = timeProvider.now();
+		List<NotificationDelivery> deliveries = batches.claimNextDeliveries(claimedAt,
 				NotificationJobRepository.MAX_DELIVERY_CLAIM);
-		deliver(deliveries);
+		deliver(deliveries, claimedAt.plus(NotificationRetryPolicy.LEASE));
 		return deliveries.size();
 	}
 
 	/** 묶음 저장 실패 후에는 같은 결과만 개별 새 트랜잭션으로 저장하며 발송기를 다시 호출하지 않는다. */
-	private void deliver(List<NotificationDelivery> deliveries) {
+	private void deliver(List<NotificationDelivery> deliveries, Instant deadline) {
 		if (deliveries.isEmpty()) {
 			return;
 		}
@@ -99,14 +103,20 @@ public class NotificationJobService {
 		for (NotificationDelivery delivery : deliveries) {
 			results.add(send(delivery));
 		}
+		if (!hasRecordingTime(deadline)) {
+			return;
+		}
 		try {
-			batches.recordDeliveryResults(results);
+			batches.recordDeliveryResults(results, deadline);
 		} catch (RuntimeException failure) {
 			LOG.warn("Notification delivery batch recording failed: count=" + results.size()
 					+ ", exceptionType=" + failure.getClass().getName());
 			for (NotificationDeliveryResult result : results) {
+				if (!hasRecordingTime(deadline)) {
+					break;
+				}
 				try {
-					batches.recordDeliveryResults(List.of(result));
+					batches.recordDeliveryResults(List.of(result), deadline);
 				} catch (RuntimeException recordFailure) {
 					// 개별 기록도 실패한 항목만 기존 임대 만료 후 복구한다.
 					LOG.warn("Notification delivery bookkeeping failed: notificationId=" + result.getDelivery().getId()
@@ -115,6 +125,11 @@ public class NotificationJobService {
 				}
 			}
 		}
+	}
+
+	/** JDBC 제한은 초 단위이므로 남은 임대가 1초 미만이면 새 기록을 시작하지 않는다. */
+	private boolean hasRecordingTime(Instant deadline) {
+		return Duration.between(timeProvider.now(), deadline).getSeconds() >= 1;
 	}
 
 	/** 성공 시각 또는 기존 재시도 정책에 따른 실패 결과를 고정한다. DB 기록은 별도 단계다. */
