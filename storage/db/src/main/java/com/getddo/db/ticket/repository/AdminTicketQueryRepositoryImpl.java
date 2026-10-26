@@ -103,18 +103,28 @@ public class AdminTicketQueryRepositoryImpl implements AdminTicketQueryRepositor
 			""";
 	private static final String REFUND_ORDER = " order by h.created_at desc, h.id desc";
 
-	/** 현재 버전·상태가 마지막 이력의 버전·상태와 다르거나 이력이 하나도 없는 응모권. 마지막 이력은 (응모권, 버전) 유일 키로 찾는다. */
+	/**
+	 * 현재 버전·상태가 마지막 이력의 버전·상태와 다르거나 이력이 하나도 없는 응모권.
+	 *
+	 * <p>모든 응모권을 훑는 판정은 (응모권, 버전) 유일 키로 현재 버전의 이력을 찾아 상태를 비교하고, 더 큰 버전의 이력이 있는지만
+	 * 확인한다. 현재 버전의 이력이 없으면 이력이 없거나 마지막 이력이 현재 버전보다 낮은 것이다. 사용자 이름과 마지막 이력은 어긋난
+	 * 행에만 붙도록 SELECT 목록의 하위 조회로 읽는다.</p>
+	 */
 	private static final String INCONSISTENCY_SELECT = """
-			select t.id as ticket_id, t.user_id, u.name as user_name, t.grade, t.version as ticket_version,
-			       coalesce(lh.ticket_version, 0) as latest_version, t.status as ticket_status,
-			       lh.status as latest_status
+			select t.id as ticket_id, t.user_id,
+			       (select u.name from users u where u.id = t.user_id) as user_name, t.grade,
+			       t.version as ticket_version,
+			       coalesce((select max(x.ticket_version) from ticket_histories x where x.ticket_id = t.id), 0)
+			         as latest_version,
+			       t.status as ticket_status,
+			       (select x.status from ticket_histories x where x.ticket_id = t.id
+			         order by x.ticket_version desc limit 1) as latest_status
 			""";
 	private static final String INCONSISTENCY_FROM = """
 			 from tickets t
-			 join users u on u.id = t.user_id
-			 left join ticket_histories lh on lh.ticket_id = t.id and lh.ticket_version =
-			   (select max(x.ticket_version) from ticket_histories x where x.ticket_id = t.id)
-			 where (lh.id is null or lh.ticket_version <> t.version or lh.status <> t.status)
+			 left join ticket_histories cur on cur.ticket_id = t.id and cur.ticket_version = t.version
+			 where (cur.id is null or cur.status <> t.status
+			   or exists (select 1 from ticket_histories n where n.ticket_id = t.id and n.ticket_version > t.version))
 			""";
 	private static final String INCONSISTENCY_ORDER = " order by t.updated_at desc, t.id desc";
 	/** 한 사용자의 어긋난 응모권을 쪽 나누기 없이 읽을 때의 상한 크기. */
@@ -272,21 +282,31 @@ public class AdminTicketQueryRepositoryImpl implements AdminTicketQueryRepositor
 	private <T> PageResult<T> page(String select, String fromAndWhere, String countFromAndWhere,
 			Map<String, Object> parameters, String order, PageQuery page, Consumer<NativeQuery<Tuple>> scalars,
 			Function<Tuple, T> mapper) {
+		long offset = page.offset();
+		// JPA가 int로 바꿀 수 없는 시작 위치는 항목이 없는 것으로 보고 건수만 센다.
+		List<T> items = offset > Integer.MAX_VALUE ? List.of()
+				: readPage(select + fromAndWhere + order, parameters, page, scalars, mapper);
+		// 한 쪽을 다 채우지 못했거나 첫 쪽이 비었으면 전체 건수를 이미 알아서 따로 세지 않는다. 전체를 훑는 조회의 비용을 한 번으로 줄인다.
+		boolean totalKnown = items.isEmpty() ? offset == 0 : items.size() < page.getSize();
+		long total = totalKnown ? offset + items.size() : count(countFromAndWhere, parameters);
+		return new PageResult<>(items, page.getPage(), page.getSize(), total);
+	}
+
+	private long count(String countFromAndWhere, Map<String, Object> parameters) {
 		Query count = entityManager.createNativeQuery("select count(*)" + countFromAndWhere);
 		parameters.forEach(count::setParameter);
-		long total = ((Number) count.getSingleResult()).longValue();
-		if (total == 0 || page.offset() >= total) {
-			return new PageResult<>(List.of(), page.getPage(), page.getSize(), total);
-		}
+		return ((Number) count.getSingleResult()).longValue();
+	}
+
+	private <T> List<T> readPage(String sql, Map<String, Object> parameters, PageQuery page,
+			Consumer<NativeQuery<Tuple>> scalars, Function<Tuple, T> mapper) {
 		@SuppressWarnings("unchecked")
-		NativeQuery<Tuple> query = entityManager.createNativeQuery(select + fromAndWhere + order, Tuple.class)
-				.unwrap(NativeQuery.class);
+		NativeQuery<Tuple> query = entityManager.createNativeQuery(sql, Tuple.class).unwrap(NativeQuery.class);
 		scalars.accept(query);
 		parameters.forEach(query::setParameter);
 		query.setFirstResult(Math.toIntExact(page.offset()));
 		query.setMaxResults(page.getSize());
-		List<T> items = query.getResultList().stream().map(mapper).toList();
-		return new PageResult<>(items, page.getPage(), page.getSize(), total);
+		return query.getResultList().stream().map(mapper).toList();
 	}
 
 	private static void where(StringBuilder where, Map<String, Object> parameters, String column, String name,
