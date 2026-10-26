@@ -354,6 +354,8 @@ Table users {
   suspension_reason text [note: '사용자 정지 사유']
 
   indexes {
+    (created_at, id) [name: 'ix_users_created_id', note: 'V035: 두 컬럼 DESC, 관리자 최신순 목록']
+    (role, status) [name: 'ix_users_role_status', note: 'V035: 활성 일반 사용자 집계']
     email [unique, name: 'uq_users_1']
     phone_num [unique, name: 'uq_users_2']
   }
