@@ -34,7 +34,7 @@ class MonitoringComposeTest(unittest.TestCase):
             self.assertEqual('10.0.1.20', management[0]['host_ip'])
             self.assertEqual('9091', str(management[0]['published']))
             self.assertEqual('monitoring', app['environment']['SPRING_PROFILES_INCLUDE'])
-            self.assertEqual('30', app['environment']['SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE'])
+            self.assertEqual('40', app['environment']['SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE'])
             self.assertEqual('10', app['environment']['SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE'])
             self.assertNotIn('API_PRIVATE_IP', app['environment'])
             self.assertEqual('/getddo/dev/api', app['logging']['options']['awslogs-group'])
@@ -43,7 +43,7 @@ class MonitoringComposeTest(unittest.TestCase):
             self.assertEqual(0, stage.returncode, stage.stderr)
             stage_app = json.loads(stage.stdout)['services']['app']
             self.assertEqual('/getddo/staging/api', stage_app['logging']['options']['awslogs-group'])
-            self.assertEqual('30', stage_app['environment']['SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE'])
+            self.assertEqual('40', stage_app['environment']['SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE'])
             self.assertEqual('10', stage_app['environment']['SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE'])
             self.assertEqual(app['ports'], stage_app['ports'])
             self.assertEqual(app['volumes'], stage_app['volumes'])
