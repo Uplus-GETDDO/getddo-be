@@ -27,10 +27,7 @@ import com.getddo.core.event.repository.EventActorRepository;
 import com.getddo.core.event.repository.EventRepository;
 import com.getddo.core.notification.domain.EventNotificationChange;
 import com.getddo.core.notification.service.EventChangeNotificationService;
-import com.getddo.core.ticket.domain.RefundResult;
-import com.getddo.core.ticket.domain.TicketGrade;
-import com.getddo.core.ticket.domain.UsedTicket;
-import com.getddo.core.ticket.service.TicketRefundService;
+import com.getddo.core.ticket.service.TicketBulkRefundService;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -47,7 +44,7 @@ class EventCancellationServiceTest {
 	private static final Instant NOW = Instant.parse("2026-10-15T00:00:00.123456789Z");
 	private EventRepository events;
 	private EventActorRepository actors;
-	private TicketRefundService refunds;
+	private TicketBulkRefundService refunds;
 	private EventChangeNotificationService notifications;
 	private AuditLogService auditLogs;
 	private EventCancellationService service;
@@ -56,7 +53,7 @@ class EventCancellationServiceTest {
 	void setUp() {
 		events = mock(EventRepository.class);
 		actors = mock(EventActorRepository.class);
-		refunds = mock(TicketRefundService.class);
+		refunds = mock(TicketBulkRefundService.class);
 		notifications = mock(EventChangeNotificationService.class);
 		auditLogs = mock(AuditLogService.class);
 		when(actors.findById(ADMIN)).thenReturn(Optional.of(new EventActorRepository.Actor(true, true)));
@@ -86,13 +83,14 @@ class EventCancellationServiceTest {
 	@DisplayName("응모별 실제 반환 수량을 합산하고 취소 사유·변경 전후 상태를 감사 기록에 전달한다")
 	void sumsRefundsAndRecordsReason() {
 		// given
-		when(events.findChargedEntryIds(EVENT)).thenReturn(List.of(UUID.randomUUID(), UUID.randomUUID()));
-		when(refunds.refund(any())).thenReturn(new RefundResult(
-				List.of(new UsedTicket(UUID.randomUUID(), TicketGrade.BRONZE)), NOW, NOW.plusSeconds(3600), false));
+		List<UUID> entryIds = List.of(UUID.randomUUID(), UUID.randomUUID());
+		when(events.findChargedEntryIds(EVENT)).thenReturn(entryIds);
+		when(refunds.refundAll(entryIds, "운영 취소")).thenReturn(2L);
 		// when
 		EventCancellationResult result = service.cancel(EVENT, ADMIN, "운영 취소");
 		// then
 		assertThat(result.getRefundedTicketCount()).isEqualTo(2);
+		verify(refunds).refundAll(entryIds, "운영 취소");
 		ArgumentCaptor<AuditLogCommand> audit = ArgumentCaptor.forClass(AuditLogCommand.class);
 		verify(auditLogs).record(audit.capture());
 		assertThat(audit.getValue().getReason()).isEqualTo("운영 취소");
