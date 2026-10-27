@@ -20,10 +20,9 @@
 3. [백엔드 팀 구성 및 역할](#백엔드-팀-구성-및-역할)
 4. [아키텍처](#아키텍처)
 5. [ERD](#erd)
-6. [주요 설계](#주요-설계)
+6. [핵심 기능과 설계](#핵심-기능과-설계)
 7. [정합성 검증](#정합성-검증)
-8. [프로젝트 수행 경과](#프로젝트-수행-경과)
-9. [실행 방법](#실행-방법)
+8. [실행 방법](#실행-방법)
 
 ## 프로젝트 개요
 
@@ -51,14 +50,15 @@ flowchart LR
 
 | 구분 | 기술 |
 | --- | --- |
-| Language | Java 21 |
-| Framework | Spring Boot 4.1.1 · Spring MVC |
-| Data Access | Spring Data JPA · JDBC |
-| Database | MySQL 8.4 · Redis · Flyway |
-| Build | Gradle 9.7.1 |
-| Test | JUnit · Mockito · Testcontainers |
-| DevOps | Docker · Docker Compose · GitHub Actions |
-| API Docs | Swagger UI |
+| Language | ![Java 21](https://img.shields.io/badge/Java-21-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white) |
+| Framework | ![Spring Boot 4.1.1](https://img.shields.io/badge/Spring_Boot-4.1.1-6DB33F?style=for-the-badge&logo=springboot&logoColor=white) ![Spring MVC](https://img.shields.io/badge/Spring_MVC-6DB33F?style=for-the-badge&logo=spring&logoColor=white) |
+| Data Access | ![Spring Data JPA](https://img.shields.io/badge/Spring_Data_JPA-6DB33F?style=for-the-badge&logo=spring&logoColor=white) ![Spring JDBC](https://img.shields.io/badge/Spring_JDBC-6DB33F?style=for-the-badge&logo=spring&logoColor=white) |
+| Database | ![MySQL 8.4](https://img.shields.io/badge/MySQL-8.4-4479A1?style=for-the-badge&logo=mysql&logoColor=white) ![Redis](https://img.shields.io/badge/Redis-FF4438?style=for-the-badge&logo=redis&logoColor=white) ![Flyway](https://img.shields.io/badge/Flyway-CC0200?style=for-the-badge&logo=flyway&logoColor=white) |
+| Mapping | ![MapStruct 1.6.3](https://img.shields.io/badge/MapStruct-1.6.3-455A64?style=for-the-badge) ![Lombok](https://img.shields.io/badge/Lombok-BC4521?style=for-the-badge) |
+| Build | ![Gradle 9.7.1](https://img.shields.io/badge/Gradle-9.7.1-02303A?style=for-the-badge&logo=gradle&logoColor=white) |
+| Test | ![JUnit](https://img.shields.io/badge/JUnit-25A162?style=for-the-badge&logo=junit5&logoColor=white) ![Mockito](https://img.shields.io/badge/Mockito-78A641?style=for-the-badge) ![Spring Boot Test](https://img.shields.io/badge/Spring_Boot_Test-6DB33F?style=for-the-badge&logo=springboot&logoColor=white) ![Testcontainers](https://img.shields.io/badge/Testcontainers-2496ED?style=for-the-badge) |
+| DevOps | ![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white) ![Docker Compose](https://img.shields.io/badge/Docker_Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white) ![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white) |
+| API Docs | ![springdoc-openapi 3.1.1](https://img.shields.io/badge/springdoc--openapi-3.1.1-85EA2D?style=for-the-badge&logo=swagger&logoColor=black) ![Swagger UI](https://img.shields.io/badge/Swagger_UI-85EA2D?style=for-the-badge&logo=swagger&logoColor=black) |
 
 ## 백엔드 팀 구성 및 역할
 
@@ -203,15 +203,96 @@ getddo-be/
 | [알림](https://github.com/Uplus-GETDDO/getddo-be/wiki/ERD-notification) | 2 | 알림 생성 작업과 사용자 알림 |
 | [감사 로그](https://github.com/Uplus-GETDDO/getddo-be/wiki/ERD-audit) | 1 | 변경 행위와 변경 전후 데이터 |
 
-## 주요 설계
+<a id="주요-설계"></a>
+<a id="프로젝트-수행-경과"></a>
 
-| 문제 | 적용한 방식 |
+## 핵심 기능과 설계
+
+### 인프라·CI/CD
+
+동일한 애플리케이션 이미지를 검증·배포하고, API 서버를 순차 교체합니다. 배포 중 문제가 생기면 이전 이미지와 설정으로 복구합니다.
+
+```mermaid
+flowchart LR
+    CI["빌드·테스트"] --> Image["이미지 생성·ECR 게시"]
+    Image --> Deploy["SSM으로 서버 순차 교체"]
+    Deploy --> Check["기동 확인"]
+    Check -->|성공| Release["버전 발행"]
+    Check -->|실패| Restore["이전 이미지·설정 복구"]
+```
+
+| 설계 포인트 | 적용 방식 |
 | --- | --- |
-| 중복 요청·동시 차감 | 요청 ID·행 잠금·DB 유일 제약으로 중복 지급과 초과 사용 방지 |
-| 업무 기록 불일치 | 응모·차감·이력과 취소·반환을 각각 같은 트랜잭션으로 처리 |
-| 추첨 근거와 공개 결과 | 후보·가중치·조건을 보존하고 결과 확정과 관리자 발표를 분리 |
-| 비동기 작업 실패 | 작업 선점·진행 위치·재시도로 중복 처리와 중간 실패에 대응 |
-| 코드 책임 분리 | 모듈과 기능별 패키지로 HTTP·업무·저장소 구현의 변경 경계를 구분 |
+| 검증한 이미지 재사용 | 서버에서 다시 빌드하지 않고 CI 산출물을 배포 |
+| 서버별 순차 교체 | 한 서버의 기동을 확인한 뒤 다음 서버를 처리 |
+| 실패 복구 | 컨테이너 교체 실패 시 보관한 이미지·설정 복구 |
+| 운영 관측 | 애플리케이션 로그·DB 연결 풀·요청 지표로 상태 확인 |
+
+상세: [CI/CD·복구](https://github.com/Uplus-GETDDO/getddo-be/wiki/CI-CD-Release-Recovery) · [Docker Compose 선택](https://github.com/Uplus-GETDDO/getddo-be/wiki/Docker-Compose-Choice) · [운영 런북](docs/06-runbook/README.md)
+
+### 추첨·결과 공개
+
+마감 1분 후 최초 추첨을 자동 실행하고, 관리자가 결과를 검토한 뒤 명시적으로 발표합니다. 추첨 결과 확정과 사용자 공개를 분리해 검토 전 결과 노출을 막습니다.
+
+```mermaid
+flowchart LR
+    Close["모집 마감"] --> Snapshot["후보·가중치·조건 저장"]
+    Snapshot --> Draw["추첨·결과 확정"]
+    Draw --> Review["관리자 검토"]
+    Review --> Publish["수동 발표·알림"]
+```
+
+| 설계 포인트 | 적용 방식 |
+| --- | --- |
+| 추첨 근거 보존 | 실행별 후보·경품 조건·확정 결과를 스냅샷으로 저장 |
+| 등급별 가중치 | 브론즈·실버·골드·플래티넘의 실제 차감 장수에 1·3·5·10을 곱해 합산 |
+| 중복 당첨 방지 | 이벤트 내 같은 사용자가 다른 경품에 중복 당첨되지 않도록 선정 |
+| 재추첨·실패 복구 | 기존 당첨자를 유지한 빈자리 재추첨과 동일 실행의 재시도를 구분 |
+
+상세: [추첨·발표 흐름](https://github.com/Uplus-GETDDO/getddo-be/wiki/Mentoring-Drawing-Sequences)
+
+### 이벤트 응모
+
+응모권 미사용 이벤트와 응모권 사용 이벤트의 접수·추가 응모·내역 조회를 제공합니다. 접수 기록과 응모권 차감·이력을 하나의 트랜잭션에서 확정합니다.
+
+```mermaid
+flowchart LR
+    Request["응모 요청"] --> Validate["상태·기간·멤버십·상한 확인"]
+    Validate --> Save["접수·차감·이력 저장"]
+    Save --> Result["처리 결과 반환"]
+```
+
+- **동일 요청 재전송:** 요청 ID로 기존 처리 결과를 확인해 중복 접수·추가 차감을 방지합니다.
+- **같은 사용자의 동시 응모:** 참여자·응모권 잠금과 DB 제약으로 보유량·누적 상한을 검사합니다.
+- **마감·취소 경합:** 처리 중 상태·시각을 다시 확인하고 거절되면 접수·차감·이력을 함께 롤백합니다.
+
+상세: [이벤트 응모 흐름](https://github.com/Uplus-GETDDO/getddo-be/wiki/Mentoring-Domain-Flows#이벤트-응모)
+
+### 응모권
+
+응모권 한 장의 현재 상태와 지급·사용·반환·만료 이력을 함께 관리합니다. 네 등급의 실제 장수와 추첨 가중치를 구분합니다.
+
+```mermaid
+flowchart LR
+    Grant["출석·미션·게임 보상"] --> Hold["응모권 보유"]
+    Hold --> Use["이벤트 응모·차감"]
+    Use --> Refund["이벤트 취소·반환"]
+    Refund --> Hold
+    Hold --> Expire["기한 도래·만료"]
+```
+
+| 처리 | 정합성 기준 |
+| --- | --- |
+| 지급 | 같은 보상 근거로 중복 지급하지 않고 최초 확정 등급 유지 |
+| 차감 | 보유량·유효기간을 확인하고 응모 접수와 함께 확정 |
+| 반환 | 원본 사용 이력과 연결해 같은 응모권을 원래 등급으로 한 번만 반환 |
+| 만료·이력 | 만료 대상의 상태와 이력을 함께 변경하고 처리 근거 보존 |
+
+상세: [응모권 흐름](https://github.com/Uplus-GETDDO/getddo-be/wiki/Mentoring-Domain-Flows#응모권)
+
+### 그 밖의 기능
+
+공통 기반·사용자·이벤트·출석·미션·요청 제한·차단 이력·알림·게임·백오피스의 구현 내용은 **[기능별 구현 상세 Wiki](https://github.com/Uplus-GETDDO/getddo-be/wiki/Feature-Implementation-Overview)** 한 페이지에서 확인할 수 있습니다.
 
 ## 정합성 검증
 
@@ -226,140 +307,6 @@ getddo-be/
 | 추첨 결과 SQL 점검 | 당첨 304건에서 후보 밖 당첨·같은 실행의 중복 당첨·경품별 인원 초과 0건 |
 
 시험별 환경·결과는 [정합성 검증 Wiki](https://github.com/Uplus-GETDDO/getddo-be/wiki/Consistency-Verification), 기능별 테스트 기록은 [테스트 Wiki](https://github.com/Uplus-GETDDO/getddo-be/wiki/Mentoring-Tests)를 참고합니다.
-
-## 프로젝트 수행 경과
-
-도메인별 주요 기능과 설계를 요약했습니다. 처리 흐름·선택 이유·검증 근거는 각 문서에서 확인할 수 있습니다.
-
-<details>
-<summary>인프라·CI/CD</summary>
-
-- Docker·GitHub Actions로 빌드·테스트·이미지 생성과 서버 배포를 자동화합니다.
-- 서버를 순차 교체하고 배포 실패 시 이전 이미지로 복구합니다.
-
-[CI/CD·복구](https://github.com/Uplus-GETDDO/getddo-be/wiki/CI-CD-Release-Recovery) · [Docker Compose 선택](https://github.com/Uplus-GETDDO/getddo-be/wiki/Docker-Compose-Choice)
-</details>
-
-<details>
-<summary>공통 기반</summary>
-
-- 공통 응답·오류·사용자 문맥·시간·페이지 조회·감사 기록을 제공합니다.
-- 기능별 Service가 공통 기반을 재사용하고 업무별 검증을 수행합니다.
-
-[Wiki](https://github.com/Uplus-GETDDO/getddo-be/wiki/Mentoring-Features#common) · [공통 API 안내](docs/02-api/README.md)
-</details>
-
-<details>
-<summary>사용자</summary>
-
-- 가상 사용자 조회·선택과 역할·멤버십에 따른 사용자 문맥을 제공합니다.
-- 요청 헤더와 DB 사용자 정보를 대조하고 관리자 기능의 권한을 검사합니다.
-
-[Wiki](https://github.com/Uplus-GETDDO/getddo-be/wiki/Mentoring-Features#user)
-</details>
-
-<details>
-<summary>이벤트·경품 관리·이벤트 취소</summary>
-
-- 사용자·관리자 조회, 이벤트·경품 CRUD, 썸네일·상세·경품 이미지 업로드를 제공합니다.
-- 시작·마감 상태를 자동 전환하고, 취소 시 응모권 반환·알림 작업·감사 기록을 함께 처리합니다.
-
-[Wiki](https://github.com/Uplus-GETDDO/getddo-be/wiki/Mentoring-Event-Flows)
-</details>
-
-<details>
-<summary>출석</summary>
-
-- 일일·연속 출석과 단계별 보상, 관리자 보상 정책 예약을 제공합니다.
-- KST 날짜를 기준으로 기록하고 같은 날의 중복 출석·보상을 방지합니다.
-
-[Wiki](https://github.com/Uplus-GETDDO/getddo-be/wiki/Mentoring-Domain-Flows#출석)
-</details>
-
-<details>
-<summary>미션</summary>
-
-- 퀴즈·설문 제출, 완료 보상과 관리자 미션·설문 집계를 제공합니다.
-- 제출 기록과 보상을 함께 확정하고 재전송·동시 제출의 중복 지급을 방지합니다.
-
-[Wiki](https://github.com/Uplus-GETDDO/getddo-be/wiki/Mentoring-Domain-Flows#미션)
-</details>
-
-<details>
-<summary>응모권</summary>
-
-- 브론즈·실버·골드·플래티넘 응모권의 지급·차감·반환·만료와 이력을 관리합니다.
-- 응모권별 상태와 이력을 보존하고 이벤트 취소 시 사용한 응모권을 원래 등급으로 반환합니다.
-
-[Wiki](https://github.com/Uplus-GETDDO/getddo-be/wiki/Mentoring-Domain-Flows#응모권)
-</details>
-
-<details>
-<summary>이벤트 응모</summary>
-
-- 응모권 사용·미사용 이벤트의 접수와 추가 응모·접수 내역 조회를 제공합니다.
-- 이벤트 상태·기간·멤버십·상한을 검사하고 접수·차감·이력을 함께 확정합니다.
-
-[Wiki](https://github.com/Uplus-GETDDO/getddo-be/wiki/Mentoring-Domain-Flows#이벤트-응모)
-</details>
-
-<details>
-<summary>요청 빈도 제한</summary>
-
-- 사용자별 요청 횟수를 제한하고 초과 요청에 재시도 가능 시각을 안내합니다.
-- Redis 공유 카운터로 여러 API 서버에 들어온 요청을 함께 집계합니다.
-
-[Wiki](https://github.com/Uplus-GETDDO/getddo-be/wiki/Mentoring-Domain-Flows#요청-빈도-제한)
-</details>
-
-<details>
-<summary>추첨·결과 공개</summary>
-
-- 최초 자동 추첨, 결과 검증·관리자 발표·개별 당첨 취소·재추첨을 제공합니다.
-- 실행별 후보·가중치·조건·결과를 보존하고 확정 결과와 공개 명단을 분리합니다.
-
-[Wiki](https://github.com/Uplus-GETDDO/getddo-be/wiki/Mentoring-Drawing-Sequences)
-</details>
-
-<details>
-<summary>응모 자동 일시 차단·이력 조회</summary>
-
-- 반복 요청 초과 시 응모를 일시 차단하고 관리자가 차단 이력을 조회합니다.
-- Redis에서 판정·저널을 기록하고 별도 워커가 근거를 MySQL에 저장합니다.
-
-[구현·운영 문서](docs/02-api/abuse-cases.md)
-</details>
-
-<details>
-<summary>알림</summary>
-
-- 이벤트 시작·일정 변경·취소·결과 안내와 내 알림 조회·읽음 처리를 제공합니다.
-- 업무 변경 시 알림 작업을 등록하고 워커가 생성·모의 발송·실패 재시도를 처리합니다.
-
-[Wiki](https://github.com/Uplus-GETDDO/getddo-be/wiki/Mentoring-Notification-Flows)
-</details>
-
-<details>
-<summary>게임</summary>
-
-| 타꼬런 | 글자색깔 맞추기 | 타꼬 타이밍 | 타꼬 주문 |
-| --- | --- | --- | --- |
-| ![타꼬런](docs/assets/games/takko-run.jpg) | ![글자색깔 맞추기](docs/assets/games/color-word.jpg) | ![타꼬 타이밍](docs/assets/games/takko-timing.jpg) | ![타꼬 주문](docs/assets/games/takko-order.jpg) |
-
-- 글자색깔 맞추기·타꼬런·타꼬 타이밍·타꼬 주문의 시작·결과·통계·일일 보상을 제공합니다.
-- 서버가 저장된 규칙과 입력을 검증하고 결과·통계·보상을 함께 확정합니다.
-
-[Wiki](https://github.com/Uplus-GETDDO/getddo-be/wiki/Mentoring-Game-Flows)
-</details>
-
-<details>
-<summary>백오피스·배너</summary>
-
-- 관리자 사용자·참여·응모권·일별 집계 조회와 배너 등록·수정·삭제·순서 관리를 제공합니다.
-- 배너 순서 변경을 원자적으로 처리하고 사용자 화면에는 공개 이미지 URL을 제공합니다.
-
-[백오피스 Wiki](https://github.com/Uplus-GETDDO/getddo-be/wiki/Mentoring-Backoffice-Flows) · [배너 Wiki](https://github.com/Uplus-GETDDO/getddo-be/wiki/Mentoring-Banner-Flows)
-</details>
 
 ## 실행 방법
 
