@@ -3,7 +3,7 @@
 - 상태: 채택
 - 작성자 / 날짜: 이경주 / 2026-09-24
 - 검토자: 이경주
-- 관련 작업 기록 / PR: [GD-22](https://ureca4.atlassian.net/browse/GD-22), [UUID v7 선택과 성능 검증](https://github.com/GETDDO/getddo-be/wiki/MySQL-UUID-v4-v7)
+- 관련 작업 기록 / PR: [GD-22](https://ureca4.atlassian.net/browse/GD-22)
 - 대체한 ADR / 대체된 ADR: 해당 없음
 
 ## 배경
@@ -17,8 +17,6 @@ Entity의 식별자와 생성·수정 시각을 공통화한다. UUID 사용과 
 UUID v4도 인덱스를 사용할 수 있지만 무작위 값이라 새 키의 삽입 위치가 인덱스 전반에 흩어진다. v7은 앞부분에 밀리초 단위 시각을 담아 시간순에 가까운 정렬이 가능하다. UUID를 유지하면서 삽입 위치의 분산을 줄이는 효과를 기대해 v7을 선택한다. [RFC 9562](https://www.rfc-editor.org/rfc/rfc9562.html#section-2.1)
 
 MySQL InnoDB는 PK를 기준으로 행 데이터를 구성하므로 PK의 삽입 특성이 중요하다. [InnoDB 인덱스](https://dev.mysql.com/doc/refman/8.4/en/innodb-index-types.html)
-
-MySQL 8.4.10에서 조건별 6회 실측한 삽입·commit 중앙값은 10만 행에서 v4 **5.121초 → v7 4.216초**, 50만 행에서 **163.652초 → 19.856초**였다. 페이지 분할도 v7이 적었다. 다만 단일 작성자·1,000행 배치·128 MiB buffer pool 조건이며, 50만 행은 인덱스가 버퍼 풀보다 큰 경우다. 운영 성능 개선 배율로 일반화하지 않는다. 전체 표본·환경·캡처는 [실험 기록](https://github.com/GETDDO/getddo-be/wiki/MySQL-UUID-v4-v7)에 남긴다.
 
 ID는 JPA 영속화 시 Hibernate로 생성하고 MySQL 기본 매핑으로 `BINARY(16)`에 저장한다. 저장 전에는 null이며 이후 변경하지 않는다.
 

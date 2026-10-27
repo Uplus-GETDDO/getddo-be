@@ -222,7 +222,7 @@ flowchart LR
 | 실패 복구 | 컨테이너 교체 실패 시 보관한 이미지·설정 복구 |
 | 운영 관측 | 애플리케이션 로그·DB 연결 풀·요청 지표로 상태 확인 |
 
-상세: [CI/CD·복구](https://github.com/Uplus-GETDDO/getddo-be/wiki/CI-CD-Release-Recovery) · [Docker Compose 선택](https://github.com/Uplus-GETDDO/getddo-be/wiki/Docker-Compose-Choice) · [운영 런북](docs/06-runbook/README.md)
+상세: [운영 런북](docs/06-runbook/README.md)
 
 ### 추첨·결과 공개
 
