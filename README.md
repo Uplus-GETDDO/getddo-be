@@ -44,8 +44,6 @@ flowchart LR
 
 기본 이벤트는 `NO_TICKET`(응모권 미사용), 겟또타임은 `TICKET`(응모권 사용)입니다. 사용자 멤버십과 응모권 등급은 별개의 기준입니다.
 
-시연은 사전 등록된 가상 사용자 선택 방식입니다. 요청의 `X-User-*` 헤더를 DB 사용자 정보와 대조하며, 별도 회원가입·로그인 토큰 발급은 제공하지 않습니다. [사용자 문맥 안내](docs/02-api/user-profile.md)
-
 ## 기술 스택
 
 | 구분 | 기술 |
@@ -58,16 +56,15 @@ flowchart LR
 | 빌드 | ![Gradle 9.7.1](https://img.shields.io/badge/Gradle-9.7.1-02303A?style=for-the-badge&logo=gradle&logoColor=white) |
 | 테스트 | ![JUnit](https://img.shields.io/badge/JUnit-25A162?style=for-the-badge&logo=junit5&logoColor=white) ![Mockito](https://img.shields.io/badge/Mockito-78A641?style=for-the-badge) ![Spring Boot Test](https://img.shields.io/badge/Spring_Boot_Test-6DB33F?style=for-the-badge&logo=springboot&logoColor=white) ![Testcontainers](https://img.shields.io/badge/Testcontainers-2496ED?style=for-the-badge) |
 | 실행·자동화 | ![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white) ![Docker Compose](https://img.shields.io/badge/Docker_Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white) ![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white) |
-| 모니터링 | ![Amazon CloudWatch](https://img.shields.io/badge/CloudWatch-FF4F8B?style=for-the-badge&logo=amazoncloudwatch&logoColor=white) ![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?style=for-the-badge&logo=prometheus&logoColor=white) ![Grafana](https://img.shields.io/badge/Grafana-F46800?style=for-the-badge&logo=grafana&logoColor=white) |
 | API 문서 | ![springdoc-openapi 3.1.1](https://img.shields.io/badge/springdoc--openapi-3.1.1-85EA2D?style=for-the-badge&logo=swagger&logoColor=black) ![Swagger UI](https://img.shields.io/badge/Swagger_UI-85EA2D?style=for-the-badge&logo=swagger&logoColor=black) |
 
 ## 백엔드 팀 구성 및 역할
 
 | 팀원 | 담당 영역 |
 | --- | --- |
+| 전민규 (팀장) | 백오피스·배너·알림·게임 |
 | 이경주 | 인프라·CI/CD·공통 기반·사용자 |
 | 석종수 | 응모 자동 차단 이력·추첨·결과 공개·재추첨 |
-| 전민규 | 백오피스·배너·알림·게임 |
 | 윤태형 | 응모권·출석·미션·이벤트 응모·요청 빈도 제한 |
 | 박지훈 | 이벤트·경품 CRUD·이미지 업로드·모집 상태 전환·취소 |
 
@@ -81,13 +78,13 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    API["api"] --> Core["core"]
-    API --> DB["storage:db"]
+    API["api"] --> DB["storage:db"]
     API --> S3["storage:s3"]
     API --> Redis["storage:redis"]
-    DB --> Core
+    DB --> Core["core"]
     S3 --> Core
     Redis --> Core
+    API --> Core
 ```
 
 | 모듈 | 역할 |
@@ -183,10 +180,6 @@ getddo-be/
 ## ERD
 
 [![GETDDO 전체 ERD — 2026-10-23](docs/assets/erd-2026-10-23.png)](docs/assets/erd-2026-10-23.png)
-
-[최신 ERDCloud](https://www.erdcloud.com/d/TD6HcLSupbKDD9Z2E) · [원본 이미지](docs/assets/erd-2026-10-23.png) · [DBML](docs/03-database/schema.dbml) · [Flyway SQL](storage/db/src/main/resources/db/migration/)
-
-이미지는 2026-10-23의 설계 스냅샷입니다. 이후 변경은 ERDCloud와 저장소의 DB 정의를 함께 참고합니다.
 
 ### 도메인별 ERD
 
