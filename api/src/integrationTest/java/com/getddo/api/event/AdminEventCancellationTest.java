@@ -51,7 +51,7 @@ import com.getddo.core.notification.domain.NotificationJobRequest;
 import com.getddo.core.notification.domain.NotificationType;
 import com.getddo.core.notification.service.EventChangeNotificationService;
 import com.getddo.core.notification.service.NotificationJobService;
-import com.getddo.core.ticket.repository.TicketHistoryRepository;
+import com.getddo.core.ticket.repository.TicketBulkRefundRepository;
 import com.getddo.core.ticket.domain.TicketGrade;
 import com.getddo.core.user.domain.Membership;
 import com.getddo.db.common.util.UuidBinary;
@@ -62,6 +62,8 @@ import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -82,7 +84,7 @@ class AdminEventCancellationTest {
 	@MockitoBean private Clock clock;
 	@MockitoSpyBean private EventChangeNotificationService notifications;
 	@MockitoSpyBean private AuditLogRepository audits;
-	@MockitoSpyBean private TicketHistoryRepository histories;
+	@MockitoSpyBean private TicketBulkRefundRepository refunds;
 	private UUID admin;
 	private UUID user;
 	private UUID event;
@@ -183,13 +185,11 @@ class AdminEventCancellationTest {
 		entries.enter(command(UUID.randomUUID(), 1));
 		UUID startJob = startNotification();
 		if (failureAt.equals("refund")) {
-			AtomicInteger refundedEntries = new AtomicInteger();
 			doAnswer(invocation -> {
 				invocation.callRealMethod();
-				if (refundedEntries.incrementAndGet() == 2) { throw new IllegalStateException("테스트 실패"); }
-				return null;
+				throw new IllegalStateException("묶음 반환 저장 후 테스트 실패");
 			})
-					.when(histories).saveAll(any());
+					.when(refunds).saveRefunds(any(), any());
 		} else if (failureAt.equals("notification")) {
 			doAnswer(invocation -> { invocation.callRealMethod(); throw new IllegalStateException("테스트 실패"); })
 					.when(notifications).register(any());
@@ -210,7 +210,7 @@ class AdminEventCancellationTest {
 		assertThat(jdbc.queryForObject("select json_unquote(json_extract(payload,'$.generationStoppedBy')) from notification_jobs where id=?",
 				String.class, bytes(startJob))).isNull();
 		// 실패 주입만 해제하고 같은 취소를 다시 처리한다.
-		org.mockito.Mockito.reset(histories, notifications, audits);
+		org.mockito.Mockito.reset(refunds, notifications, audits);
 		assertThat(cancellations.cancel(event, admin, "운영 취소").getRefundedTicketCount()).isEqualTo(2);
 	}
 
@@ -282,6 +282,85 @@ class AdminEventCancellationTest {
 				event, null, "시작 안내", "곧 시작", "/events/" + event, NOW, List.of(user)));
 		assertThat(jobs.processNextJob()).isTrue();
 		return job;
+	}
+
+	@Test
+	@DisplayName("발표 대기 이벤트의 5만 응모를 100개 SQL 묶음으로 반환하고 취소 API 응답을 확인한다")
+	void cancelsFiftyThousandEntriesInBatches() throws Exception {
+		seedBulkEntries(50_000);
+		long started = System.nanoTime();
+		cancel(admin, event, "대량 취소").andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.status").value("CANCELED"))
+				.andExpect(jsonPath("$.data.refundedTicketCount").value(50_000));
+		long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
+		org.slf4j.LoggerFactory.getLogger(getClass()).info("50,000 entries cancellation API completed in {} ms", elapsedMillis);
+		assertThat(storedStatus()).isEqualTo("CANCELED");
+		assertThat(refundCount()).isEqualTo(50_000);
+		assertThat(count("select count(*) from tickets where user_id=? and status='RETURNED' and version=3 and expires_at=?",
+				bytes(user), utc(Instant.parse("2026-11-30T15:00:00Z")))).isEqualTo(50_000);
+		assertThat(count("select count(*) from audit_logs where target_id=? and action='EVENT_CANCEL'", bytes(event))).isEqualTo(1);
+		verify(refunds, times(100)).saveRefunds(any(), any());
+	}
+
+	@Test
+	@DisplayName("두 번째 묶음 저장 실패는 앞선 500건도 롤백하고 재시도 시 중복 없이 반환한다")
+	void rollsBackEarlierBatchesWhenLaterBatchFails() {
+		seedBulkEntries(501);
+		AtomicInteger savedBatches = new AtomicInteger();
+		doAnswer(invocation -> {
+			invocation.callRealMethod();
+			if (savedBatches.incrementAndGet() == 2) {
+				throw new IllegalStateException("두 번째 묶음 실패");
+			}
+			return null;
+		}).when(refunds).saveRefunds(any(), any());
+		assertThatThrownBy(() -> cancellations.cancel(event, admin, "대량 취소"))
+				.hasStackTraceContaining("두 번째 묶음 실패");
+		assertThat(storedStatus()).isEqualTo("DRAW_CONFIRMED");
+		assertThat(canceledAt()).isNull();
+		assertThat(refundCount()).isZero();
+		assertThat(count("select count(*) from tickets where user_id=? and status='SPENT' and version=2", bytes(user))).isEqualTo(501);
+		assertThat(count("select count(*) from audit_logs where target_id=?", bytes(event))).isZero();
+		org.mockito.Mockito.reset(refunds);
+		assertThat(cancellations.cancel(event, admin, "대량 취소").getRefundedTicketCount()).isEqualTo(501);
+		assertThat(refundCount()).isEqualTo(501);
+	}
+
+	private void seedBulkEntries(int quantity) {
+		// 응모 수를 늘리되 실제로 허용되는 상한 없는 가중치 이벤트로 구성한다.
+		UUID participant = UUID.randomUUID();
+		byte[] claim = jdbc.queryForObject("select id from attendance_reward_claims where user_id=?", byte[].class, bytes(user));
+		jdbc.update("update attendance_reward_claims set ticket_count=? where id=?", quantity + 5, claim);
+		jdbc.update("update events set status='DRAW_CONFIRMED',max_tickets_per_user=null,ends_at=? where id=?",
+				utc(NOW.minusSeconds(60)), bytes(event));
+		jdbc.update("insert into event_participants(id,event_id,user_id,created_at,used_ticket_count) values(?,?,?,?,?)",
+				bytes(participant), bytes(event), bytes(user), utc(CREATED), quantity);
+		String digits = "(select 0 n union all select 1 union all select 2 union all select 3 union all select 4"
+				+ " union all select 5 union all select 6 union all select 7 union all select 8 union all select 9)";
+		String sequence = "(select a.n+10*b.n+100*c.n+1000*d.n+10000*e.n as n from "
+				+ digits + " a cross join " + digits + " b cross join " + digits + " c cross join " + digits + " d cross join " + digits + " e) seq";
+		String prefix = event.toString();
+		jdbc.update("""
+				insert into event_entries(id,event_id,participant_id,user_id,requested_ticket_count,deducted_ticket_count,
+				requested_bronze_count,status,created_at)
+				select unhex(md5(concat(?,':entry:',n))),?,?,?,1,1,1,'ACCEPTED',? from
+				""" + sequence + " where n < ?", prefix, bytes(event), bytes(participant), bytes(user),
+				utc(NOW.minusSeconds(120)), quantity);
+		jdbc.update("""
+				insert into tickets(id,user_id,attendance_reward_claim_id,grade,status,expires_at,version,created_at,updated_at)
+				select unhex(md5(concat(?,':ticket:',n))),?,?,'BRONZE','SPENT',?,2,?,? from
+				""" + sequence + " where n < ?", prefix, bytes(user), claim, utc(NOW.plusSeconds(86400)),
+				utc(CREATED), utc(NOW.minusSeconds(120)), quantity);
+		jdbc.update("""
+				insert into ticket_histories(id,ticket_id,operation_type,ticket_version,status,expires_at,reason,created_at)
+				select unhex(md5(concat(?,':grant:',n))),unhex(md5(concat(?,':ticket:',n))),
+				'GRANT',1,'AVAILABLE',?,'지급',? from
+				""" + sequence + " where n < ?", prefix, prefix, utc(NOW.plusSeconds(86400)), utc(CREATED), quantity);
+		jdbc.update("""
+				insert into ticket_histories(id,ticket_id,event_entry_id,operation_type,ticket_version,status,expires_at,reason,created_at)
+				select unhex(md5(concat(?,':use:',n))),unhex(md5(concat(?,':ticket:',n))),unhex(md5(concat(?,':entry:',n))),
+				'USE',2,'SPENT',?,'응모',? from
+				""" + sequence + " where n < ?", prefix, prefix, prefix, utc(NOW.plusSeconds(86400)), utc(NOW.minusSeconds(120)), quantity);
 	}
 
 	private ResultActions cancel(UUID actorId, UUID eventId, String reason) throws Exception {

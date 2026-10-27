@@ -23,8 +23,7 @@ import com.getddo.core.event.repository.EventActorRepository;
 import com.getddo.core.event.repository.EventRepository;
 import com.getddo.core.notification.domain.EventNotificationChange;
 import com.getddo.core.notification.service.EventChangeNotificationService;
-import com.getddo.core.ticket.domain.RefundCommand;
-import com.getddo.core.ticket.service.TicketRefundService;
+import com.getddo.core.ticket.service.TicketBulkRefundService;
 
 /** 이벤트 취소·차감분 반환·취소 안내 등록·감사 기록을 하나의 업무 트랜잭션에서 확정한다. */
 @Service
@@ -33,7 +32,7 @@ public class EventCancellationService {
 	private static final int MAX_REASON_BYTES = 65_535;
 	private final EventRepository events;
 	private final EventActorRepository actors;
-	private final TicketRefundService refunds;
+	private final TicketBulkRefundService refunds;
 	private final EventChangeNotificationService notifications;
 	private final AuditLogService auditLogs;
 	private final TimeProvider timeProvider;
@@ -58,12 +57,8 @@ public class EventCancellationService {
 		}
 		Instant canceledAt = timeProvider.now().truncatedTo(ChronoUnit.MICROS);
 		events.markCanceled(eventId, canceledAt);
-		long refundedTicketCount = 0;
-		for (UUID entryId : events.findChargedEntryIds(eventId)) {
-			// 거절·무료 응모는 대상 조회에서 제외한다. 반환 실패는 삼키지 않고 전체 취소를 롤백한다.
-			refundedTicketCount = Math.addExact(refundedTicketCount,
-					refunds.refund(new RefundCommand(entryId, reason)).getQuantity());
-		}
+		// 거절·무료 응모는 제외한다. SQL 묶음 사이에도 같은 트랜잭션·이벤트 잠금을 유지한다.
+		long refundedTicketCount = refunds.refundAll(events.findChargedEntryIds(eventId), reason);
 		notifications.register(EventNotificationChange.canceled(UUID.randomUUID(), eventId, current.getTitle(), canceledAt));
 		auditLogs.record(new AuditLogCommand(actorId, "EVENT_CANCEL", "EVENT", eventId, reason,
 				Map.of("status", current.getStatus().name()),
