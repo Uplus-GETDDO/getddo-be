@@ -1,3 +1,16 @@
+# 🏆유레카 최종융합프로젝트 우수상 프로젝트🏆
+
+<details>
+<summary>[2026. 10. 28] LG U+ 유레카 최종융합프로젝트 우수상</summary>
+
+<p align="center">
+  <img src="docs/assets/getddo-excellence-award.png" alt="유레카 최종융합프로젝트 우수상 증서 — 3조 얻어가유" width="720">
+</p>
+
+[원본 PDF 열기](docs/assets/getddo-excellence-award.pdf)
+
+</details>
+
 <div align="center">
   <img src="https://raw.githubusercontent.com/Uplus-GETDDO/.github/main/site/assets/mascot.svg" alt="GETDDO 마스코트" width="120">
   <h1>GETDDO Backend</h1>
